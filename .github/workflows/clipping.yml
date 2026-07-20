@@ -1,0 +1,42 @@
+name: clipping
+
+on:
+  workflow_dispatch:
+    inputs:
+      when:
+        description: "Período de busca (ex: 1d, 2d, 7d, 12h, 1h)"
+        required: false
+        default: "1d"
+      recipients:
+        description: "E-mails destino (vírgula). Vazio = lista padrão do clipping.py"
+        required: false
+        default: ""
+
+# Sem 'schedule:' de propósito — o agendamento é por gatilho externo
+# (cron-job.org -> workflow_dispatch via API), que dispara na hora, sem a fila do cron do GitHub.
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          pip install --upgrade pip
+          pip install -r clipping_requirements.txt
+          pip install --no-deps pygooglenews==0.1.2
+
+      - name: Run bot
+        env:
+          EMAIL_REMETENTE: ${{ secrets.EMAIL_REMETENTE }}
+          EMAIL_SENHA: ${{ secrets.EMAIL_SENHA }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+          WHEN_OVERRIDE: ${{ github.event.inputs.when }}
+          EMAIL_TO_OVERRIDE: ${{ github.event.inputs.recipients || vars.CLIP_RECIPIENTS }}
+        run: python clipping.py

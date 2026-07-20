@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+news_scrapper.xlsx
+ai_input.txt
+backlog.xlsx
+clipping_*.csv
+google_news_*.csv
+.streamlit/secrets.toml

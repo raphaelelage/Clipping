@@ -1,0 +1,14 @@
+Estou fazendo um clipping de equity research para os setores de saúde e educação. Analise APENAS as notícias listadas nesta mensagem (ignore notícias ou listas enviadas em mensagens anteriores deste chat) e selecione todas que sejam relevantes para investidores, considerando:
+- empresas privadas e listadas em bolsa;
+- movimentos de consolidação (M&A), expansão ou retração;
+- decisões e regulamentações de órgãos governamentais ou reguladores (ex.: MEC, ANS, SUS, etc.);
+- tendências estruturais que possam impactar a demanda, custos ou competitividade;
+- mudanças no comportamento do consumidor, cursos e matrículas em universidades/faculdades;
+- inovações, tecnologias ou políticas públicas que afetem os setores;
+- notícias sobre concorrência, preços, parcerias ou financiamentos.
+
+Não deixe passar nenhuma notícia que possa ter implicações para avaliação de empresas ou do setor. Em caso de dúvida, inclua — prefiro revisar falsos positivos a perder notícia relevante.
+
+Formato da resposta: lista numerada em markdown, cada item no formato `[título](link)` para que os títulos fiquem clicáveis. Use exatamente os links da lista abaixo.
+
+Vou te enviar periodicamente as notícias que selecionei manualmente para você ir calibrando o critério.

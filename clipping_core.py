@@ -1,0 +1,468 @@
+"""
+clipping_core.py — coleta multi-fonte de noticias (saude + educacao BR) para equity research.
+
+Fontes (todas funcionam de IP de datacenter / GitHub Actions):
+  1. Google News (pygooglenews) por keyword, filtrado por whitelist de fontes
+  2. Brazil Stock Guide via Google News (site-search) + sitemap (suplemento, com backoff)
+  3. ANS / Anvisa (portais gov.br)
+  4. Valor Economico via RSS (pox.globo.com) — sem login/paywall
+
+Janela de tempo aceita horas e dias: "1h", "6h", "12h", "1d", "3d", "7d".
+
+Uso:
+    from clipping_core import collect, build_email_html, build_csv_bytes, send_email
+    df = collect("1d")
+"""
+from __future__ import annotations
+import re, unicodedata, os, time, random, io, smtplib
+from datetime import datetime, timedelta, timezone, date
+from email.utils import parsedate_to_datetime
+from email.message import EmailMessage
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import requests, feedparser
+import pandas as pd
+from bs4 import BeautifulSoup
+from pygooglenews import GoogleNews
+from googlenewsdecoder import gnewsdecoder
+
+try:
+    from zoneinfo import ZoneInfo
+    TZ = ZoneInfo("America/Sao_Paulo")
+except Exception:
+    TZ = timezone(timedelta(hours=-3))
+
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
+
+COLS = ["title", "source", "date", "hour", "searched_keyword", "link", "source_link"]
+
+def _load_list(path, default):
+    """Le uma lista de um arquivo (1 item por linha, # = comentario). Editavel pelo app.
+    Cai no 'default' se o arquivo nao existir ou estiver vazio."""
+    try:
+        if os.path.exists(path):
+            lines = [l.strip() for l in open(path, encoding="utf-8").read().splitlines()
+                     if l.strip() and not l.lstrip().startswith("#")]
+            if lines:
+                return lines
+    except Exception:
+        pass
+    return default
+
+# ----------------------------------------------------------------------------- keywords
+DEFAULT_KEYWORDS = [
+    "saúde", "saúde suplementar", "educação", "ensino", "agencia nacional de saude",
+    "ans", "anahp", "anvisa", "athena saude", "amil", "mec", "fenasaude", "abramge",
+    "elfa", "caged", "Rede D'Or", "Rede DOr", "Hapvida", "NDI", "Fleury",
+    "Diagnosticos da America", "Dasa", "Panvel", "Pague Menos", "Pardini", "Odontoprev",
+    "Kora", "CM Hospitalar", "Viveo", "Mater Dei", "Qualicorp", "Sulamerica", "Hypera",
+    "Blau", "Raia", "Oncoclinicas", "Dimed", "Cogna", "YDUQS", "Ânima", "Ser Educacional",
+    "Cruzeiro do Sul", "Afya", "Vitru", "Vasta Educação", "Arco Educação", "medicamentos",
+    "farmaceutica", "farmacia", "cimed", "genericos", "canetas emagrecedoras", "emagrecedor",
+    "GLP-1", "EMS", "prevent senior", "mais medicos", "ead", "ensino tecnico", "icms",
+    "beneficio fiscal", "IRPJ", "hospital", "hospitais", "operadoras", "planos de saúde",
+    "faculdade", "pnld", "glosa", "autismo", "oncologia", "cancer", "sinistralidade",
+    "sinistro", "alfapoetina", "medicina", "pravaler", "PIS", "COFINS", "Medida provisória",
+    "Mercado Livre", "Block Trade", "Bradesco Saude", "Dr. Consulta",
+]
+keywords = _load_list("keywords.txt", DEFAULT_KEYWORDS)   # editavel pelo app
+
+DEFAULT_WHITELIST = [
+    "GOV.BR", "CNN Brasil", "Senado Federal", "Cofen", "ConJur", "Agência Brasil", "UOL",
+    "O Globo", "Poder360", "G1", "UOL Educação", "VEJA", "Secretaria da Educação",
+    "Governo do Estado de São Paulo", "Terra", "InfoMoney", "UOL Confere", "Metrópoles",
+    "Exame", "Exame Notícias", "Valor Econômico", "Gazeta do Povo", "Seu Dinheiro",
+    "Estadão", "Extra", "Fenacor", "JOTA Info", "UOL Economia", "Valor Investe",
+    "Globo.com", "OLiberal.com", "SpaceMoney", "Rede D'Or São Luiz", "Medicina S/A",
+    "Finance News", "E-Investidor", "br.ADVFN.com", "saudebusiness.com", "Investnews",
+    "Setor Saúde", "Pipeline", "Money Times", "Istoé Dinheiro", "Época NEGÓCIOS",
+    "Investing.com Brasil", "Suno Notícias", "Guia da Farmácia", "Brazil Journal",
+    "NeoFeed", "Vogue Brasil", "VEJA São Paulo", "ISTOÉ", "R7.com", "Acionista.com.br",
+    "Globo", "BM&C NEWS", "Forbes Brasil", "Revista Oeste", "Revista Fórum", "Governo",
+    "Contábeis", "Brasil 61", "Canal Autismo / Revista Autismo", "Congresso em Foco",
+    "Consumidor Moderno", "Correio Braziliense", "O Tempo", "Portal de Fusões e Aquisições",
+    "Portal Farmacêutico", "Política Estadão", "Portal Panorama Farmacêutico",
+    "Panorama Farmacêutico", "Revista Apólice", "Futuro da Saúde", "Migalhas",
+    "Bloomberg.com", "Bloomberg Linea Brasil", "Folha de S.Paulo", "pipelinevalor",
+]
+WHITELIST = _load_list("sources.txt", DEFAULT_WHITELIST)   # editavel pelo app
+
+VALOR_FEEDS = [
+    "https://pox.globo.com/rss/valor/", "https://pox.globo.com/rss/valor/financas/",
+    "https://pox.globo.com/rss/valor/empresas/", "https://pox.globo.com/rss/valor/brasil/",
+    "https://pox.globo.com/rss/valor/politica/", "https://pox.globo.com/rss/valor/impresso/",
+    "https://pox.globo.com/rss/valor/opiniao/",
+]
+
+BSG_ART = re.compile(
+    r"brazilstockguide\.com/(?:br/)?(?:insights|behind-the-lines|wake-up-call|opinion)(?:-br)?/[a-z0-9][a-z0-9-]+/?$")
+
+# classificacao p/ o e-mail
+EDU_KW = ["educacao", "mec", "ensino", "ead", "pnld", "faculdade", "cogna", "yduqs", "anima",
+          "ser educacional", "cruzeiro do sul", "afya", "vitru", "vasta", "arco", "pravaler",
+          "enem", "enade", "enamed", "professor", "escola", "universidade", "aluno", "sisu",
+          "fundeb", "capes", "docente"]
+NOISE_KW = ["novela", "selecao", "neymar", "futebol", "jogador", "bbb", "horoscopo", "signo",
+            "libertadores", "copa do mundo", "mega-sena", "loteria", "festa junina", "festas juninas",
+            "celebridade", "claudia raia", "simony", "ex-paquito", "whitney", "obama", "biancardi",
+            "novelas", "reality", "bbb ", "viraliza", "look", "show de", "cinema", "reboot"]
+
+# ----------------------------------------------------------------------------- helpers
+def _norm(s: str) -> str:
+    s = unicodedata.normalize("NFKD", str(s))
+    return "".join(c for c in s if not unicodedata.combining(c)).lower()
+
+def match_keywords(title: str):
+    t = _norm(title)
+    for kw in keywords:
+        if re.search(r"\b" + re.escape(_norm(kw)) + r"(es|s)?\b", t):
+            return kw
+    return None
+
+def to_dt(s):
+    """parse RFC822 ou ISO8601 -> datetime aware (UTC se sem tz). None se falhar."""
+    if not s:
+        return None
+    try:
+        dt = parsedate_to_datetime(s)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        pass
+    try:
+        dt = datetime.fromisoformat(str(s).strip().replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+def _fmt(dt):
+    if not dt:
+        return "", ""
+    loc = dt.astimezone(TZ)
+    return loc.strftime("%a, %d %b %Y"), loc.strftime("%H:%M:%S")
+
+def parse_pub(published):
+    """published (RFC822/ISO) -> (date_str, hour_str, date) — usado pelo Google News."""
+    dt = to_dt(published)
+    d, h = _fmt(dt)
+    return d, h, (dt.date() if dt else None)
+
+def parse_period(period: str) -> timedelta:
+    m = re.fullmatch(r"\s*(\d+)\s*([hHdD])\s*", str(period or "1d"))
+    if not m:
+        return timedelta(days=1)
+    n, unit = int(m.group(1)), m.group(2).lower()
+    return timedelta(hours=n) if unit == "h" else timedelta(days=n)
+
+def fetch_resilient(url, tries=4, base=3):
+    """GET com backoff exponencial em 429; ultimo recurso = proxy de leitura Jina (sem API key)."""
+    for i in range(tries):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=30)
+            if r.status_code == 200:
+                return r.text
+            if r.status_code == 429:
+                time.sleep(base * (2 ** i) + random.uniform(0, 1.5)); continue
+            return None
+        except Exception:
+            time.sleep(base)
+    try:
+        r = requests.get("https://r.jina.ai/" + url, timeout=60)
+        if r.status_code == 200:
+            return r.text
+    except Exception:
+        pass
+    return None
+
+# ----------------------------------------------------------------------------- coletores
+def _google_news(when):
+    # SEQUENCIAL com uma unica instancia (igual ao codigo antigo que pegava ~200).
+    # O Google News, do IP do GitHub Actions, bloqueia rajadas concorrentes e devolve vazio —
+    # por isso NAO usar ThreadPoolExecutor aqui. Operador nativo 'when:' (when:1d, when:12h, when:1h).
+    gn = GoogleNews(lang="pt", country="BR")
+    rows, empties = [], []
+
+    def _fetch(kw):
+        try:
+            return gn.search(kw, when=when).get("entries", [])
+        except Exception:
+            return None
+
+    def _add(kw, entries):
+        for it in entries:
+            d, h, _ = parse_pub(it.get("published"))
+            rows.append((it.title, it.source["title"], d, h, kw, it.link, it.source["href"]))
+
+    # passe 1
+    for kw in keywords:
+        e = _fetch(kw)
+        if e:
+            _add(kw, e)
+        else:
+            empties.append(kw)   # vazio ou erro -> tenta de novo no passe 2
+        time.sleep(0.5)          # pausa p/ nao tomar throttle do Google (IP do GitHub)
+    # passe 2 — re-tenta so as que voltaram vazias (recupera throttle pontual)
+    recovered = 0
+    for kw in empties:
+        time.sleep(1.0)
+        e = _fetch(kw)
+        if e:
+            _add(kw, e); recovered += 1
+    print(f"[google_news] {len(keywords)-len(empties)}/{len(keywords)} no passe 1, "
+          f"+{recovered} recuperadas no retry, {len(rows)} itens brutos", flush=True)
+    df = pd.DataFrame(rows, columns=COLS)
+    df = df[df["source"].isin(WHITELIST)].reset_index(drop=True)
+
+    # Brazil Stock Guide via Google News (EN + PT) — tambem sequencial
+    bsg = []
+    for lang in ("en", "pt"):
+        try:
+            g = GoogleNews(lang=lang, country="BR")
+            res = g.search("site:brazilstockguide.com", when=when)
+            for e in res.get("entries", []):
+                if e.get("source", {}).get("title") != "Brazil Stock Guide":
+                    continue
+                title = e["title"].replace(" - Brazil Stock Guide", "").strip()
+                kw = match_keywords(title)
+                if kw:
+                    d, h, _ = parse_pub(e.get("published", ""))
+                    bsg.append((title, "Brazil Stock Guide", d, h, kw, e["link"],
+                                "https://brazilstockguide.com"))
+        except Exception:
+            pass
+    if bsg:
+        df = pd.concat([df, pd.DataFrame(bsg, columns=COLS)], ignore_index=True)
+    return df, len(bsg)
+
+def _scrape_govbr(base_url, source_name, from_date, max_pages=4):
+    rows, stop = [], False
+    for p in range(max_pages):
+        if stop:
+            break
+        url = base_url if p == 0 else f"{base_url}?b_start:int={p*20}"
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=30)
+            soup = BeautifulSoup(r.content, "html.parser")
+            items = soup.select(".listagem-noticias-com-foto li")
+            if not items:
+                break
+            recent = False
+            for li in items:
+                a = li.select_one("h2.titulo a"); dt = li.select_one("span.data")
+                if not a or not dt:
+                    continue
+                try:
+                    d = datetime.strptime(dt.get_text(strip=True), "%d/%m/%Y").date()
+                except Exception:
+                    continue
+                if d >= from_date:
+                    recent = True
+                    rows.append((a.get_text(strip=True), source_name,
+                                 d.strftime("%a, %d %b %Y"), "",
+                                 f"{source_name} (portal)", a["href"], base_url))
+            if not recent:
+                stop = True
+        except Exception:
+            break
+    return rows
+
+def _scrape_valor_rss(cutoff):
+    rows, seen = [], set()
+    for url in VALOR_FEEDS:
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            feed = feedparser.parse(r.content)
+            for e in feed.entries:
+                link = e.get("link", "")
+                if not link or link in seen:
+                    continue
+                dt = to_dt(e.get("published", e.get("updated", "")))
+                if dt and dt < cutoff:
+                    continue
+                title = e.get("title", "")
+                kw = match_keywords(title)
+                if kw:
+                    seen.add(link)
+                    d, h = _fmt(dt)
+                    rows.append((title, "Valor Econômico (RSS)", d, h, kw, link,
+                                 "https://valor.globo.com"))
+        except Exception:
+            pass
+    return rows
+
+def _bsg_title(url, slug):
+    txt = fetch_resilient(url)
+    if txt:
+        s = BeautifulSoup(txt, "html.parser")
+        og = s.find("meta", property="og:title")
+        if og and og.get("content"):
+            return og["content"].strip()
+        if s.title:
+            return s.title.get_text(strip=True).split("|")[0].strip()
+    return slug.replace("-", " ").title()
+
+def _scrape_bsg_sitemap(cutoff):
+    idx = fetch_resilient("https://brazilstockguide.com/sitemap.xml")
+    if not idx:
+        return []
+    subs = [u for u in re.findall(r"<loc>(.*?)</loc>", idx)
+            if u.endswith(".xml") and "image" not in u and "video" not in u]
+    entries = []
+    for sm in subs:
+        t = fetch_resilient(sm)
+        if not t:
+            continue
+        for block in re.findall(r"<url>(.*?)</url>", t, re.S):
+            loc = re.search(r"<loc>(.*?)</loc>", block)
+            lm = re.search(r"<lastmod>(.*?)</lastmod>", block)
+            if loc:
+                entries.append((loc.group(1), lm.group(1) if lm else ""))
+    rows = []
+    for url, lm in entries:
+        if not BSG_ART.search(url):
+            continue
+        dt = to_dt(lm)
+        if dt and dt < cutoff:
+            continue
+        slug = url.rstrip("/").split("/")[-1]
+        kw = match_keywords(slug.replace("-", " "))
+        if not kw:
+            continue
+        d, h = _fmt(dt)
+        src = "Brazil Stock Guide (PT)" if "/br/" in url else "Brazil Stock Guide"
+        rows.append((_bsg_title(url, slug), src, d, h, kw, url, "https://brazilstockguide.com"))
+    rows.sort(key=lambda r: 0 if "(PT)" in r[1] else 1)
+    dedup, seen = [], set()
+    for r in rows:
+        key = (r[4], r[2])
+        if r[2] and key in seen:
+            continue
+        if r[2]:
+            seen.add(key)
+        dedup.append(r)
+    return dedup
+
+def _decode_links(df):
+    mask = df["link"].astype(str).str.contains("news.google.com")
+    uniq = list(set(df.loc[mask, "link"]))
+    if not uniq:
+        return df
+    def dec(l):
+        try:
+            r = gnewsdecoder(l, interval=0)
+            return l, (r["decoded_url"] if r.get("status") else l)
+        except Exception:
+            return l, l
+    dmap = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for f in as_completed([ex.submit(dec, l) for l in uniq]):
+            o, n = f.result(); dmap[o] = n
+    df["link"] = df["link"].map(lambda l: dmap.get(l, l))
+    return df
+
+# ----------------------------------------------------------------------------- orquestrador
+def collect(period: str = "1d", progress=None) -> pd.DataFrame:
+    """Coleta de todas as fontes dentro da janela `period` ('1h','3d',...). Retorna DataFrame."""
+    def _p(msg):
+        if progress:
+            progress(msg)
+    when = (period or "1d").strip()
+    delta = parse_period(when)
+    now = datetime.now(TZ)
+    cutoff = now - delta
+    from_date = cutoff.date()
+
+    _p("Google News + Brazil Stock Guide…")
+    df_gn, n_bsg = _google_news(when)   # operador 'when:' nativo (abrangente, suporta horas)
+
+    _p("ANS / Anvisa…")
+    ans = _scrape_govbr("https://www.gov.br/ans/pt-br/assuntos/noticias", "ANS", from_date)
+    anv = _scrape_govbr("https://www.gov.br/anvisa/pt-br/assuntos/noticias-anvisa", "Anvisa", from_date)
+
+    _p("Valor (RSS)…")
+    valor = _scrape_valor_rss(cutoff)
+
+    _p("Brazil Stock Guide (sitemap)…")
+    bsg = _scrape_bsg_sitemap(cutoff)
+
+    frames = [df_gn] + [pd.DataFrame(r, columns=COLS) for r in (ans, anv, valor, bsg) if r]
+    allnews = pd.concat(frames, ignore_index=True)
+
+    allnews["_t"] = allnews["title"].map(_norm)
+    allnews["count_news"] = allnews.groupby("_t")["title"].transform("size")
+    allnews = allnews.drop_duplicates(subset="_t").reset_index(drop=True)
+
+    _p("Decodificando links do Google News…")
+    allnews = _decode_links(allnews)
+    allnews = allnews.drop_duplicates(subset="link").reset_index(drop=True)
+
+    allnews["markdown"] = "[" + allnews["title"].astype(str) + "](" + allnews["link"].astype(str) + ")"
+    allnews["setor"] = allnews.apply(_classify, axis=1)
+    allnews = allnews[["title", "count_news", "link", "source", "date", "hour",
+                       "searched_keyword", "source_link", "markdown", "setor"]]
+    _p(f"Pronto: {len(allnews)} notícias.")
+    return allnews
+
+# ----------------------------------------------------------------------------- classificacao / e-mail
+def _classify(row) -> str:
+    s = _norm(str(row["searched_keyword"]) + " " + str(row["title"]))
+    if any(k in s for k in EDU_KW):
+        return "educacao"
+    return "saude"
+
+def _is_noise(title) -> bool:
+    n = _norm(title)
+    return any(k in n for k in NOISE_KW)
+
+def build_email_html(df: pd.DataFrame, period: str) -> str:
+    clean = df[~df["title"].map(_is_noise)].copy()
+    saude = clean[clean["setor"] == "saude"].sort_values("count_news", ascending=False)
+    edu = clean[clean["setor"] == "educacao"].sort_values("count_news", ascending=False)
+
+    def section(title, sub):
+        if sub.empty:
+            return f"<h2 style='color:#334155;margin:18px 0 6px'>{title}</h2><p style='color:#888'>—</p>"
+        lis = "".join(
+            f"<li style='margin:6px 0;line-height:1.35'>"
+            f"<a href='{r.link}' style='color:#0a3d62;text-decoration:none'>{_esc(r.title)}</a>"
+            f" <span style='color:#999;font-size:12px'>— {_esc(r.source)}</span></li>"
+            for r in sub.itertuples()
+        )
+        return f"<h2 style='color:#334155;margin:18px 0 6px'>{title} ({len(sub)})</h2><ul style='padding-left:18px;margin:0'>{lis}</ul>"
+
+    today = datetime.now(TZ).strftime("%d/%m/%Y %H:%M")
+    return f"""<div style="font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:auto;color:#222">
+      <h1 style="font-size:20px;margin:0 0 2px">Clipping — Saúde &amp; Educação</h1>
+      <p style="color:#888;margin:0 0 8px;font-size:13px">Período: {period} · gerado em {today} · {len(clean)} notícias</p>
+      {section("HEALTHCARE", saude)}
+      {section("EDUCAÇÃO", edu)}
+      <p style="color:#aaa;font-size:11px;margin-top:20px">CSV completo em anexo. Gerado automaticamente.</p>
+    </div>"""
+
+def _esc(s):
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+def build_csv_bytes(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode("utf-8-sig")
+
+def send_email(html, csv_bytes, recipients, smtp_user, smtp_pass,
+               sender=None, subject=None, host="smtp.gmail.com", port=587):
+    """Envia o digest HTML + CSV anexo para os destinatarios via SMTP (Gmail por padrao)."""
+    recipients = [r.strip() for r in (recipients if isinstance(recipients, list)
+                  else re.split(r"[,;\s]+", recipients)) if r and "@" in r]
+    if not recipients:
+        raise ValueError("Nenhum e-mail valido informado.")
+    msg = EmailMessage()
+    msg["Subject"] = subject or f"Clipping Saúde & Educação — {datetime.now(TZ).strftime('%d/%m/%Y')}"
+    msg["From"] = sender or smtp_user
+    msg["To"] = ", ".join(recipients)
+    msg.set_content("Seu cliente de e-mail nao suporta HTML. Veja o CSV em anexo.")
+    msg.add_alternative(html, subtype="html")
+    if csv_bytes:
+        msg.add_attachment(csv_bytes, maintype="text", subtype="csv",
+                           filename=f"clipping_{date.today()}.csv")
+    with smtplib.SMTP(host, port) as s:
+        s.starttls()
+        s.login(smtp_user, smtp_pass)
+        s.send_message(msg)
+    return recipients

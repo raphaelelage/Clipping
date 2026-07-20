@@ -1,0 +1,11 @@
+feedparser==6.0.11
+beautifulsoup4==4.12.3
+dateparser==1.2.0
+requests==2.32.3
+pandas==2.2.3
+tqdm==4.66.5
+openpyxl==3.1.5
+google-api-python-client==2.149.0
+google-auth==2.35.0
+googlenewsdecoder
+lxml
