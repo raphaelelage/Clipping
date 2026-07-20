@@ -421,14 +421,14 @@ def build_email_html(df: pd.DataFrame, period: str) -> str:
 
     def section(title, sub):
         if sub.empty:
-            return f"<h2 style='color:#334155;margin:18px 0 6px'>{title}</h2><p style='color:#888'>—</p>"
+            return f"<h2 style='color:#CC092F;margin:18px 0 6px'>{title}</h2><p style='color:#888'>—</p>"
         lis = "".join(
             f"<li style='margin:6px 0;line-height:1.35'>"
             f"<a href='{r.link}' style='color:#0a3d62;text-decoration:none'>{_esc(r.title)}</a>"
             f" <span style='color:#999;font-size:12px'>— {_esc(r.source)}</span></li>"
             for r in sub.itertuples()
         )
-        return f"<h2 style='color:#334155;margin:18px 0 6px'>{title} ({len(sub)})</h2><ul style='padding-left:18px;margin:0'>{lis}</ul>"
+        return f"<h2 style='color:#CC092F;margin:18px 0 6px'>{title} ({len(sub)})</h2><ul style='padding-left:18px;margin:0'>{lis}</ul>"
 
     today = datetime.now(TZ).strftime("%d/%m/%Y %H:%M")
     return f"""<div style="font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:auto;color:#222">

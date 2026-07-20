@@ -41,7 +41,7 @@ def fetch_news() -> pd.DataFrame:
     return df[cols].reset_index(drop=True)
 
 
-RED = "#334155"   # cor neutra da divisória/realce (sem identidade de marca)
+RED = "#CC092F"   # cor de realce da divisória
 
 
 def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog: int) -> str:

@@ -23,7 +23,7 @@ import streamlit as st
 
 st.set_page_config(page_title="Clipping", page_icon="📰", layout="centered")
 
-ACCENT = "#334155"
+ACCENT = "#CC092F"
 st.markdown(f"""
 <style>
   .stButton>button {{ background:{ACCENT};color:#fff;border:0;border-radius:10px;
