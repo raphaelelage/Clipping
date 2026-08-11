@@ -235,22 +235,25 @@ def _google_news(when):
     return df, len(bsg)
 
 def _scrape_govbr(base_url, source_name, from_date, max_pages=4):
-    rows, stop = [], False
+    """Listagem HTML de noticias gov.br (Plone). Paginacao dinamica via b_start.
+    Retorna (rows, alive): alive=True se a listagem tinha itens (mesmo que fora da janela) —
+    distingue 'secao viva sem noticia recente' de 'URL morta/redirecionada' (ex.: ANS antiga
+    redirecionava p/ login com HTTP 200 e voltava 0 itens em silencio)."""
+    rows, offset, stop, alive = [], 0, False, False
     for p in range(max_pages):
         if stop:
             break
-        url = base_url if p == 0 else f"{base_url}?b_start:int={p*20}"
+        url = base_url if offset == 0 else f"{base_url}?b_start:int={offset}"
         try:
             r = requests.get(url, headers=HEADERS, timeout=30)
             soup = BeautifulSoup(r.content, "html.parser")
             items = soup.select(".listagem-noticias-com-foto li")
-            if not items:
-                break
-            recent = False
+            recent, page_count = False, 0
             for li in items:
                 a = li.select_one("h2.titulo a"); dt = li.select_one("span.data")
                 if not a or not dt:
                     continue
+                page_count += 1
                 try:
                     d = datetime.strptime(dt.get_text(strip=True), "%d/%m/%Y").date()
                 except Exception:
@@ -260,11 +263,92 @@ def _scrape_govbr(base_url, source_name, from_date, max_pages=4):
                     rows.append((a.get_text(strip=True), source_name,
                                  d.strftime("%a, %d %b %Y"), "",
                                  f"{source_name} (portal)", a["href"], base_url))
+            if page_count == 0:
+                if p == 0:
+                    print(f"[{source_name}] listagem vazia em {base_url} "
+                          f"(URL pode ter mudado/redirecionado)", flush=True)
+                break
+            alive = True
+            offset += page_count
             if not recent:
                 stop = True
+        except Exception as e:
+            print(f"[{source_name}] erro: {e}", flush=True)
+            break
+    return rows, alive
+
+def _govbr_api_news(site, source_name, from_date, lang="pt-br", page=50, max_pages=4):
+    """Plone REST API na RAIZ do site gov.br (@search por News Item) — INDEPENDE do caminho
+    da secao de noticias, entao sobrevive a renomeacoes (/noticias -> /noticias-1 etc.).
+    Retorna lista de rows, ou None se o site nao expoe a API."""
+    hdrs = {**HEADERS, "Accept": "application/json"}
+    base = (f"https://www.gov.br/{site}/++api++/{lang}/@search"
+            f"?portal_type=News+Item&sort_on=effective&sort_order=descending&b_size={page}")
+    rows = []
+    for p in range(max_pages):
+        try:
+            r = requests.get(f"{base}&b_start={p*page}", headers=hdrs, timeout=30)
+            if r.status_code != 200 or "json" not in r.headers.get("Content-Type", ""):
+                return None if p == 0 else rows
+            items = r.json().get("items", [])
         except Exception:
+            return None if p == 0 else rows
+        if not items:
+            break
+        older = False
+        for it in items:
+            dt = to_dt(it.get("effective") or it.get("created"))
+            if not dt:
+                continue
+            if dt.date() < from_date:
+                older = True
+                break
+            title = (it.get("title") or "").strip()
+            link = it.get("@id") or ""
+            if title and link:
+                ds, hs = _fmt(dt)
+                rows.append((title, source_name, ds, hs, f"{source_name} (portal)",
+                             link, f"https://www.gov.br/{site}/{lang}"))
+        if older:
             break
     return rows
+
+def _discover_govbr_news_url(site, lang="pt-br"):
+    """Descobre o link da secao de noticias pelo menu do site (sobrevive a renomeacoes)."""
+    try:
+        r = requests.get(f"https://www.gov.br/{site}/{lang}", headers=HEADERS, timeout=30)
+        soup = BeautifulSoup(r.content, "html.parser")
+        fallback = None
+        for a in soup.find_all("a", href=True):
+            h = a["href"]
+            if not re.search(r"/assuntos/noticias[^/]*/?$", h):
+                continue
+            if "notici" in _norm(a.get_text(strip=True)):
+                return h.rstrip("/")
+            fallback = fallback or h.rstrip("/")
+        return fallback
+    except Exception:
+        return None
+
+def _scrape_govbr_auto(site, source_name, from_date, known_paths=()):
+    """Coleta noticias de um site gov.br SOBREVIVENDO a mudanca de endereco da secao:
+    1) API REST na raiz (independe do caminho)   2) descoberta do link no menu
+    3) caminhos conhecidos. So avisa alto se NENHUM metodo achar a secao."""
+    rows = _govbr_api_news(site, source_name, from_date)
+    if rows is not None:
+        return rows
+    urls = []
+    disc = _discover_govbr_news_url(site)
+    if disc:
+        urls.append(disc)
+    urls += [u for u in known_paths if u not in urls]
+    for u in urls:
+        got, alive = _scrape_govbr(u, source_name, from_date)
+        if got or alive:      # achou a secao (mesmo sem noticia na janela) -> confia
+            return got
+    print(f"[{source_name}] AVISO: secao de noticias nao encontrada por nenhum metodo "
+          f"(API raiz / menu / caminhos conhecidos) — VERIFICAR O PORTAL", flush=True)
+    return []
 
 def _scrape_valor_rss(cutoff):
     rows, seen = [], set()
@@ -376,8 +460,13 @@ def collect(period: str = "1d", progress=None) -> pd.DataFrame:
     df_gn, n_bsg = _google_news(when)   # operador 'when:' nativo (abrangente, suporta horas)
 
     _p("ANS / Anvisa…")
-    ans = _scrape_govbr("https://www.gov.br/ans/pt-br/assuntos/noticias", "ANS", from_date)
-    anv = _scrape_govbr("https://www.gov.br/anvisa/pt-br/assuntos/noticias-anvisa", "Anvisa", from_date)
+    # coleta "a prova de mudanca de endereco": API raiz -> descoberta no menu -> caminhos conhecidos
+    # (a ANS ja mudou /assuntos/noticias -> /assuntos/noticias-1 sem aviso; a antiga redireciona p/ login)
+    ans = _scrape_govbr_auto("ans", "ANS", from_date, (
+        "https://www.gov.br/ans/pt-br/assuntos/noticias-1",
+        "https://www.gov.br/ans/pt-br/assuntos/noticias"))
+    anv = _scrape_govbr_auto("anvisa", "Anvisa", from_date, (
+        "https://www.gov.br/anvisa/pt-br/assuntos/noticias-anvisa",))
 
     _p("Valor (RSS)…")
     valor = _scrape_valor_rss(cutoff)
