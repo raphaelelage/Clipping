@@ -197,24 +197,28 @@ def parse_period(period: str) -> timedelta:
     n, unit = int(m.group(1)), m.group(2).lower()
     return timedelta(hours=n) if unit == "h" else timedelta(days=n)
 
-def fetch_resilient(url, tries=4, base=3):
-    """GET com backoff exponencial em 429; ultimo recurso = proxy de leitura Jina (sem API key)."""
+def fetch_resilient(url, tries=3, base=2, timeout=15, jina=True):
+    """GET com backoff em 429. Se o host esta FORA (erro de conexao), desiste rapido —
+    insistir so queima tempo do Actions (ja custou 15 min num dia em que o gov.br caiu)."""
     for i in range(tries):
         try:
-            r = requests.get(url, headers=HEADERS, timeout=30)
+            r = requests.get(url, headers=HEADERS, timeout=timeout)
             if r.status_code == 200:
                 return r.text
             if r.status_code == 429:
-                time.sleep(base * (2 ** i) + random.uniform(0, 1.5)); continue
+                time.sleep(base * (2 ** i) + random.uniform(0, 1)); continue
             return None
         except Exception:
-            time.sleep(base)
-    try:
-        r = requests.get("https://r.jina.ai/" + url, timeout=60)
-        if r.status_code == 200:
-            return r.text
-    except Exception:
-        pass
+            if i:                      # 2 falhas de conexao seguidas -> host fora, desiste
+                return None
+            time.sleep(1)
+    if jina:
+        try:
+            r = requests.get("https://r.jina.ai/" + url, timeout=25)
+            if r.status_code == 200:
+                return r.text
+        except Exception:
+            pass
     return None
 
 # ----------------------------------------------------------------------------- coletores
@@ -296,7 +300,7 @@ def _govbr_article_meta(url):
     """(data, titulo) de uma noticia gov.br cujo tile nao mostra data (template MEC).
     Le 'Publicado em DD/MM/AAAA' (ou 'Atualizado em') e og:title/h1 na pagina do artigo."""
     try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
+        r = requests.get(url, headers=HEADERS, timeout=12)
         soup = BeautifulSoup(r.content, "html.parser")
         d = None
         m = _DATE_RX.search(soup.get_text(" ", strip=True))
@@ -348,7 +352,7 @@ def _scrape_govbr(base_url, source_name, from_date, max_pages=4, max_lookups=40)
             break
         url = base_url if offset == 0 else f"{base_url}?b_start:int={offset}"
         try:
-            r = requests.get(url, headers=HEADERS, timeout=30)
+            r = requests.get(url, headers=HEADERS, timeout=15)
             items = _parse_govbr_items(BeautifulSoup(r.content, "html.parser"))
             page_count = len(items)
             com_data = [(t, l, d) for t, l, d in items if d is not None]
@@ -395,7 +399,7 @@ def _govbr_api_news(site, source_name, from_date, lang="pt-br", page=50, max_pag
     rows = []
     for p in range(max_pages):
         try:
-            r = requests.get(f"{base}&b_start={p*page}", headers=hdrs, timeout=30)
+            r = requests.get(f"{base}&b_start={p*page}", headers=hdrs, timeout=15)
             if r.status_code != 200 or "json" not in r.headers.get("Content-Type", ""):
                 return None if p == 0 else rows
             items = r.json().get("items", [])
@@ -432,14 +436,14 @@ def _secao_de(url):
 def _govbr_sitemap_locs(site, max_sub=6):
     """URLs do sitemap.xml do site gov.br (segue sitemapindex). Canal de descoberta que
     sobrevive a home renderizada por JS (caso do MEC) e a renomeacao da secao."""
-    txt = fetch_resilient(f"https://www.gov.br/{site}/sitemap.xml")
+    txt = fetch_resilient(f"https://www.gov.br/{site}/sitemap.xml", jina=False)
     if not txt:
         return []
     locs = re.findall(r"<loc>(.*?)</loc>", txt)
     if "<sitemapindex" in txt:
         out = []
         for sm in [l for l in locs if l.endswith(".xml")][:max_sub]:
-            t2 = fetch_resilient(sm)
+            t2 = fetch_resilient(sm, jina=False)
             if t2:
                 out += re.findall(r"<loc>(.*?)</loc>", t2)
         return out
@@ -451,7 +455,7 @@ def _discover_govbr_news_url(site, lang="pt-br"):
     base = f"https://www.gov.br/{site}/{lang}"
     try:
         from urllib.parse import urljoin
-        r = requests.get(base, headers=HEADERS, timeout=30)
+        r = requests.get(base, headers=HEADERS, timeout=12)
         soup = BeautifulSoup(r.content, "html.parser")
         fallback = None
         for a in soup.find_all("a", href=True):
@@ -497,22 +501,32 @@ def _govbr_sitemap_news(site, source_name, from_date, limite=60):
                              f"{source_name} (sitemap)", u, f"https://www.gov.br/{site}"))
     return rows
 
-def _scrape_govbr_auto(site, source_name, from_date, known_paths=()):
+def _scrape_govbr_auto(site, source_name, from_date, known_paths=(), budget=75):
     """Coleta noticias de um site gov.br SOBREVIVENDO a mudanca de endereco da secao:
     1) API REST na raiz (independe do caminho)   2) descoberta do link no menu
     3) caminhos conhecidos. So avisa alto se NENHUM metodo achar a secao."""
+    fim = time.monotonic() + budget          # teto de tempo p/ este portal
     rows = _govbr_api_news(site, source_name, from_date)
     if rows is not None:
         return rows
+    if time.monotonic() > fim:
+        print(f"[{source_name}] tempo esgotado (portal lento/fora) — seguindo", flush=True)
+        return []
     urls = []
     disc = _discover_govbr_news_url(site)
     if disc:
         urls.append(disc)
     urls += [u for u in known_paths if u not in urls]
     for u in urls:
+        if time.monotonic() > fim:
+            print(f"[{source_name}] tempo esgotado (portal lento/fora) — seguindo", flush=True)
+            return []
         got, alive = _scrape_govbr(u, source_name, from_date)
         if got or alive:      # achou a secao (mesmo sem noticia na janela) -> confia
             return got
+    if time.monotonic() > fim:
+        print(f"[{source_name}] tempo esgotado (portal lento/fora) — seguindo", flush=True)
+        return []
     got = _govbr_sitemap_news(site, source_name, from_date)   # ultimo recurso
     if got:
         print(f"[{source_name}] coletado via sitemap.xml ({len(got)} noticias) — "

@@ -29,7 +29,7 @@ ARQUIVO_RX = re.compile(r"\.(pdf|jpe?g|png|gif|zip|docx?|xlsx?|pptx?)(/view)?$",
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
-TIMEOUT = 20
+TIMEOUT = 12          # curto de proposito: se a fonte esta fora, seguir em frente
 
 # ------------------------------------------------------------------ catalogo por vertical
 # (nome exibido, url base, filtrar_por_keyword)
@@ -191,7 +191,7 @@ def _dou(termo, from_date, ctx, orgaos=()):
            + requests.utils.quote(termo) + f"%22&s=do1&exactDate={janela}&sortType=0")   # DO1 = atos normativos
     rows = []
     try:
-        r = requests.get(url, headers=HEADERS, timeout=25)
+        r = requests.get(url, headers=HEADERS, timeout=12)
         m = re.search(r'<script[^>]*type="application/json"[^>]*>(.*?)</script>', r.text, re.S)
         if not m:
             return rows
@@ -231,7 +231,7 @@ def _cvm(empresas, from_date, ctx):
     """Fatos relevantes / comunicados ao mercado (dados abertos da CVM)."""
     rows = []
     try:
-        r = requests.get(CVM_URL.format(ano=from_date.year), headers=HEADERS, timeout=60)
+        r = requests.get(CVM_URL.format(ano=from_date.year), headers=HEADERS, timeout=40)
         if r.status_code != 200:
             return rows
         z = zipfile.ZipFile(io.BytesIO(r.content))
@@ -287,7 +287,7 @@ def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print, norm
         tarefas.append(("cvm", lambda: _cvm(CVM_EMPRESAS[v], from_date, ctx)))
 
     rows, por_fonte = [], {}
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    with ThreadPoolExecutor(max_workers=12) as ex:
         futs = {ex.submit(fn): nome for nome, fn in tarefas}
         for f in as_completed(futs):
             try:
