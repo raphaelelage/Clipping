@@ -157,6 +157,30 @@ def cron_create(vertical, hours, minutes, wdays, period, recipients):
 def cron_delete(jid):
     return requests.delete(f"{CRON_API}/jobs/{jid}", headers=_cron_headers(), timeout=30)
 
+CRON_STATUS = {0: "nunca executou", 1: "✅ OK", 2: "❌ falhou (DNS)",
+               3: "❌ falhou (conexão)", 4: "❌ falhou (HTTP)", 5: "❌ falhou (timeout)",
+               6: "❌ falhou (resposta grande)", 7: "❌ falhou (URL inválida)",
+               8: "❌ falhou (erro interno)", 9: "❌ falhou"}
+
+def cron_historico(jid):
+    """Últimas execuções + próximas previstas. É o que diz se o agendamento disparou
+    e o que o GitHub respondeu (204 = aceito; 401/404 = token ou repo errado)."""
+    try:
+        r = requests.get(f"{CRON_API}/jobs/{jid}/history", headers=_cron_headers(), timeout=20)
+        if r.status_code == 200:
+            j = r.json()
+            return (j.get("history") or []), (j.get("predictions") or [])
+    except Exception:
+        pass
+    return [], []
+
+def _ts(unix):
+    try:
+        return _dt.datetime.fromtimestamp(int(unix), _dt.timezone(_dt.timedelta(hours=-3))
+                                          ).strftime("%d/%m %H:%M")
+    except Exception:
+        return "?"
+
 def cron_job_inputs(job):
     """E-mails / período / vertical de um agendamento — ficam no corpo do POST que ele
     manda pro GitHub (`extendedData.body`). A listagem nem sempre traz esse campo,
@@ -336,6 +360,21 @@ with tab_sched:
                 c[0].caption("📧 " + " · ".join(emails))
             else:
                 c[0].caption("📧 (usa a lista padrão do robô)")
+            # diagnostico: disparou? o que o GitHub respondeu? quando roda de novo?
+            hist, prev = cron_historico(j["jobId"])
+            ult = hist[0] if hist else None
+            if ult:
+                cod = ult.get("httpStatus")
+                extra = (" — GitHub respondeu 204 (aceito)" if cod == 204
+                         else (f" — GitHub respondeu {cod}" if cod else ""))
+                c[0].caption(f"⏱️ última: {_ts(ult.get('date'))} · "
+                             f"{CRON_STATUS.get(ult.get('status'), '?')}{extra}")
+            else:
+                st_j = j.get("lastStatus", 0)
+                c[0].caption(f"⏱️ {CRON_STATUS.get(st_j, 'sem histórico')}"
+                             + (f" · {_ts(j.get('lastExecution'))}" if j.get("lastExecution") else ""))
+            if prev:
+                c[0].caption(f"⏭️ próxima: {_ts(prev[0])}")
             if c[1].button("⏸️" if j.get("enabled") else "▶️", key=f"en_{j['jobId']}",
                            help="ativar/desativar"):
                 cron_set_enabled(j["jobId"], not j.get("enabled"))
