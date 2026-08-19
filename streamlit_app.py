@@ -399,6 +399,11 @@ with tab_sched:
         st.divider()
         st.markdown("**➕ Novo agendamento**")
         t = st.time_input("Horário (BRT)", value=_dt.time(8, 0), key=f"nt_{VERT}")
+        _agora = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=-3)))
+        if (t.hour, t.minute) <= (_agora.hour, _agora.minute):
+            st.caption(f"⏳ **{t.strftime('%H:%M')} já passou hoje** (agora são "
+                       f"{_agora.strftime('%H:%M')} em Brasília). O cron não roda retroativo — "
+                       "a 1ª execução será no próximo dia selecionado.")
         period_s = period_editor(f"sched_{VERT}")
         dias_sel = st.multiselect("Dias", list(DIAS.keys()),
                                   default=["Seg", "Ter", "Qua", "Qui", "Sex"],
