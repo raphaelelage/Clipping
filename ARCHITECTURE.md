@@ -29,7 +29,8 @@ vertical em questão. Sem palavras-chave, a vertical coleta só os portais gov.b
 |---|---|---|---|
 | `clipping_core.py` | **Coleta** (Google News, portais gov.br, Valor RSS, Brazil Stock Guide) + decode de links + verticais | mudar fontes, keywords, portais, janela | ~640 ln |
 | `clipping.py` | **Entrega**: e-mail + Google Drive + backlog + `main()` | mudar e-mail, Drive, destinatários | ~250 ln |
-| `streamlit_app.py` | **Painel** (celular): rodar agora, agendar, debug | mudar a UI / o agendamento / os logs | ~210 ln |
+| `fontes_extra.py` | **Fontes complementares** (entidades WP, RSS próprios, DOU, CVM) | adicionar/remover fonte extra | ~240 ln |
+| `streamlit_app.py` | **Painel** (celular): rodar agora, config, agendar, debug | mudar a UI / o agendamento / os logs | ~330 ln |
 | `.github/workflows/clipping.yml` | **Execução** no GitHub (workflow_dispatch) | mudar inputs, deps, env | ~35 ln |
 
 Suporte: `clipping_requirements.txt` (deps), `SETUP_APP.md` (passo-a-passo de configuração), `clipping_contexto.md` (contexto de negócio).
@@ -71,6 +72,19 @@ Só avisa alto no log se **nenhum** método achar a seção. (A ANS já trocou `
 `/noticias-1` sem aviso e a antiga passou a redirecionar para login com HTTP 200.)
 Dois templates de listagem são suportados: `.listagem-noticias-com-foto li` (ANS, Capes) e
 `article.tileItem` (MEC — sem data na listagem, buscada na página do artigo).
+
+## Fontes complementares (`fontes_extra.py`)
+Rodam **todas em paralelo** (~4s no total, para não pesar no Actions). Quatro grupos:
+| Grupo | Como | Exemplos |
+|---|---|---|
+| WP | `<site>/wp-json/wp/v2/posts?after=<ISO>` | ANAHP, Interfarma, SindHosp, ABIMED, Abifina, ABIIS, Cofen · Semesp, ANUP, Todos Pela Educação, Educa Insights |
+| RSS | feed próprio | Medicina S/A, Setor Saúde, Fiocruz, JOTA, CADE, Consumidor Moderno, INEP |
+| DOU | `in.gov.br` busca por **frase exata**, seção DO1 (atos normativos) | portarias do MEC, decisões da ANS, registros da Anvisa |
+| CVM | dados abertos IPE (zip 1,5 MB) | fato relevante / comunicado ao mercado das empresas cobertas |
+
+Cada fonte diz se aplica filtro de keyword: entidades do setor entram inteiras (`filtrar=False`);
+fontes amplas (JOTA, CADE, DOU) filtram por palavra-chave. Links de arquivo (`.pdf`, `.jpg`) são
+descartados e os RSS do gov.br exigem `/noticias/` no link — eles misturam documento com notícia.
 
 ## Onde ficam os secrets
 - **GitHub → Settings → Secrets and variables → Actions** (usados pelo `clipping.py`):
