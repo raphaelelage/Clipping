@@ -1,0 +1,3 @@
+# Palavras-chave da vertical EDUCACAO (1 por linha, # = comentario).
+# Edite pelo app (aba Config). Enquanto estiver vazio, o Google News nao e consultado
+# e a coleta traz so os portais gov.br (MEC, Capes).

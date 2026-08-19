@@ -66,7 +66,7 @@ DEFAULT_KEYWORDS = [
     "sinistro", "alfapoetina", "medicina", "pravaler", "PIS", "COFINS", "Medida provisória",
     "Mercado Livre", "Block Trade", "Bradesco Saude", "Dr. Consulta",
 ]
-keywords = _load_list("keywords.txt", DEFAULT_KEYWORDS)   # editavel pelo app
+keywords = _load_list("keywords.txt", DEFAULT_KEYWORDS)   # editavel pelo app (setado por set_vertical)
 
 DEFAULT_WHITELIST = [
     "GOV.BR", "CNN Brasil", "Senado Federal", "Cofen", "ConJur", "Agência Brasil", "UOL",
@@ -86,7 +86,49 @@ DEFAULT_WHITELIST = [
     "Panorama Farmacêutico", "Revista Apólice", "Futuro da Saúde", "Migalhas",
     "Bloomberg.com", "Bloomberg Linea Brasil", "Folha de S.Paulo", "pipelinevalor",
 ]
-WHITELIST = _load_list("sources.txt", DEFAULT_WHITELIST)   # editavel pelo app
+WHITELIST = _load_list("sources.txt", DEFAULT_WHITELIST)   # editavel pelo app (setado por set_vertical)
+
+# ----------------------------------------------------------------------------- verticais
+# Cada vertical tem seus proprios arquivos (editaveis pelo app) e portais gov.br.
+# govbr: (site, nome exibido, caminhos conhecidos da secao de noticias)
+VERTICAIS = {
+    "saude": {
+        "label": "Saúde",
+        "govbr": [
+            ("ans", "ANS", ("https://www.gov.br/ans/pt-br/assuntos/noticias-1",
+                            "https://www.gov.br/ans/pt-br/assuntos/noticias")),
+            ("anvisa", "Anvisa", ("https://www.gov.br/anvisa/pt-br/assuntos/noticias-anvisa",)),
+        ],
+    },
+    "educacao": {
+        "label": "Educação",
+        "govbr": [
+            ("mec", "MEC", ("https://www.gov.br/mec/pt-br/assuntos/noticias",)),
+            ("capes", "Capes", ("https://www.gov.br/capes/pt-br/assuntos/noticias",)),
+        ],
+    },
+}
+VERTICAL = "saude"
+
+def arquivos_vertical(vertical):
+    """Nomes dos arquivos de configuracao de uma vertical (usados tambem pelo app)."""
+    v = vertical if vertical in VERTICAIS else "saude"
+    return {"keywords": f"keywords_{v}.txt", "sources": f"sources_{v}.txt",
+            "prompt": f"ai_prompt_{v}.txt"}
+
+def set_vertical(vertical):
+    """Aponta a coleta para uma vertical: recarrega keywords e fontes dos arquivos dela.
+    Fallback: arquivos antigos sem sufixo (keywords.txt/sources.txt) e depois os defaults."""
+    global VERTICAL, keywords, WHITELIST
+    VERTICAL = vertical if vertical in VERTICAIS else "saude"
+    f = arquivos_vertical(VERTICAL)
+    base_kw = DEFAULT_KEYWORDS if VERTICAL == "saude" else []
+    base_src = DEFAULT_WHITELIST
+    keywords = _load_list(f["keywords"], _load_list("keywords.txt", base_kw)
+                          if VERTICAL == "saude" else base_kw)
+    WHITELIST = _load_list(f["sources"], _load_list("sources.txt", base_src)
+                           if VERTICAL == "saude" else base_src)
+    return VERTICAL
 
 VALOR_FEEDS = [
     "https://pox.globo.com/rss/valor/", "https://pox.globo.com/rss/valor/financas/",
@@ -234,35 +276,92 @@ def _google_news(when):
         df = pd.concat([df, pd.DataFrame(bsg, columns=COLS)], ignore_index=True)
     return df, len(bsg)
 
-def _scrape_govbr(base_url, source_name, from_date, max_pages=4):
+_DATE_RX = re.compile(r"(?:Publicado|Atualizado)\s+em\s+(\d{2}/\d{2}/\d{4})", re.I)
+_MESES = {"janeiro": 1, "fevereiro": 2, "marco": 3, "abril": 4, "maio": 5, "junho": 6,
+          "julho": 7, "agosto": 8, "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12}
+_URL_MES_RX = re.compile(r"/(\d{4})/([a-zç]+)/", re.I)
+
+def _url_ano_mes(link):
+    """(ano, mes) a partir de URLs tipo .../noticias/2026/agosto/slug — usado p/ descartar
+    artigos antigos SEM precisar abrir a pagina (o template do MEC nao mostra data)."""
+    m = _URL_MES_RX.search(link or "")
+    if m:
+        mes = _MESES.get(_norm(m.group(2)))
+        if mes:
+            return int(m.group(1)), mes
+    return None
+
+def _govbr_article_date(url):
+    """Data de uma noticia gov.br cujo tile nao mostra data (template MEC).
+    Le 'Publicado em DD/MM/AAAA' (ou 'Atualizado em') na pagina do artigo."""
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=20)
+        m = _DATE_RX.search(BeautifulSoup(r.content, "html.parser").get_text(" ", strip=True))
+        if m:
+            return datetime.strptime(m.group(1), "%d/%m/%Y").date()
+    except Exception:
+        pass
+    return None
+
+def _parse_govbr_items(soup):
+    """Extrai (titulo, link, data|None) dos dois templates de listagem gov.br:
+       A) '.listagem-noticias-com-foto li'  -> h2.titulo a + span.data   (ANS, Capes)
+       B) 'article.tileItem'                -> h2.tileHeadline a, SEM data (MEC)"""
+    out = []
+    for li in soup.select(".listagem-noticias-com-foto li"):
+        a, dt = li.select_one("h2.titulo a"), li.select_one("span.data")
+        if not a or not dt:
+            continue
+        try:
+            d = datetime.strptime(dt.get_text(strip=True), "%d/%m/%Y").date()
+        except Exception:
+            d = None
+        out.append((a.get_text(strip=True), a.get("href", ""), d))
+    if out:
+        return out
+    for art in soup.select("article.tileItem"):
+        a = art.select_one("h2.tileHeadline a") or art.select_one("h2 a")
+        if a and a.get("href"):
+            out.append((a.get_text(strip=True), a["href"], None))   # data vem do artigo
+    return out
+
+def _scrape_govbr(base_url, source_name, from_date, max_pages=4, max_lookups=40):
     """Listagem HTML de noticias gov.br (Plone). Paginacao dinamica via b_start.
     Retorna (rows, alive): alive=True se a listagem tinha itens (mesmo que fora da janela) —
     distingue 'secao viva sem noticia recente' de 'URL morta/redirecionada' (ex.: ANS antiga
-    redirecionava p/ login com HTTP 200 e voltava 0 itens em silencio)."""
-    rows, offset, stop, alive = [], 0, False, False
+    redirecionava p/ login com HTTP 200 e voltava 0 itens em silencio).
+    Se o template nao traz data (MEC), busca a data na pagina do artigo; a listagem e
+    cronologica, entao para depois de algumas seguidas fora da janela."""
+    rows, offset, stop, alive, lookups = [], 0, False, False, 0
+    janela_ym = (from_date.year, from_date.month)
     for p in range(max_pages):
         if stop:
             break
         url = base_url if offset == 0 else f"{base_url}?b_start:int={offset}"
         try:
             r = requests.get(url, headers=HEADERS, timeout=30)
-            soup = BeautifulSoup(r.content, "html.parser")
-            items = soup.select(".listagem-noticias-com-foto li")
-            recent, page_count = False, 0
-            for li in items:
-                a = li.select_one("h2.titulo a"); dt = li.select_one("span.data")
-                if not a or not dt:
-                    continue
-                page_count += 1
-                try:
-                    d = datetime.strptime(dt.get_text(strip=True), "%d/%m/%Y").date()
-                except Exception:
-                    continue
+            items = _parse_govbr_items(BeautifulSoup(r.content, "html.parser"))
+            page_count = len(items)
+            com_data = [(t, l, d) for t, l, d in items if d is not None]
+            # template sem data (MEC): descarta pelo ano/mes da URL e busca o resto em paralelo
+            sem_data = [(t, l) for t, l, d in items if d is None
+                        and (_url_ano_mes(l) or janela_ym) >= janela_ym]
+            sem_data = sem_data[:max(0, max_lookups - lookups)]
+            if sem_data:
+                lookups += len(sem_data)
+                with ThreadPoolExecutor(max_workers=8) as ex:
+                    futs = {ex.submit(_govbr_article_date, l): (t, l) for t, l in sem_data}
+                    for f in as_completed(futs):
+                        t, l = futs[f]
+                        d = f.result()
+                        if d:
+                            com_data.append((t, l, d))
+            recent = False
+            for title, link, d in com_data:
                 if d >= from_date:
                     recent = True
-                    rows.append((a.get_text(strip=True), source_name,
-                                 d.strftime("%a, %d %b %Y"), "",
-                                 f"{source_name} (portal)", a["href"], base_url))
+                    rows.append((title, source_name, d.strftime("%a, %d %b %Y"), "",
+                                 f"{source_name} (portal)", link, base_url))
             if page_count == 0:
                 if p == 0:
                     print(f"[{source_name}] listagem vazia em {base_url} "
@@ -445,37 +544,51 @@ def _decode_links(df):
     return df
 
 # ----------------------------------------------------------------------------- orquestrador
-def collect(period: str = "1d", progress=None) -> pd.DataFrame:
-    """Coleta de todas as fontes dentro da janela `period` ('1h','3d',...). Retorna DataFrame."""
+def collect(period: str = "1d", progress=None, vertical: str | None = None) -> pd.DataFrame:
+    """Coleta de todas as fontes dentro da janela `period` ('1h','3d',...), para a `vertical`
+    ('saude' ou 'educacao'). Retorna DataFrame."""
     def _p(msg):
         if progress:
             progress(msg)
+    if vertical:
+        set_vertical(vertical)
+    v = VERTICAIS.get(VERTICAL, VERTICAIS["saude"])
     when = (period or "1d").strip()
     delta = parse_period(when)
     now = datetime.now(TZ)
     cutoff = now - delta
     from_date = cutoff.date()
 
-    _p("Google News + Brazil Stock Guide…")
-    df_gn, n_bsg = _google_news(when)   # operador 'when:' nativo (abrangente, suporta horas)
+    if not keywords:
+        print(f"[{VERTICAL}] AVISO: nenhuma palavra-chave configurada "
+              f"({arquivos_vertical(VERTICAL)['keywords']}) — Google News nao sera consultado.",
+              flush=True)
+        df_gn = pd.DataFrame([], columns=COLS)
+    else:
+        _p("Google News + Brazil Stock Guide…")
+        df_gn, _ = _google_news(when)   # operador 'when:' nativo (abrangente, suporta horas)
 
-    _p("ANS / Anvisa…")
-    # coleta "a prova de mudanca de endereco": API raiz -> descoberta no menu -> caminhos conhecidos
-    # (a ANS ja mudou /assuntos/noticias -> /assuntos/noticias-1 sem aviso; a antiga redireciona p/ login)
-    ans = _scrape_govbr_auto("ans", "ANS", from_date, (
-        "https://www.gov.br/ans/pt-br/assuntos/noticias-1",
-        "https://www.gov.br/ans/pt-br/assuntos/noticias"))
-    anv = _scrape_govbr_auto("anvisa", "Anvisa", from_date, (
-        "https://www.gov.br/anvisa/pt-br/assuntos/noticias-anvisa",))
+    # portais gov.br da vertical, "a prova de mudanca de endereco":
+    # API raiz -> descoberta no menu -> caminhos conhecidos
+    portais = []
+    for site, nome, paths in v["govbr"]:
+        _p(f"{nome}…")
+        portais.append(_scrape_govbr_auto(site, nome, from_date, paths))
 
     _p("Valor (RSS)…")
-    valor = _scrape_valor_rss(cutoff)
+    valor = _scrape_valor_rss(cutoff) if keywords else []
 
     _p("Brazil Stock Guide (sitemap)…")
-    bsg = _scrape_bsg_sitemap(cutoff)
+    bsg = _scrape_bsg_sitemap(cutoff) if keywords else []
 
-    frames = [df_gn] + [pd.DataFrame(r, columns=COLS) for r in (ans, anv, valor, bsg) if r]
+    frames = [df_gn] + [pd.DataFrame(r, columns=COLS)
+                        for r in (portais + [valor, bsg]) if r]
     allnews = pd.concat(frames, ignore_index=True)
+    if allnews.empty:
+        _p("Nenhuma notícia no período.")
+        return pd.DataFrame([], columns=["title", "count_news", "link", "source", "date",
+                                         "hour", "searched_keyword", "source_link",
+                                         "markdown", "setor"])
 
     allnews["_t"] = allnews["title"].map(_norm)
     allnews["count_news"] = allnews.groupby("_t")["title"].transform("size")

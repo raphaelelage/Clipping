@@ -3,6 +3,12 @@ name: clipping
 on:
   workflow_dispatch:
     inputs:
+      vertical:
+        description: "Vertical"
+        required: false
+        default: "saude"
+        type: choice
+        options: ["saude", "educacao"]
       when:
         description: "Período de busca (ex: 1d, 2d, 7d, 12h, 1h)"
         required: false
@@ -37,6 +43,7 @@ jobs:
           EMAIL_SENHA: ${{ secrets.EMAIL_SENHA }}
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+          VERTICAL: ${{ github.event.inputs.vertical }}
           WHEN_OVERRIDE: ${{ github.event.inputs.when }}
           EMAIL_TO_OVERRIDE: ${{ github.event.inputs.recipients || vars.CLIP_RECIPIENTS }}
         run: python clipping.py

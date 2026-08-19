@@ -15,6 +15,9 @@ import os
 #   '1d', '2d', '7d'         -> dias
 WHEN = os.environ.get("WHEN_OVERRIDE", "").strip() or "1d"
 
+# Vertical: 'saude' (padrao) ou 'educacao'. Define keywords/fontes/prompt e a pasta no Drive.
+VERTICAL = (os.environ.get("VERTICAL", "").strip().lower() or "saude")
+
 # Destinatarios vem do env EMAIL_TO_OVERRIDE (app / agendamento / variavel CLIP_RECIPIENTS).
 # Sem e-mail no codigo (repo publico). Se vazio, nao envia e-mail (so salva XLSX + Drive).
 EMAIL_TO = [e.strip() for e in os.environ.get("EMAIL_TO_OVERRIDE", "").split(",") if e.strip()]
@@ -30,10 +33,16 @@ import pandas as pd
 
 import clipping_core
 
+clipping_core.set_vertical(VERTICAL)
+VERTICAL = clipping_core.VERTICAL                       # normalizado
+VLABEL = clipping_core.VERTICAIS[VERTICAL]["label"]     # 'Saúde' / 'Educação'
+VFILES = clipping_core.arquivos_vertical(VERTICAL)
+
 
 def fetch_news() -> pd.DataFrame:
     """Coleta multi-fonte (clipping_core) e devolve no schema esperado pelo restante do pipeline."""
-    df = clipping_core.collect(WHEN, progress=lambda m: print("·", m, flush=True))
+    df = clipping_core.collect(WHEN, progress=lambda m: print("·", m, flush=True),
+                               vertical=VERTICAL)
     cols = ["title", "count_news", "link", "source", "date", "hour",
             "searched_keyword", "source_link"]
     if df.empty:
@@ -51,7 +60,7 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
       <tr>
         <td style="vertical-align:middle;font-family:Arial,sans-serif;font-size:18px;
                    font-weight:bold;color:#111;">
-          Clipping — Saúde &amp; Educação
+          Clipping {VLABEL}
         </td>
       </tr>
     </table>
@@ -136,15 +145,17 @@ Vou te enviar periodicamente as notícias que selecionei manualmente para você 
 
 
 def _load_ai_prompt() -> str:
-    """Prompt editável pelo app (arquivo ai_prompt.txt no repo); cai no AI_PROMPT padrão se não existir."""
-    try:
-        p = Path("ai_prompt.txt")
-        if p.exists():
-            t = p.read_text(encoding="utf-8").strip()
-            if t:
-                return t
-    except Exception:
-        pass
+    """Prompt da vertical, editável pelo app (ai_prompt_<vertical>.txt);
+    cai no arquivo legado ai_prompt.txt e depois no AI_PROMPT padrão."""
+    for nome in (VFILES["prompt"], "ai_prompt.txt"):
+        try:
+            p = Path(nome)
+            if p.exists():
+                t = p.read_text(encoding="utf-8").strip()
+                if t:
+                    return t
+        except Exception:
+            pass
     return AI_PROMPT.strip()
 
 
@@ -163,48 +174,93 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
     from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
     creds_info = json.loads(os.environ["GOOGLE_CREDENTIALS_JSON"])
-    folder_id = os.environ["DRIVE_FOLDER_ID"].strip()
+    root_id = os.environ["DRIVE_FOLDER_ID"].strip()
     creds = service_account.Credentials.from_service_account_info(
         creds_info, scopes=["https://www.googleapis.com/auth/drive"]
     )
     service = build("drive", "v3", credentials=creds, cache_discovery=False)
 
     XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    FOLDER_MIME = "application/vnd.google-apps.folder"
 
-    def find_file_id(name: str) -> str:
-        q = f"name='{name}' and '{folder_id}' in parents and trashed=false"
-        files = service.files().list(q=q, fields="files(id)").execute().get("files", [])
-        if not files:
-            raise RuntimeError(
-                f"Arquivo '{name}' nao existe na pasta do Drive. "
-                "Service Accounts nao podem criar arquivos em contas pessoais — "
-                "crie manualmente (upload de um placeholder vazio) uma unica vez."
-            )
-        return files[0]["id"]
+    def _find(name: str, parent: str, mime: str | None = None):
+        q = (f"name='{name}' and '{parent}' in parents and trashed=false"
+             + (f" and mimeType='{mime}'" if mime else ""))
+        files = service.files().list(q=q, fields="files(id,name)").execute().get("files", [])
+        return files[0]["id"] if files else None
+
+    # --- pasta da vertical: <pasta raiz>/Saúde  ou  <pasta raiz>/Educação -------------
+    folder_id = _find(VLABEL, root_id, FOLDER_MIME)
+    if not folder_id:
+        try:
+            folder_id = service.files().create(
+                body={"name": VLABEL, "mimeType": FOLDER_MIME, "parents": [root_id]},
+                fields="id").execute()["id"]
+            print(f"[ok] Drive: pasta '{VLABEL}' criada")
+        except Exception as e:
+            print(f"[aviso] nao consegui criar a pasta '{VLABEL}' no Drive ({e}). "
+                  f"Crie manualmente dentro da pasta raiz e rode de novo.")
+            folder_id = root_id     # fallback: usa a raiz (comportamento antigo)
+    folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
+    print(f"[ok] Drive ({VLABEL}): {folder_url}")
+
+    def find_file_id(name: str, create_from: Path | None = None,
+                     mimetype: str = "text/plain") -> str | None:
+        """Acha o arquivo na pasta da vertical. Se nao existir:
+        1) migra o legado da pasta raiz (metadata-only, sem custo de cota); ou
+        2) cria (pode falhar: Service Account nao tem cota propria em conta pessoal)."""
+        fid = _find(name, folder_id)
+        if fid:
+            return fid
+        legado = _find(name, root_id) if folder_id != root_id else None
+        if legado:
+            service.files().update(fileId=legado, addParents=folder_id,
+                                   removeParents=root_id, fields="id").execute()
+            print(f"[ok] Drive: '{name}' movido para a pasta '{VLABEL}'")
+            return legado
+        if create_from is not None:
+            try:
+                fid = service.files().create(
+                    body={"name": name, "parents": [folder_id]},
+                    media_body=MediaFileUpload(str(create_from), mimetype=mimetype,
+                                               resumable=False),
+                    fields="id").execute()["id"]
+                print(f"[ok] Drive: '{name}' criado em '{VLABEL}'")
+                return fid
+            except Exception as e:
+                print(f"[aviso] nao consegui criar '{name}' no Drive: {e}\n"
+                      f"        -> crie um arquivo vazio com esse nome em {folder_url} "
+                      f"(uma unica vez) e rode de novo.")
+        return None
 
     def update_file(local_path: Path, drive_name: str, mimetype: str) -> str:
-        file_id = find_file_id(drive_name)
+        file_id = find_file_id(drive_name, create_from=local_path, mimetype=mimetype)
+        if not file_id:
+            return folder_url
         media = MediaFileUpload(str(local_path), mimetype=mimetype, resumable=False)
         service.files().update(fileId=file_id, media_body=media).execute()
         return f"https://drive.google.com/file/d/{file_id}/view"
 
-    def download_file(drive_name: str, local_path: Path) -> None:
+    def download_file(drive_name: str, local_path: Path) -> bool:
         file_id = find_file_id(drive_name)
+        if not file_id:
+            return False
         request = service.files().get_media(fileId=file_id)
         with open(local_path, "wb") as f:
             downloader = MediaIoBaseDownload(f, request)
             done = False
             while not done:
                 _, done = downloader.next_chunk()
+        return True
 
     ai_url = update_file(txt_path, "ai_input.txt", "text/plain")
     update_file(xlsx_path, "news_scrapper.xlsx", XLSX_MIME)
     print("[ok] Drive: ai_input.txt e news_scrapper.xlsx atualizados")
 
     backlog_local = Path("backlog.xlsx")
-    download_file("backlog.xlsx", backlog_local)
+    tem_backlog = download_file("backlog.xlsx", backlog_local)
     try:
-        df_backlog = pd.read_excel(backlog_local)
+        df_backlog = pd.read_excel(backlog_local) if tem_backlog else pd.DataFrame()
     except Exception:
         df_backlog = pd.DataFrame(columns=["added_at"] + list(df.columns))
 
@@ -233,7 +289,7 @@ def send_email(df: pd.DataFrame, xlsx_path: Path, drive_url: str, novas_backlog:
     pwd = os.environ["EMAIL_SENHA"].replace(" ", "").strip()
 
     msg = EmailMessage()
-    msg["Subject"] = f"Clipping — Saúde & Educação — {date.today().strftime('%d/%m/%Y')} ({WHEN})"
+    msg["Subject"] = f"Clipping {VLABEL} — {date.today().strftime('%d/%m/%Y')} ({WHEN})"
     msg["From"] = user
     msg["To"] = ", ".join(EMAIL_TO)
     msg.set_content(f"News Scrapper: {len(df)} noticias ({novas_backlog} ineditas).")
@@ -256,6 +312,9 @@ def send_email(df: pd.DataFrame, xlsx_path: Path, drive_url: str, novas_backlog:
 
 
 def main() -> None:
+    print(f"=== Clipping {VLABEL} | vertical={VERTICAL} | janela={WHEN} | "
+          f"keywords={len(clipping_core.keywords)} | fontes={len(clipping_core.WHITELIST)} ===",
+          flush=True)
     df = fetch_news()
 
     xlsx_path = Path("news_scrapper.xlsx")
