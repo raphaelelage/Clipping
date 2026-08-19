@@ -68,6 +68,20 @@ VERTICAIS = {
                  "prompt": "ai_prompt_educacao.txt", "portais": "MEC · Capes"},
 }
 
+class _SemRede:
+    """Resposta falsa: erro de rede NUNCA pode derrubar o app (o Streamlit executa o
+    codigo de todas as abas a cada clique — uma falha numa aba quebrava a tela inteira)."""
+    def __init__(self, erro=""):
+        self.status_code, self.text = 0, f"sem conexão com o serviço. {erro}"[:200]
+    def json(self):
+        return {}
+
+def _req(metodo, url, **kw):
+    try:
+        return requests.request(metodo, url, timeout=kw.pop("timeout", 30), **kw)
+    except Exception as e:
+        return _SemRede(type(e).__name__)
+
 # ----------------------------------------------------------------- GitHub helpers
 def _gh_headers():
     return {"Authorization": f"Bearer {PAT}", "Accept": "application/vnd.github+json",
@@ -77,25 +91,25 @@ def dispatch_now(vertical, period, recipients):
     url = f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/{WF}/dispatches"
     body = {"ref": BRANCH, "inputs": {"vertical": vertical, "when": period,
                                       "recipients": recipients}}
-    return requests.post(url, headers=_gh_headers(), json=body, timeout=30)
+    return _req("post", url, headers=_gh_headers(), json=body, timeout=30)
 
 def recent_runs(n=8):
-    r = requests.get(f"{GH_API}/repos/{OWNER}/{REPO}/actions/runs?per_page={n}",
+    r = _req("get", f"{GH_API}/repos/{OWNER}/{REPO}/actions/runs?per_page={n}",
                      headers=_gh_headers(), timeout=30)
     return r.json().get("workflow_runs", []) if r.status_code == 200 else []
 
 def gh_check():
-    return requests.get(f"{GH_API}/repos/{OWNER}/{REPO}", headers=_gh_headers(),
+    return _req("get", f"{GH_API}/repos/{OWNER}/{REPO}", headers=_gh_headers(),
                         timeout=20).status_code
 
 def gh_wf_check():
-    return requests.get(f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/{WF}",
+    return _req("get", f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/{WF}",
                         headers=_gh_headers(), timeout=20).status_code
 
 def run_logs_tail(run_id, max_lines=250):
     """Baixa o .zip de logs da execução e devolve as últimas linhas (debug pelo celular)."""
     import io, zipfile
-    r = requests.get(f"{GH_API}/repos/{OWNER}/{REPO}/actions/runs/{run_id}/logs",
+    r = _req("get", f"{GH_API}/repos/{OWNER}/{REPO}/actions/runs/{run_id}/logs",
                      headers=_gh_headers(), timeout=90)
     if r.status_code != 200:
         return None, r.status_code
@@ -110,11 +124,16 @@ def run_logs_tail(run_id, max_lines=250):
         return f"(erro ao abrir o zip de logs: {e})", 200
 
 def gh_get_file(path):
-    r = requests.get(f"{GH_API}/repos/{OWNER}/{REPO}/contents/{path}?ref={BRANCH}",
-                     headers=_gh_headers(), timeout=30)
-    if r.status_code == 200:
-        j = r.json()
-        return base64.b64decode(j["content"]).decode("utf-8"), j["sha"]
+    if not path:
+        return "", None
+    r = _req("get", f"{GH_API}/repos/{OWNER}/{REPO}/contents/{path}?ref={BRANCH}",
+             headers=_gh_headers(), timeout=30)
+    try:
+        if r.status_code == 200:
+            j = r.json()
+            return base64.b64decode(j["content"]).decode("utf-8"), j["sha"]
+    except Exception:
+        pass
     return "", None
 
 def gh_put_file(path, content, sha, message):
@@ -122,7 +141,7 @@ def gh_put_file(path, content, sha, message):
             "content": base64.b64encode(content.encode("utf-8")).decode("ascii")}
     if sha:
         body["sha"] = sha
-    return requests.put(f"{GH_API}/repos/{OWNER}/{REPO}/contents/{path}",
+    return _req("put", f"{GH_API}/repos/{OWNER}/{REPO}/contents/{path}",
                         headers=_gh_headers(), json=body, timeout=30)
 
 # ----------------------------------------------------------------- cron-job.org helpers
@@ -146,10 +165,13 @@ def _job_da_vertical(j, vertical):
 
 def cron_list(vertical):
     """Agendamentos desta vertical."""
-    r = requests.get(f"{CRON_API}/jobs", headers=_cron_headers(), timeout=30)
+    r = _req("get", f"{CRON_API}/jobs", headers=_cron_headers(), timeout=30)
     if r.status_code != 200:
         return None, r
-    return [j for j in r.json().get("jobs", []) if _job_da_vertical(j, vertical)], r
+    try:
+        return [j for j in r.json().get("jobs", []) if _job_da_vertical(j, vertical)], r
+    except Exception:
+        return None, r
 
 def _montar_job(vertical, hours, minutes, wdays, period, recipients, enabled=True):
     body = json.dumps({"ref": BRANCH, "inputs": {"vertical": vertical, "when": period,
@@ -170,18 +192,18 @@ def _montar_job(vertical, hours, minutes, wdays, period, recipients, enabled=Tru
     }
 
 def cron_create(vertical, hours, minutes, wdays, period, recipients):
-    return requests.put(f"{CRON_API}/jobs", headers=_cron_headers(),
+    return _req("put", f"{CRON_API}/jobs", headers=_cron_headers(),
                         json={"job": _montar_job(vertical, hours, minutes, wdays,
                                                  period, recipients)}, timeout=30)
 
 def cron_update(jid, vertical, hours, minutes, wdays, period, recipients, enabled=True):
     """Edita um agendamento existente (mesma estrutura do create, via PATCH)."""
-    return requests.patch(f"{CRON_API}/jobs/{jid}", headers=_cron_headers(),
+    return _req("patch", f"{CRON_API}/jobs/{jid}", headers=_cron_headers(),
                           json={"job": _montar_job(vertical, hours, minutes, wdays,
                                                    period, recipients, enabled)}, timeout=30)
 
 def cron_delete(jid):
-    return requests.delete(f"{CRON_API}/jobs/{jid}", headers=_cron_headers(), timeout=30)
+    return _req("delete", f"{CRON_API}/jobs/{jid}", headers=_cron_headers(), timeout=30)
 
 CRON_STATUS = {0: "nunca executou", 1: "✅ OK", 2: "❌ falhou (DNS)",
                3: "❌ falhou (conexão)", 4: "❌ falhou (HTTP)", 5: "❌ falhou (timeout)",
@@ -192,7 +214,7 @@ def cron_historico(jid):
     """Últimas execuções + próximas previstas. É o que diz se o agendamento disparou
     e o que o GitHub respondeu (204 = aceito; 401/404 = token ou repo errado)."""
     try:
-        r = requests.get(f"{CRON_API}/jobs/{jid}/history", headers=_cron_headers(), timeout=20)
+        r = _req("get", f"{CRON_API}/jobs/{jid}/history", headers=_cron_headers(), timeout=20)
         if r.status_code == 200:
             j = r.json()
             return (j.get("history") or []), (j.get("predictions") or [])
@@ -214,7 +236,7 @@ def cron_job_inputs(job):
     body = ((job.get("extendedData") or {}).get("body")) or ""
     if not body:
         try:
-            r = requests.get(f"{CRON_API}/jobs/{job['jobId']}", headers=_cron_headers(), timeout=20)
+            r = _req("get", f"{CRON_API}/jobs/{job['jobId']}", headers=_cron_headers(), timeout=20)
             if r.status_code == 200:
                 det = r.json().get("jobDetails") or r.json().get("job") or {}
                 body = ((det.get("extendedData") or {}).get("body")) or ""
@@ -226,7 +248,7 @@ def cron_job_inputs(job):
         return {}
 
 def cron_set_enabled(jid, enabled):
-    return requests.patch(f"{CRON_API}/jobs/{jid}", headers=_cron_headers(),
+    return _req("patch", f"{CRON_API}/jobs/{jid}", headers=_cron_headers(),
                           json={"job": {"enabled": enabled}}, timeout=30)
 
 # ----------------------------------------------------------------- widgets reutilizáveis
@@ -361,15 +383,8 @@ with tab_cfg:
         st.info("**Palavras-chave e fontes desta seção são automáticas:** ela usa a união "
                 "das listas de **Saúde** e **Educação**. Para mudar, edite uma dessas duas "
                 "seções — o efeito aparece aqui na próxima execução.")
-        cols = st.columns(2)
-        for col, chave in zip(cols, ("saude", "educacao")):
-            vv = VERTICAIS[chave]
-            kw, _ = gh_get_file(vv["keywords"])
-            sr, _ = gh_get_file(vv["sources"])
-            nk = len([l for l in kw.splitlines() if l.strip() and not l.lstrip().startswith("#")])
-            ns = len([l for l in sr.splitlines() if l.strip() and not l.lstrip().startswith("#")])
-            col.metric(f"{vv['icon']} {vv['label']}", f"{nk} palavras-chave", f"{ns} fontes",
-                       delta_color="off")
+        st.caption("Listas usadas: `keywords_saude.txt` + `keywords_educacao.txt` e "
+                   "`sources_saude.txt` + `sources_educacao.txt` (duplicatas removidas).")
         st.divider()
     file_editor("Prompt da IA", V["prompt"],
                 "Texto que vai junto da lista (o que você copia do e-mail e cola no Claude).", 300)
