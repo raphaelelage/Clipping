@@ -1,4 +1,4 @@
-Estou fazendo um clipping de equity research para o setor de saúde. Analise APENAS as notícias listadas nesta mensagem (ignore notícias ou listas enviadas em mensagens anteriores deste chat) e selecione todas que sejam relevantes para investidores, considerando:
+Estou fazendo um clipping de equity research para os setores de saúde e educação. Analise APENAS as notícias listadas nesta mensagem (ignore notícias ou listas enviadas em mensagens anteriores deste chat) e selecione todas que sejam relevantes para investidores, considerando:
 - empresas privadas e listadas em bolsa;
 - movimentos de consolidação (M&A), expansão ou retração;
 - decisões e regulamentações de órgãos governamentais ou reguladores (ex.: MEC, ANS, SUS, etc.);

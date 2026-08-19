@@ -118,6 +118,21 @@ CVM_EMPRESAS = {
     "educacao": ["COGNA", "YDUQS", "SER EDUCACIONAL", "ANIMA", "VASTA", "AFYA", "VITRU",
                  "CRUZEIRO DO SUL", "ARCO"],
 }
+# vertical combinada = uniao das duas listas (sem repetir), montada automaticamente
+def _uniao(d, chave):
+    vis, out = set(), []
+    for x in d.get("saude", []) + d.get("educacao", []):
+        k = chave(x)
+        if k not in vis:
+            vis.add(k); out.append(x)
+    return out
+
+WP_SITES["saude_educacao"] = _uniao(WP_SITES, lambda x: x[1])
+RSS_FEEDS["saude_educacao"] = _uniao(RSS_FEEDS, lambda x: x[1])
+DOU_TERMOS["saude_educacao"] = _uniao(DOU_TERMOS, lambda x: x.lower())
+DOU_ORGAOS["saude_educacao"] = _uniao(DOU_ORGAOS, lambda x: x)
+CVM_EMPRESAS["saude_educacao"] = _uniao(CVM_EMPRESAS, lambda x: x)
+
 CVM_CATEGORIAS = ("Fato Relevante", "Comunicado ao Mercado")
 CVM_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{ano}.zip"
 

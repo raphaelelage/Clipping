@@ -109,19 +109,53 @@ VERTICAIS = {
         ],
     },
 }
+# vertical combinada = uniao das duas (mesmos portais, sem repetir)
+_vistos = set()
+VERTICAIS["saude_educacao"] = {
+    "label": "Saúde e Educação",
+    "govbr": [g for g in VERTICAIS["saude"]["govbr"] + VERTICAIS["educacao"]["govbr"]
+              if not (g[0] in _vistos or _vistos.add(g[0]))],
+}
+del _vistos
 VERTICAL = "saude"
 
+# A vertical combinada NAO tem listas proprias: elas sao a uniao das outras duas,
+# calculada a cada execucao. Assim editar Saude ou Educacao ja reflete na combinada.
+COMBINADA = "saude_educacao"
+PARTES = ("saude", "educacao")
+
 def arquivos_vertical(vertical):
-    """Nomes dos arquivos de configuracao de uma vertical (usados tambem pelo app)."""
+    """Arquivos de configuracao da vertical. Na combinada, keywords/sources sao None
+    (derivados) — so o prompt e proprio."""
     v = vertical if vertical in VERTICAIS else "saude"
+    if v == COMBINADA:
+        return {"keywords": None, "sources": None, "prompt": f"ai_prompt_{v}.txt"}
     return {"keywords": f"keywords_{v}.txt", "sources": f"sources_{v}.txt",
             "prompt": f"ai_prompt_{v}.txt"}
 
+def _dedup(itens):
+    vis, out = set(), []
+    for x in itens:
+        k = _norm(x)
+        if k and k not in vis:
+            vis.add(k); out.append(x)
+    return out
+
 def set_vertical(vertical):
     """Aponta a coleta para uma vertical: recarrega keywords e fontes dos arquivos dela.
+    Na combinada, usa a UNIAO das listas de saude e educacao (sem arquivo proprio).
     Fallback: arquivos antigos sem sufixo (keywords.txt/sources.txt) e depois os defaults."""
     global VERTICAL, keywords, WHITELIST
     VERTICAL = vertical if vertical in VERTICAIS else "saude"
+    if VERTICAL == COMBINADA:
+        kw, src = [], []
+        for parte in PARTES:
+            f2 = arquivos_vertical(parte)
+            kw += _load_list(f2["keywords"], [])
+            src += _load_list(f2["sources"], [])
+        keywords = _dedup(kw) or DEFAULT_KEYWORDS
+        WHITELIST = _dedup(src) or DEFAULT_WHITELIST
+        return VERTICAL
     f = arquivos_vertical(VERTICAL)
     base_kw = DEFAULT_KEYWORDS if VERTICAL == "saude" else []
     base_src = DEFAULT_WHITELIST

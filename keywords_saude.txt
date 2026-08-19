@@ -1,15 +1,13 @@
-# Palavras-chave do Google News (1 por linha, # = comentário). Editável pelo app.
+# Palavras-chave da vertical SAUDE (so saude). 1 por linha, # = comentario.
+# Editavel pelo app (aba Config -> Saude).
 saúde
 saúde suplementar
-educação
-ensino
 agencia nacional de saude
 ans
 anahp
 anvisa
 athena saude
 amil
-mec
 fenasaude
 abramge
 elfa
@@ -36,15 +34,6 @@ Blau
 Raia
 Oncoclinicas
 Dimed
-Cogna
-YDUQS
-Ânima
-Ser Educacional
-Cruzeiro do Sul
-Afya
-Vitru
-Vasta Educação
-Arco Educação
 medicamentos
 farmaceutica
 farmacia
@@ -56,8 +45,6 @@ GLP-1
 EMS
 prevent senior
 mais medicos
-ead
-ensino tecnico
 icms
 beneficio fiscal
 IRPJ
@@ -65,8 +52,6 @@ hospital
 hospitais
 operadoras
 planos de saúde
-faculdade
-pnld
 glosa
 autismo
 oncologia
@@ -75,7 +60,6 @@ sinistralidade
 sinistro
 alfapoetina
 medicina
-pravaler
 PIS
 COFINS
 Medida provisória

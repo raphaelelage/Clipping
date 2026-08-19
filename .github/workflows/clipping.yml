@@ -6,9 +6,9 @@ on:
       vertical:
         description: "Vertical"
         required: false
-        default: "saude"
+        default: "saude_educacao"
         type: choice
-        options: ["saude", "educacao"]
+        options: ["saude_educacao", "saude", "educacao"]
       when:
         description: "Período de busca (ex: 1d, 2d, 7d, 12h, 1h)"
         required: false

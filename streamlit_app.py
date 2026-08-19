@@ -55,6 +55,11 @@ DIAS = {"Seg": 1, "Ter": 2, "Qua": 3, "Qui": 4, "Sex": 5, "Sáb": 6, "Dom": 0}
 
 # Verticais — precisa espelhar VERTICAIS/arquivos_vertical do clipping_core.py
 VERTICAIS = {
+    # combinada: keywords/fontes sao a UNIAO de saude+educacao (sem arquivo proprio)
+    "saude_educacao": {"label": "Saúde e Educação", "icon": "📊",
+                       "keywords": None, "sources": None,
+                       "prompt": "ai_prompt_saude_educacao.txt",
+                       "portais": "ANS · Anvisa · MEC · Capes"},
     "saude": {"label": "Saúde", "icon": "🏥",
               "keywords": "keywords_saude.txt", "sources": "sources_saude.txt",
               "prompt": "ai_prompt_saude.txt", "portais": "ANS · Anvisa"},
@@ -124,23 +129,35 @@ def gh_put_file(path, content, sha, message):
 def _cron_headers():
     return {"Authorization": f"Bearer {CRON_KEY}", "Content-Type": "application/json"}
 
+def _job_da_vertical(j, vertical):
+    """O título do job identifica a vertical. Formato atual: 'Clipping [chave] HH:MM per'.
+    Aceita também o formato antigo ('Clipping <Label> ...'), tomando cuidado para
+    'Saúde e Educação' não ser confundido com 'Saúde' (um é prefixo do outro)."""
+    t = str(j.get("title", ""))
+    if t.startswith(f"{CRON_PREFIX} ["):
+        return t.startswith(f"{CRON_PREFIX} [{vertical}]")
+    label = VERTICAIS[vertical]["label"]
+    if not t.startswith(f"{CRON_PREFIX} {label} "):
+        return False
+    for k, v in VERTICAIS.items():          # outra vertical cujo label comeca igual?
+        if k != vertical and len(v["label"]) > len(label)                 and t.startswith(f"{CRON_PREFIX} {v['label']} "):
+            return False
+    return True
+
 def cron_list(vertical):
-    """Agendamentos desta vertical (título começa com 'Clipping <Label>')."""
+    """Agendamentos desta vertical."""
     r = requests.get(f"{CRON_API}/jobs", headers=_cron_headers(), timeout=30)
     if r.status_code != 200:
         return None, r
-    pref = f"{CRON_PREFIX} {VERTICAIS[vertical]['label']}"
-    return [j for j in r.json().get("jobs", [])
-            if str(j.get("title", "")).startswith(pref)], r
+    return [j for j in r.json().get("jobs", []) if _job_da_vertical(j, vertical)], r
 
 def _montar_job(vertical, hours, minutes, wdays, period, recipients, enabled=True):
-    label = VERTICAIS[vertical]["label"]
     body = json.dumps({"ref": BRANCH, "inputs": {"vertical": vertical, "when": period,
                                                  "recipients": recipients}})
     return {
         "url": f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/{WF}/dispatches",
         "enabled": enabled,
-        "title": f"{CRON_PREFIX} {label} {hours[0]:02d}:{minutes[0]:02d} {period}",
+        "title": f"{CRON_PREFIX} [{vertical}] {hours[0]:02d}:{minutes[0]:02d} {period}",
         "requestMethod": 1, "requestTimeout": 60, "saveResponses": True,
         "schedule": {"timezone": "America/Sao_Paulo", "expiresAt": 0,
                      "hours": hours, "minutes": minutes, "mdays": [-1],
@@ -303,8 +320,12 @@ escolha = st.radio("Vertical", list(labels.values()), horizontal=True,
                    label_visibility="collapsed")
 VERT = next(k for k, v in labels.items() if v == escolha)
 V = VERTICAIS[VERT]
-st.caption(f"Vertical **{V['label']}** · portais próprios: {V['portais']} · "
-           f"config em `{V['keywords']}` / `{V['sources']}`")
+if V["keywords"]:
+    st.caption(f"Vertical **{V['label']}** · portais: {V['portais']} · "
+               f"config em `{V['keywords']}` / `{V['sources']}`")
+else:
+    st.caption(f"Vertical **{V['label']}** · portais: {V['portais']} · "
+               "palavras-chave e fontes = **união de Saúde + Educação** (automática)")
 
 tab_run, tab_cfg, tab_sched, tab_debug = st.tabs(
     ["▶️ Rodar agora", "⚙️ Config", "🕗 Agendamento", "🔧 Debug"])
@@ -328,13 +349,28 @@ with tab_run:
 with tab_cfg:
     st.markdown(f"Configuração da vertical **{V['label']}**. "
                 "Cada save vale a partir da **próxima execução**.")
-    file_editor("Palavras-chave", V["keywords"],
-                "Uma por linha — termos buscados no Google News. (# = comentário)", 260)
-    st.divider()
-    file_editor("Fontes aceitas", V["sources"],
-                "Uma por linha — só entram notícias do Google News dessas fontes "
-                "(nome exato como aparece no Google News).", 260)
-    st.divider()
+    if V["keywords"]:
+        file_editor("Palavras-chave", V["keywords"],
+                    "Uma por linha — termos buscados no Google News. (# = comentário)", 260)
+        st.divider()
+        file_editor("Fontes aceitas", V["sources"],
+                    "Uma por linha — só entram notícias do Google News dessas fontes "
+                    "(nome exato como aparece no Google News).", 260)
+        st.divider()
+    else:
+        st.info("**Palavras-chave e fontes desta seção são automáticas:** ela usa a união "
+                "das listas de **Saúde** e **Educação**. Para mudar, edite uma dessas duas "
+                "seções — o efeito aparece aqui na próxima execução.")
+        cols = st.columns(2)
+        for col, chave in zip(cols, ("saude", "educacao")):
+            vv = VERTICAIS[chave]
+            kw, _ = gh_get_file(vv["keywords"])
+            sr, _ = gh_get_file(vv["sources"])
+            nk = len([l for l in kw.splitlines() if l.strip() and not l.lstrip().startswith("#")])
+            ns = len([l for l in sr.splitlines() if l.strip() and not l.lstrip().startswith("#")])
+            col.metric(f"{vv['icon']} {vv['label']}", f"{nk} palavras-chave", f"{ns} fontes",
+                       delta_color="off")
+        st.divider()
     file_editor("Prompt da IA", V["prompt"],
                 "Texto que vai junto da lista (o que você copia do e-mail e cola no Claude).", 300)
 
@@ -480,7 +516,7 @@ with tab_debug:
                 st.write("cron-job.org:", f"❌ HTTP {getattr(rr, 'status_code', '?')}")
         else:
             st.write("cron-job.org:", "— sem `cronjob_api_key`")
-        for f in (V["keywords"], V["sources"], V["prompt"]):
+        for f in [x for x in (V["keywords"], V["sources"], V["prompt"]) if x]:
             cur, _ = gh_get_file(f)
             n = len([l for l in cur.splitlines()
                      if l.strip() and not l.lstrip().startswith("#")])
