@@ -9,10 +9,25 @@ Robô diário de clipping de notícias (saúde + educação, equity research). C
 decodifica os links, monta um e-mail, anexa XLSX, sincroniza com o Google Drive
 e (opcional) mantém um backlog. Roda no **GitHub Actions**; é controlado por um **app Streamlit** (celular).
 
+## Verticais (Saúde e Educação)
+O robô roda **uma vertical por execução** (`VERTICAL=saude|educacao`, input do workflow / seletor no app).
+Cada vertical tem arquivos e pasta no Drive próprios:
+
+| | Saúde | Educação |
+|---|---|---|
+| Palavras-chave | `keywords_saude.txt` | `keywords_educacao.txt` |
+| Fontes | `sources_saude.txt` | `sources_educacao.txt` |
+| Prompt | `ai_prompt_saude.txt` | `ai_prompt_educacao.txt` |
+| Portais gov.br | ANS · Anvisa | MEC · Capes |
+| Pasta no Drive | `<raiz>/Saúde` | `<raiz>/Educação` |
+
+Google News, Valor (RSS) e Brazil Stock Guide rodam nas **duas**, sempre com as keywords/fontes da
+vertical em questão. Sem palavras-chave, a vertical coleta só os portais gov.br.
+
 ## Mapa de arquivos (4 que importam)
 | Arquivo | Responsabilidade | Mexa aqui quando… | Tam. |
 |---|---|---|---|
-| `clipping_core.py` | **Coleta** (Google News, ANS, Anvisa, Valor RSS, Brazil Stock Guide) + decode de links | mudar fontes, keywords, janela de tempo | ~280 ln |
+| `clipping_core.py` | **Coleta** (Google News, portais gov.br, Valor RSS, Brazil Stock Guide) + decode de links + verticais | mudar fontes, keywords, portais, janela | ~640 ln |
 | `clipping.py` | **Entrega**: e-mail + Google Drive + backlog + `main()` | mudar e-mail, Drive, destinatários | ~250 ln |
 | `streamlit_app.py` | **Painel** (celular): rodar agora, agendar, debug | mudar a UI / o agendamento / os logs | ~210 ln |
 | `.github/workflows/clipping.yml` | **Execução** no GitHub (workflow_dispatch) | mudar inputs, deps, env | ~35 ln |
@@ -36,8 +51,9 @@ Suporte: `clipping_requirements.txt` (deps), `SETUP_APP.md` (passo-a-passo de co
 - **Janela** (`WHEN`): "1h","6h","1d","3d"… é um corte por data/hora (`1d` = últimas 24h).
 
 ## Onde mexer pra cada coisa (cheat-sheet)
-- **Adicionar/remover palavra-chave** → `clipping_core.py`, lista `keywords`.
-- **Aceitar nova fonte do Google News** → `clipping_core.py`, lista `WHITELIST`.
+- **Adicionar/remover palavra-chave** → pelo app (aba Config) ou editando `keywords_<vertical>.txt`.
+- **Aceitar nova fonte do Google News** → pelo app (aba Config) ou `sources_<vertical>.txt`.
+- **Adicionar um portal gov.br a uma vertical** → `clipping_core.py`, dict `VERTICAIS`.
 - **Adicionar uma fonte nova (RSS/scraper)** → `clipping_core.py`: escreva um `_scrape_xxx()` que
   devolva tuplas no formato `COLS`, e some o resultado em `collect()` (lista `frames`).
 - **Mudar o visual/conteúdo do e-mail** → `clipping.py`, `build_email_html()`.
@@ -46,6 +62,15 @@ Suporte: `clipping_requirements.txt` (deps), `SETUP_APP.md` (passo-a-passo de co
 - **Mudar o prompt da IA** → `clipping.py`, `AI_PROMPT`.
 - **Mudar horário agendado** → pelo app (aba 🕗 Agendamento) — não precisa editar código.
 - **Mudar a UI do app** → `streamlit_app.py`.
+
+## Portais gov.br — à prova de mudança de endereço
+`_scrape_govbr_auto()` tenta, nesta ordem: **1)** API REST na raiz do site (`++api++/@search`);
+**2)** descoberta do link de notícias no menu da home; **3)** descoberta pela seção mais frequente
+no `sitemap.xml`; **4)** caminhos conhecidos; **5)** coleta direta pelo `sitemap.xml`.
+Só avisa alto no log se **nenhum** método achar a seção. (A ANS já trocou `/noticias` por
+`/noticias-1` sem aviso e a antiga passou a redirecionar para login com HTTP 200.)
+Dois templates de listagem são suportados: `.listagem-noticias-com-foto li` (ANS, Capes) e
+`article.tileItem` (MEC — sem data na listagem, buscada na página do artigo).
 
 ## Onde ficam os secrets
 - **GitHub → Settings → Secrets and variables → Actions** (usados pelo `clipping.py`):

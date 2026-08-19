@@ -291,17 +291,25 @@ def _url_ano_mes(link):
             return int(m.group(1)), mes
     return None
 
-def _govbr_article_date(url):
-    """Data de uma noticia gov.br cujo tile nao mostra data (template MEC).
-    Le 'Publicado em DD/MM/AAAA' (ou 'Atualizado em') na pagina do artigo."""
+def _govbr_article_meta(url):
+    """(data, titulo) de uma noticia gov.br cujo tile nao mostra data (template MEC).
+    Le 'Publicado em DD/MM/AAAA' (ou 'Atualizado em') e og:title/h1 na pagina do artigo."""
     try:
         r = requests.get(url, headers=HEADERS, timeout=20)
-        m = _DATE_RX.search(BeautifulSoup(r.content, "html.parser").get_text(" ", strip=True))
+        soup = BeautifulSoup(r.content, "html.parser")
+        d = None
+        m = _DATE_RX.search(soup.get_text(" ", strip=True))
         if m:
-            return datetime.strptime(m.group(1), "%d/%m/%Y").date()
+            d = datetime.strptime(m.group(1), "%d/%m/%Y").date()
+        og = soup.find("meta", property="og:title")
+        t = (og.get("content").strip() if og and og.get("content")
+             else (soup.h1.get_text(strip=True) if soup.h1 else ""))
+        return d, t
     except Exception:
-        pass
-    return None
+        return None, ""
+
+def _govbr_article_date(url):
+    return _govbr_article_meta(url)[0]
 
 def _parse_govbr_items(soup):
     """Extrai (titulo, link, data|None) dos dois templates de listagem gov.br:
@@ -412,22 +420,81 @@ def _govbr_api_news(site, source_name, from_date, lang="pt-br", page=50, max_pag
             break
     return rows
 
+_SECAO_RX = re.compile(r"^(https?://[^\s]*?/[^/\s]*notici[^/\s]*)/", re.I)
+
+def _secao_de(url):
+    """URL de artigo -> URL da secao. Ex.: .../assuntos/noticias-1/periodo-eleitoral/slug
+    -> .../assuntos/noticias-1 . Funciona qualquer que seja o nome da secao."""
+    m = _SECAO_RX.match(url or "")
+    return m.group(1) if m else None
+
+def _govbr_sitemap_locs(site, max_sub=6):
+    """URLs do sitemap.xml do site gov.br (segue sitemapindex). Canal de descoberta que
+    sobrevive a home renderizada por JS (caso do MEC) e a renomeacao da secao."""
+    txt = fetch_resilient(f"https://www.gov.br/{site}/sitemap.xml")
+    if not txt:
+        return []
+    locs = re.findall(r"<loc>(.*?)</loc>", txt)
+    if "<sitemapindex" in txt:
+        out = []
+        for sm in [l for l in locs if l.endswith(".xml")][:max_sub]:
+            t2 = fetch_resilient(sm)
+            if t2:
+                out += re.findall(r"<loc>(.*?)</loc>", t2)
+        return out
+    return locs
+
 def _discover_govbr_news_url(site, lang="pt-br"):
-    """Descobre o link da secao de noticias pelo menu do site (sobrevive a renomeacoes)."""
+    """Descobre a secao de noticias sem depender de caminho fixo:
+    1) link no menu da home; 2) secao mais frequente entre as URLs do sitemap.xml."""
+    base = f"https://www.gov.br/{site}/{lang}"
     try:
-        r = requests.get(f"https://www.gov.br/{site}/{lang}", headers=HEADERS, timeout=30)
+        from urllib.parse import urljoin
+        r = requests.get(base, headers=HEADERS, timeout=30)
         soup = BeautifulSoup(r.content, "html.parser")
         fallback = None
         for a in soup.find_all("a", href=True):
-            h = a["href"]
+            h = urljoin(base, a["href"])          # href pode vir relativo (/anvisa/...)
             if not re.search(r"/assuntos/noticias[^/]*/?$", h):
                 continue
             if "notici" in _norm(a.get_text(strip=True)):
                 return h.rstrip("/")
             fallback = fallback or h.rstrip("/")
-        return fallback
+        if fallback:
+            return fallback
     except Exception:
-        return None
+        pass
+    try:
+        from collections import Counter
+        secoes = Counter(s for s in (_secao_de(u) for u in _govbr_sitemap_locs(site)) if s)
+        if secoes:
+            return secoes.most_common(1)[0][0]
+    except Exception:
+        pass
+    return None
+
+def _govbr_sitemap_news(site, source_name, from_date, limite=60):
+    """Ultimo recurso: coleta as noticias direto do sitemap.xml (nao depende de listagem
+    nem de API). Descarta pelo ano/mes da URL e busca as datas em paralelo."""
+    locs = [u for u in _govbr_sitemap_locs(site) if _secao_de(u)]
+    if not locs:
+        return []
+    ym = (from_date.year, from_date.month)
+    cand = [u for u in locs if (_url_ano_mes(u) or ym) >= ym][:limite]
+    rows = []
+    if not cand:
+        return rows
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futs = {ex.submit(_govbr_article_meta, u): u for u in cand}
+        for f in as_completed(futs):
+            u = futs[f]
+            d, t = f.result()
+            if d and d >= from_date:
+                if not t:
+                    t = u.rstrip("/").split("/")[-1].replace("-", " ").capitalize()
+                rows.append((t, source_name, d.strftime("%a, %d %b %Y"), "",
+                             f"{source_name} (sitemap)", u, f"https://www.gov.br/{site}"))
+    return rows
 
 def _scrape_govbr_auto(site, source_name, from_date, known_paths=()):
     """Coleta noticias de um site gov.br SOBREVIVENDO a mudanca de endereco da secao:
@@ -445,8 +512,13 @@ def _scrape_govbr_auto(site, source_name, from_date, known_paths=()):
         got, alive = _scrape_govbr(u, source_name, from_date)
         if got or alive:      # achou a secao (mesmo sem noticia na janela) -> confia
             return got
+    got = _govbr_sitemap_news(site, source_name, from_date)   # ultimo recurso
+    if got:
+        print(f"[{source_name}] coletado via sitemap.xml ({len(got)} noticias) — "
+              f"a listagem mudou de endereco", flush=True)
+        return got
     print(f"[{source_name}] AVISO: secao de noticias nao encontrada por nenhum metodo "
-          f"(API raiz / menu / caminhos conhecidos) — VERIFICAR O PORTAL", flush=True)
+          f"(API raiz / menu / sitemap / caminhos conhecidos) — VERIFICAR O PORTAL", flush=True)
     return []
 
 def _scrape_valor_rss(cutoff):
