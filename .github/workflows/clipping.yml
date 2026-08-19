@@ -21,6 +21,10 @@ on:
         description: "Manutenção: nome da pasta do Drive de onde recuperar arquivos (deixe vazio)"
         required: false
         default: ""
+      backlog_reset:
+        description: "Manutenção: 1 = zerar o histórico (backlog) desta vertical (deixe vazio)"
+        required: false
+        default: ""
 
 # Sem 'schedule:' de propósito — o agendamento é por gatilho externo
 # (cron-job.org -> workflow_dispatch via API), que dispara na hora, sem a fila do cron do GitHub.
@@ -49,6 +53,7 @@ jobs:
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
           VERTICAL: ${{ github.event.inputs.vertical }}
           DRIVE_REPAIR_FROM: ${{ github.event.inputs.repair_from }}
+          BACKLOG_RESET: ${{ github.event.inputs.backlog_reset }}
           WHEN_OVERRIDE: ${{ github.event.inputs.when }}
           EMAIL_TO_OVERRIDE: ${{ github.event.inputs.recipients || vars.CLIP_RECIPIENTS }}
         run: python clipping.py

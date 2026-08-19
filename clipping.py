@@ -279,6 +279,10 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
 
     backlog_local = Path("backlog.xlsx")
     tem_backlog = download_file("backlog.xlsx", backlog_local)
+    if os.environ.get("BACKLOG_RESET", "").strip() in ("1", "true", "sim"):
+        # zera o historico desta vertical (usar quando o backlog veio de outra vertical)
+        print(f"[atencao] BACKLOG_RESET: zerando o historico de {VLABEL}")
+        tem_backlog = False
     try:
         df_backlog = pd.read_excel(backlog_local) if tem_backlog else pd.DataFrame()
     except Exception:
