@@ -375,6 +375,19 @@ with tab_sched:
                              + (f" · {_ts(j.get('lastExecution'))}" if j.get("lastExecution") else ""))
             if prev:
                 c[0].caption(f"⏭️ próxima: {_ts(prev[0])}")
+            with c[0].expander("🔍 detalhes (para diagnóstico)"):
+                tzj = sc.get("timezone") or "(não informado)"
+                st.write(f"**Fuso do job:** `{tzj}`"
+                         + ("  ⚠️ deveria ser America/Sao_Paulo — se estiver UTC, o horário "
+                            "sai 3h adiantado" if tzj != "America/Sao_Paulo" else "  ✅"))
+                st.write(f"**Ativo:** {j.get('enabled')} · **Última execução:** "
+                         f"{_ts(j.get('lastExecution')) if j.get('lastExecution') else 'nunca'}")
+                st.json({"schedule": sc, "url": j.get("url"),
+                         "requestMethod": j.get("requestMethod"),
+                         "inputs": inp,
+                         "ultimas_execucoes": [
+                             {"quando": _ts(h.get("date")), "status": h.get("status"),
+                              "httpStatus": h.get("httpStatus")} for h in hist[:5]]})
             if c[1].button("⏸️" if j.get("enabled") else "▶️", key=f"en_{j['jobId']}",
                            help="ativar/desativar"):
                 cron_set_enabled(j["jobId"], not j.get("enabled"))
