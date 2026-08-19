@@ -185,8 +185,10 @@ def _rss(nome, url, filtrar, cutoff, ctx, exige=None):
 
 def _dou(termo, from_date, ctx, orgaos=()):
     """Busca por FRASE EXATA no DOU. Devolve atos (portarias, decisoes, extratos)."""
+    # NAO usar exactDate=dia: devolve 0 mesmo havendo atos publicados. Minimo = semana,
+    # e a filtragem fina por data e feita abaixo (d0 < from_date).
     dias = (date.today() - from_date).days
-    janela = "dia" if dias <= 1 else ("semana" if dias <= 7 else "mes")
+    janela = "semana" if dias <= 7 else "mes"
     url = ("https://www.in.gov.br/consulta/-/buscar/dou?q=%22"
            + requests.utils.quote(termo) + f"%22&s=do1&exactDate={janela}&sortType=0")   # DO1 = atos normativos
     rows = []
@@ -194,6 +196,7 @@ def _dou(termo, from_date, ctx, orgaos=()):
         r = requests.get(url, headers=HEADERS, timeout=12)
         m = re.search(r'<script[^>]*type="application/json"[^>]*>(.*?)</script>', r.text, re.S)
         if not m:
+            ctx.setdefault("dou_falhas", []).append(termo)
             return rows
         dados = json.loads(m.group(1))
         arr = dados.get("jsonArray") if isinstance(dados, dict) else dados
@@ -223,7 +226,7 @@ def _dou(termo, from_date, ctx, orgaos=()):
                          d0.strftime("%a, %d %b %Y") if d0 else "", "",
                          f"DOU: {termo}", link, "https://www.in.gov.br"))
     except Exception:
-        pass
+        ctx.setdefault("dou_falhas", []).append(termo)
     return rows
 
 
@@ -299,5 +302,7 @@ def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print, norm
             rows.extend(got)
     if log:
         resumo = " ".join(f"{k}={v2}" for k, v2 in sorted(por_fonte.items())) or "nada"
-        log(f"[fontes_extra/{v}] {len(tarefas)} fontes -> {len(rows)} itens ({resumo})")
+        falhas = ctx.get("dou_falhas") or []
+        extra = f" | DOU indisponivel em {len(falhas)} termo(s)" if falhas else ""
+        log(f"[fontes_extra/{v}] {len(tarefas)} fontes -> {len(rows)} itens ({resumo}){extra}")
     return rows
