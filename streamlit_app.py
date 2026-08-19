@@ -157,6 +157,24 @@ def cron_create(vertical, hours, minutes, wdays, period, recipients):
 def cron_delete(jid):
     return requests.delete(f"{CRON_API}/jobs/{jid}", headers=_cron_headers(), timeout=30)
 
+def cron_job_inputs(job):
+    """E-mails / período / vertical de um agendamento — ficam no corpo do POST que ele
+    manda pro GitHub (`extendedData.body`). A listagem nem sempre traz esse campo,
+    então busca o detalhe do job quando faltar."""
+    body = ((job.get("extendedData") or {}).get("body")) or ""
+    if not body:
+        try:
+            r = requests.get(f"{CRON_API}/jobs/{job['jobId']}", headers=_cron_headers(), timeout=20)
+            if r.status_code == 200:
+                det = r.json().get("jobDetails") or r.json().get("job") or {}
+                body = ((det.get("extendedData") or {}).get("body")) or ""
+        except Exception:
+            pass
+    try:
+        return (json.loads(body).get("inputs") or {}) if body else {}
+    except Exception:
+        return {}
+
 def cron_set_enabled(jid, enabled):
     return requests.patch(f"{CRON_API}/jobs/{jid}", headers=_cron_headers(),
                           json={"job": {"enabled": enabled}}, timeout=30)
@@ -307,10 +325,17 @@ with tab_sched:
             wd = sc.get("wdays") or [-1]
             dias_txt = ("todos os dias" if wd == [-1]
                         else ", ".join(k for k, v in DIAS.items() if v in wd))
-            per = (j.get("title", "").split() or [""])[-1]
+            inp = cron_job_inputs(j)
+            per = inp.get("when") or (j.get("title", "").split() or [""])[-1]
+            emails = [e.strip() for e in re.split(r"[,;\s]+", inp.get("recipients") or "")
+                      if "@" in e]
             on = "🟢" if j.get("enabled") else "⚪"
             c = st.columns([6, 1, 1])
             c[0].markdown(f"{on} **{hh:02d}:{mm:02d}** · {dias_txt} · `{per}`")
+            if emails:
+                c[0].caption("📧 " + " · ".join(emails))
+            else:
+                c[0].caption("📧 (usa a lista padrão do robô)")
             if c[1].button("⏸️" if j.get("enabled") else "▶️", key=f"en_{j['jobId']}",
                            help="ativar/desativar"):
                 cron_set_enabled(j["jobId"], not j.get("enabled"))
