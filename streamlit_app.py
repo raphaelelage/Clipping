@@ -133,13 +133,13 @@ def cron_list(vertical):
     return [j for j in r.json().get("jobs", [])
             if str(j.get("title", "")).startswith(pref)], r
 
-def cron_create(vertical, hours, minutes, wdays, period, recipients):
+def _montar_job(vertical, hours, minutes, wdays, period, recipients, enabled=True):
     label = VERTICAIS[vertical]["label"]
     body = json.dumps({"ref": BRANCH, "inputs": {"vertical": vertical, "when": period,
                                                  "recipients": recipients}})
-    job = {
+    return {
         "url": f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/{WF}/dispatches",
-        "enabled": True,
+        "enabled": enabled,
         "title": f"{CRON_PREFIX} {label} {hours[0]:02d}:{minutes[0]:02d} {period}",
         "requestMethod": 1, "requestTimeout": 60, "saveResponses": True,
         "schedule": {"timezone": "America/Sao_Paulo", "expiresAt": 0,
@@ -151,8 +151,17 @@ def cron_create(vertical, hours, minutes, wdays, period, recipients):
             "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type": "application/json"}, "body": body},
     }
+
+def cron_create(vertical, hours, minutes, wdays, period, recipients):
     return requests.put(f"{CRON_API}/jobs", headers=_cron_headers(),
-                        json={"job": job}, timeout=30)
+                        json={"job": _montar_job(vertical, hours, minutes, wdays,
+                                                 period, recipients)}, timeout=30)
+
+def cron_update(jid, vertical, hours, minutes, wdays, period, recipients, enabled=True):
+    """Edita um agendamento existente (mesma estrutura do create, via PATCH)."""
+    return requests.patch(f"{CRON_API}/jobs/{jid}", headers=_cron_headers(),
+                          json={"job": _montar_job(vertical, hours, minutes, wdays,
+                                                   period, recipients, enabled)}, timeout=30)
 
 def cron_delete(jid):
     return requests.delete(f"{CRON_API}/jobs/{jid}", headers=_cron_headers(), timeout=30)
@@ -204,12 +213,14 @@ def cron_set_enabled(jid, enabled):
                           json={"job": {"enabled": enabled}}, timeout=30)
 
 # ----------------------------------------------------------------- widgets reutilizáveis
-def email_editor(prefix, label="E-mails"):
+def email_editor(prefix, label="E-mails", valores=None):
     """Lista de e-mails com botão para adicionar/remover caixas. Devolve 'a@x.com, b@y.com'.
-    Cada linha tem id próprio para o valor não 'pular' de caixa ao remover uma do meio."""
+    Cada linha tem id próprio para o valor não 'pular' de caixa ao remover uma do meio.
+    `valores`: string inicial (usado ao editar um agendamento já existente)."""
     sk, ck = f"__mails_{prefix}", f"__mailseq_{prefix}"
     if sk not in st.session_state:
-        iniciais = [e.strip() for e in re.split(r"[,;\s]+", DEFAULT_TO or "") if e.strip()]
+        base = DEFAULT_TO if valores is None else valores
+        iniciais = [e.strip() for e in re.split(r"[,;\s]+", base or "") if e.strip()]
         st.session_state[ck] = 0
         st.session_state[sk] = []
         for e in (iniciais or [""]):
@@ -354,8 +365,14 @@ with tab_sched:
             emails = [e.strip() for e in re.split(r"[,;\s]+", inp.get("recipients") or "")
                       if "@" in e]
             on = "🟢" if j.get("enabled") else "⚪"
-            c = st.columns([6, 1, 1])
+            c = st.columns([6, 1, 1, 1])
             c[0].markdown(f"{on} **{hh:02d}:{mm:02d}** · {dias_txt} · `{per}`")
+            if c[1].button("✏️", key=f"ed_{j['jobId']}", help="editar"):
+                st.session_state["_editando"] = j["jobId"]
+                for k in list(st.session_state):        # limpa o form anterior
+                    if k.startswith(f"__mails_edit_{j['jobId']}"):
+                        del st.session_state[k]
+                st.rerun()
             if emails:
                 c[0].caption("📧 " + " · ".join(emails))
             else:
@@ -388,13 +405,43 @@ with tab_sched:
                          "ultimas_execucoes": [
                              {"quando": _ts(h.get("date")), "status": h.get("status"),
                               "httpStatus": h.get("httpStatus")} for h in hist[:5]]})
-            if c[1].button("⏸️" if j.get("enabled") else "▶️", key=f"en_{j['jobId']}",
+            if c[2].button("⏸️" if j.get("enabled") else "▶️", key=f"en_{j['jobId']}",
                            help="ativar/desativar"):
                 cron_set_enabled(j["jobId"], not j.get("enabled"))
                 st.rerun()
-            if c[2].button("🗑️", key=f"del_{j['jobId']}", help="excluir"):
+            if c[3].button("🗑️", key=f"del_{j['jobId']}", help="excluir"):
                 cron_delete(j["jobId"])
                 st.rerun()
+
+            if st.session_state.get("_editando") == j["jobId"]:
+                with st.container(border=True):
+                    st.markdown("**✏️ Editando este agendamento**")
+                    e1, e2 = st.columns(2)
+                    et = e1.time_input("Horário (BRT)", value=_dt.time(hh, mm),
+                                       key=f"et_{j['jobId']}")
+                    eper = e2.text_input("Período", value=per, key=f"ep_{j['jobId']}",
+                                         help="Ex.: 1h, 12h, 1d, 3d")
+                    dias_atuais = ([k for k, v in DIAS.items() if v in wd] if wd != [-1]
+                                   else list(DIAS.keys()))
+                    edias = st.multiselect("Dias", list(DIAS.keys()), default=dias_atuais,
+                                           key=f"ed2_{j['jobId']}")
+                    eto = email_editor(f"edit_{j['jobId']}", "E-mails",
+                                       valores=inp.get("recipients") or "")
+                    g1, g2 = st.columns(2)
+                    if g1.button("💾 Salvar alterações", key=f"sv_{j['jobId']}"):
+                        ewd = sorted(DIAS[d] for d in edias) or [-1]
+                        with st.spinner("Atualizando no cron-job.org…"):
+                            r = cron_update(j["jobId"], VERT, [et.hour], [et.minute], ewd,
+                                            eper.strip(), eto, bool(j.get("enabled")))
+                        if r.status_code in (200, 201):
+                            st.session_state.pop("_editando", None)
+                            st.success("✅ Agendamento atualizado.")
+                            st.rerun()
+                        else:
+                            st.error(f"Falhou ({r.status_code}): {r.text[:300]}")
+                    if g2.button("Cancelar", key=f"cc_{j['jobId']}"):
+                        st.session_state.pop("_editando", None)
+                        st.rerun()
 
         st.divider()
         st.markdown("**➕ Novo agendamento**")
