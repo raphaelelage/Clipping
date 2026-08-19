@@ -269,8 +269,13 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
         return True
 
     ai_url = update_file(txt_path, "ai_input.txt", "text/plain")
-    update_file(xlsx_path, "news_scrapper.xlsx", XLSX_MIME)
-    print("[ok] Drive: ai_input.txt e news_scrapper.xlsx atualizados")
+    xlsx_url = update_file(xlsx_path, "news_scrapper.xlsx", XLSX_MIME)
+    if ai_url != folder_url and xlsx_url != folder_url:
+        print("[ok] Drive: ai_input.txt e news_scrapper.xlsx atualizados")
+    else:
+        print(f"[atencao] Drive ({VLABEL}): faltam os arquivos na pasta. Crie uma vez em "
+              f"{folder_url} os arquivos vazios: ai_input.txt, news_scrapper.xlsx, backlog.xlsx "
+              f"(ou copie os da pasta da outra vertical). Ate la, so o e-mail e o XLSX anexo funcionam.")
 
     backlog_local = Path("backlog.xlsx")
     tem_backlog = download_file("backlog.xlsx", backlog_local)
