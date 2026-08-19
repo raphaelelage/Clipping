@@ -17,6 +17,10 @@ on:
         description: "E-mails destino (vírgula). Vazio = lista padrão do clipping.py"
         required: false
         default: ""
+      repair_from:
+        description: "Manutenção: nome da pasta do Drive de onde recuperar arquivos (deixe vazio)"
+        required: false
+        default: ""
 
 # Sem 'schedule:' de propósito — o agendamento é por gatilho externo
 # (cron-job.org -> workflow_dispatch via API), que dispara na hora, sem a fila do cron do GitHub.
@@ -44,6 +48,7 @@ jobs:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
           VERTICAL: ${{ github.event.inputs.vertical }}
+          DRIVE_REPAIR_FROM: ${{ github.event.inputs.repair_from }}
           WHEN_OVERRIDE: ${{ github.event.inputs.when }}
           EMAIL_TO_OVERRIDE: ${{ github.event.inputs.recipients || vars.CLIP_RECIPIENTS }}
         run: python clipping.py

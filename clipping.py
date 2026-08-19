@@ -37,6 +37,7 @@ clipping_core.set_vertical(VERTICAL)
 VERTICAL = clipping_core.VERTICAL                       # normalizado
 VLABEL = clipping_core.VERTICAIS[VERTICAL]["label"]     # 'Saúde' / 'Educação'
 VFILES = clipping_core.arquivos_vertical(VERTICAL)
+LEGACY_VERTICAL = "saude"   # dona dos arquivos que ficavam soltos na raiz do Drive
 
 
 def fetch_news() -> pd.DataFrame:
@@ -212,12 +213,26 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
         fid = _find(name, folder_id)
         if fid:
             return fid
-        legado = _find(name, root_id) if folder_id != root_id else None
-        if legado:
-            service.files().update(fileId=legado, addParents=folder_id,
-                                   removeParents=root_id, fields="id").execute()
-            print(f"[ok] Drive: '{name}' movido para a pasta '{VLABEL}'")
-            return legado
+        # Os arquivos legados da raiz sao da vertical original (saude) — NUNCA migrar p/ outra
+        # vertical, senao o historico da saude iria parar na pasta errada.
+        if VERTICAL == LEGACY_VERTICAL and folder_id != root_id:
+            legado = _find(name, root_id)
+            if legado:
+                service.files().update(fileId=legado, addParents=folder_id,
+                                       removeParents=root_id, fields="id").execute()
+                print(f"[ok] Drive: '{name}' movido da raiz para a pasta '{VLABEL}'")
+                return legado
+        # Reparo pontual (DRIVE_REPAIR_FROM=<nome da pasta>): traz de volta arquivos que
+        # foram parar na pasta errada.
+        origem = os.environ.get("DRIVE_REPAIR_FROM", "").strip()
+        if origem:
+            oid = _find(origem, root_id, FOLDER_MIME)
+            perdido = _find(name, oid) if oid else None
+            if perdido:
+                service.files().update(fileId=perdido, addParents=folder_id,
+                                       removeParents=oid, fields="id").execute()
+                print(f"[ok] Drive: '{name}' devolvido de '{origem}' para '{VLABEL}'")
+                return perdido
         if create_from is not None:
             try:
                 fid = service.files().create(
