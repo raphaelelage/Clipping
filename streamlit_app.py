@@ -163,15 +163,27 @@ def _job_da_vertical(j, vertical):
             return False
     return True
 
-def cron_list(vertical):
-    """Agendamentos desta vertical."""
+@st.cache_data(ttl=60, show_spinner=False)
+def _cron_jobs(_v=0):
+    """Busca a lista de jobs UMA vez por minuto. Sem isso o app estourava o limite do
+    cron-job.org (HTTP 429): o Streamlit reexecuta o script inteiro a cada clique."""
     r = _req("get", f"{CRON_API}/jobs", headers=_cron_headers(), timeout=30)
     if r.status_code != 200:
-        return None, r
+        return None, r.status_code
     try:
-        return [j for j in r.json().get("jobs", []) if _job_da_vertical(j, vertical)], r
+        return r.json().get("jobs", []), 200
     except Exception:
-        return None, r
+        return None, r.status_code
+
+def cron_invalidar():
+    _cron_jobs.clear()
+
+def cron_list(vertical):
+    """Agendamentos desta vertical (a partir da lista em cache)."""
+    jobs, code = _cron_jobs()
+    if jobs is None:
+        return None, code
+    return [j for j in jobs if _job_da_vertical(j, vertical)], code
 
 def _montar_job(vertical, hours, minutes, wdays, period, recipients, enabled=True):
     body = json.dumps({"ref": BRANCH, "inputs": {"vertical": vertical, "when": period,
@@ -234,14 +246,6 @@ def cron_job_inputs(job):
     manda pro GitHub (`extendedData.body`). A listagem nem sempre traz esse campo,
     então busca o detalhe do job quando faltar."""
     body = ((job.get("extendedData") or {}).get("body")) or ""
-    if not body:
-        try:
-            r = _req("get", f"{CRON_API}/jobs/{job['jobId']}", headers=_cron_headers(), timeout=20)
-            if r.status_code == 200:
-                det = r.json().get("jobDetails") or r.json().get("job") or {}
-                body = ((det.get("extendedData") or {}).get("body")) or ""
-        except Exception:
-            pass
     try:
         return (json.loads(body).get("inputs") or {}) if body else {}
     except Exception:
@@ -397,8 +401,13 @@ with tab_sched:
     else:
         jobs, rr = cron_list(VERT)
         if jobs is None:
-            st.error(f"Não consegui falar com o cron-job.org "
-                     f"(HTTP {getattr(rr, 'status_code', '?')}). Confira a `cronjob_api_key`.")
+            if rr == 429:
+                st.warning("O cron-job.org limitou as consultas (HTTP 429). "
+                           "Aguarde ~1 minuto e recarregue — os agendamentos existentes "
+                           "continuam funcionando normalmente.")
+            else:
+                st.error(f"Não consegui falar com o cron-job.org (HTTP {rr}). "
+                         "Confira a `cronjob_api_key`.")
             jobs = []
 
         st.markdown(f"**Ativos ({len(jobs)})**")
@@ -428,8 +437,9 @@ with tab_sched:
                 c[0].caption("📧 " + " · ".join(emails))
             else:
                 c[0].caption("📧 (usa a lista padrão do robô)")
-            # diagnostico: disparou? o que o GitHub respondeu? quando roda de novo?
-            hist, prev = cron_historico(j["jobId"])
+            # diagnostico sob demanda (cada consulta e uma chamada a mais na API)
+            ver = st.session_state.get(f"_diag_{j['jobId']}", False)
+            hist, prev = cron_historico(j["jobId"]) if ver else ([], [])
             ult = hist[0] if hist else None
             if ult:
                 cod = ult.get("httpStatus")
@@ -443,7 +453,11 @@ with tab_sched:
                              + (f" · {_ts(j.get('lastExecution'))}" if j.get("lastExecution") else ""))
             if prev:
                 c[0].caption(f"⏭️ próxima: {_ts(prev[0])}")
-            with c[0].expander("🔍 detalhes (para diagnóstico)"):
+            if not ver:
+                if c[0].button("🔍 ver diagnóstico", key=f"dg_{j['jobId']}"):
+                    st.session_state[f"_diag_{j['jobId']}"] = True
+                    st.rerun()
+            if ver:
                 tzj = sc.get("timezone") or "(não informado)"
                 st.write(f"**Fuso do job:** `{tzj}`"
                          + ("  ⚠️ deveria ser America/Sao_Paulo — se estiver UTC, o horário "
@@ -459,9 +473,11 @@ with tab_sched:
             if c[2].button("⏸️" if j.get("enabled") else "▶️", key=f"en_{j['jobId']}",
                            help="ativar/desativar"):
                 cron_set_enabled(j["jobId"], not j.get("enabled"))
+                cron_invalidar()
                 st.rerun()
             if c[3].button("🗑️", key=f"del_{j['jobId']}", help="excluir"):
                 cron_delete(j["jobId"])
+                cron_invalidar()
                 st.rerun()
 
             if st.session_state.get("_editando") == j["jobId"]:
@@ -486,6 +502,7 @@ with tab_sched:
                                             eper.strip(), eto, bool(j.get("enabled")))
                         if r.status_code in (200, 201):
                             st.session_state.pop("_editando", None)
+                            cron_invalidar()
                             st.success("✅ Agendamento atualizado.")
                             st.rerun()
                         else:
@@ -512,6 +529,7 @@ with tab_sched:
             with st.spinner("Criando no cron-job.org…"):
                 r = cron_create(VERT, [t.hour], [t.minute], wdays, period_s, to_s)
             if r.status_code in (200, 201):
+                cron_invalidar()
                 st.success(f"✅ Criado: {t.strftime('%H:%M')} (BRT), {period_s}, {V['label']}.")
                 st.rerun()
             else:
@@ -525,10 +543,10 @@ with tab_debug:
         st.write("Workflow `clipping.yml`:", "✅ encontrado" if wf == 200 else f"❌ HTTP {wf}")
         if CRON_KEY:
             jobs, rr = cron_list(VERT)
-            if rr is not None and rr.status_code == 200:
+            if rr == 200:
                 st.write("cron-job.org:", f"✅ {len(jobs)} agendamento(s) em {V['label']}")
             else:
-                st.write("cron-job.org:", f"❌ HTTP {getattr(rr, 'status_code', '?')}")
+                st.write("cron-job.org:", f"❌ HTTP {rr}")
         else:
             st.write("cron-job.org:", "— sem `cronjob_api_key`")
         for f in [x for x in (V["keywords"], V["sources"], V["prompt"]) if x]:
