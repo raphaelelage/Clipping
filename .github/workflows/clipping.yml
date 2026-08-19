@@ -21,6 +21,10 @@ on:
         description: "Manutenção: nome da pasta do Drive de onde recuperar arquivos (deixe vazio)"
         required: false
         default: ""
+      merge_from:
+        description: "Manutenção: mesclar o backlog de outra pasta do Drive (deixe vazio)"
+        required: false
+        default: ""
       backlog_reset:
         description: "Manutenção: 1 = zerar o histórico (backlog) desta vertical (deixe vazio)"
         required: false
@@ -54,6 +58,7 @@ jobs:
           VERTICAL: ${{ github.event.inputs.vertical }}
           DRIVE_REPAIR_FROM: ${{ github.event.inputs.repair_from }}
           BACKLOG_RESET: ${{ github.event.inputs.backlog_reset }}
+          BACKLOG_MERGE_FROM: ${{ github.event.inputs.merge_from }}
           WHEN_OVERRIDE: ${{ github.event.inputs.when }}
           EMAIL_TO_OVERRIDE: ${{ github.event.inputs.recipients || vars.CLIP_RECIPIENTS }}
         run: python clipping.py

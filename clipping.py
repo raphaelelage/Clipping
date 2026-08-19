@@ -38,6 +38,7 @@ VERTICAL = clipping_core.VERTICAL                       # normalizado
 VLABEL = clipping_core.VERTICAIS[VERTICAL]["label"]     # 'Saúde' / 'Educação'
 VFILES = clipping_core.arquivos_vertical(VERTICAL)
 LEGACY_VERTICAL = "saude"   # dona dos arquivos que ficavam soltos na raiz do Drive
+DRIVE_PASTA = "Saúde e Educação"   # pasta unica no Drive — as 3 secoes usam os mesmos arquivos
 
 
 def fetch_news() -> pd.DataFrame:
@@ -190,20 +191,19 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
         files = service.files().list(q=q, fields="files(id,name)").execute().get("files", [])
         return files[0]["id"] if files else None
 
-    # --- pasta da vertical: <pasta raiz>/Saúde  ou  <pasta raiz>/Educação -------------
-    folder_id = _find(VLABEL, root_id, FOLDER_MIME)
+    # --- pasta UNICA para todas as verticais (as 3 secoes compartilham os mesmos arquivos)
+    folder_id = _find(DRIVE_PASTA, root_id, FOLDER_MIME)
     if not folder_id:
         try:
             folder_id = service.files().create(
-                body={"name": VLABEL, "mimeType": FOLDER_MIME, "parents": [root_id]},
+                body={"name": DRIVE_PASTA, "mimeType": FOLDER_MIME, "parents": [root_id]},
                 fields="id").execute()["id"]
-            print(f"[ok] Drive: pasta '{VLABEL}' criada")
+            print(f"[ok] Drive: pasta '{DRIVE_PASTA}' criada")
         except Exception as e:
-            print(f"[aviso] nao consegui criar a pasta '{VLABEL}' no Drive ({e}). "
-                  f"Crie manualmente dentro da pasta raiz e rode de novo.")
-            folder_id = root_id     # fallback: usa a raiz (comportamento antigo)
+            print(f"[aviso] nao consegui criar a pasta '{DRIVE_PASTA}' ({e}) — usando a raiz.")
+            folder_id = root_id
     folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
-    print(f"[ok] Drive ({VLABEL}): {folder_url}")
+    print(f"[ok] Drive ({DRIVE_PASTA}): {folder_url}")
 
     def find_file_id(name: str, create_from: Path | None = None,
                      mimetype: str = "text/plain") -> str | None:
@@ -279,6 +279,32 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
 
     backlog_local = Path("backlog.xlsx")
     tem_backlog = download_file("backlog.xlsx", backlog_local)
+    origem_merge = os.environ.get("BACKLOG_MERGE_FROM", "").strip()
+    if origem_merge:
+        oid = _find(origem_merge, root_id, FOLDER_MIME)
+        ofid = _find("backlog.xlsx", oid) if oid else None
+        if ofid:
+            outro = Path("backlog_outro.xlsx")
+            req = service.files().get_media(fileId=ofid)
+            with open(outro, "wb") as fh:
+                dl = MediaIoBaseDownload(fh, req); done = False
+                while not done:
+                    _, done = dl.next_chunk()
+            try:
+                df_o = pd.read_excel(outro)
+                df_a = pd.read_excel(backlog_local) if tem_backlog else pd.DataFrame()
+                juntos = pd.concat([df_o, df_a], ignore_index=True)
+                if "link" in juntos.columns:
+                    juntos = juntos.drop_duplicates(subset="link")
+                juntos.to_excel(backlog_local, index=False, engine="openpyxl")
+                tem_backlog = True
+                print(f"[ok] Drive: backlog de '{origem_merge}' mesclado "
+                      f"({len(df_o)} + {len(df_a)} -> {len(juntos)} linhas)")
+            except Exception as e:
+                print(f"[aviso] falha ao mesclar backlog de '{origem_merge}': {e}")
+        else:
+            print(f"[aviso] backlog.xlsx nao encontrado na pasta '{origem_merge}'")
+
     if os.environ.get("BACKLOG_RESET", "").strip() in ("1", "true", "sim"):
         # zera o historico desta vertical (usar quando o backlog veio de outra vertical)
         print(f"[atencao] BACKLOG_RESET: zerando o historico de {VLABEL}")
