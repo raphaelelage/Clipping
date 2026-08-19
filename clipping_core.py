@@ -658,7 +658,7 @@ def collect(period: str = "1d", progress=None, vertical: str | None = None) -> p
     _p("Fontes complementares (entidades, DOU, CVM)…")
     try:
         extras = fontes_extra.coletar(VERTICAL, cutoff, from_date, match_keywords, to_dt, TZ,
-                                      log=lambda m: print(m, flush=True))
+                                      log=lambda m: print(m, flush=True), norm_fn=_norm)
     except Exception as e:
         print(f"[fontes_extra] erro: {e}", flush=True)
         extras = []

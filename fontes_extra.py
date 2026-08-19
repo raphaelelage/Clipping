@@ -67,14 +67,47 @@ RSS_FEEDS = {
     ],
 }
 
-# Diario Oficial da Uniao — FRASE EXATA (busca livre e OR de palavras => ruido demais)
+# Diario Oficial da Uniao — FRASE EXATA (busca livre e OR de palavras => ruido demais).
+# Termos TEMATICOS (regulacao, vagas, registros...) + algumas marcas. Nao depende de nome de grupo:
+# os atos citam a instituicao/tema, nao a holding.
 DOU_TERMOS = {
-    "saude": ["Agência Nacional de Saúde Suplementar", "saúde suplementar", "plano de saúde",
-              "Hapvida", "Rede D'Or", "Dasa", "Oncoclínicas", "Qualicorp", "Hypera",
-              "registro de medicamento", "Conitec"],
-    "educacao": ["recredenciamento", "credenciamento de instituição", "autorização de curso",
-                 "Conselho Nacional de Educação", "Fies", "Prouni", "Enem",
-                 "Estácio", "Anhanguera", "Anhembi Morumbi", "Uniasselvi", "Unicesumar"],
+    "saude": [
+        # regulacao de planos / ANS
+        "Agência Nacional de Saúde Suplementar", "saúde suplementar", "operadora de plano de saúde",
+        "rol de procedimentos", "ressarcimento ao SUS", "reajuste de planos",
+        # medicamentos / Anvisa
+        "registro de medicamento", "cancelamento de registro", "medicamento genérico",
+        "certificado de boas práticas", "suspensão de venda", "interdição cautelar",
+        "preço de medicamentos", "CMED",
+        # SUS / incorporacao
+        "incorporação de tecnologia", "Conitec", "Farmácia Popular", "tabela SUS",
+        # empresas
+        "Hapvida", "Rede D'Or", "Dasa", "Oncoclínicas", "Qualicorp", "Hypera", "Blau",
+    ],
+    "educacao": [
+        # vagas e cursos (inclui o caso 'vagas de medicina')
+        "autorização de curso de Medicina", "curso de Medicina", "aumento de vagas",
+        "vagas autorizadas", "autorização de funcionamento",
+        # regulacao / supervisao de instituicoes
+        "credenciamento", "recredenciamento", "descredenciamento",
+        "reconhecimento de curso", "renovação de reconhecimento", "medida cautelar",
+        "educação a distância", "polo de educação a distância",
+        # normas e programas
+        "Conselho Nacional de Educação", "Câmara de Educação Superior",
+        "diretrizes curriculares nacionais", "Fies", "Prouni", "Enem", "Enade",
+        # marcas (os atos citam a instituicao, nao a holding)
+        "Estácio", "Anhanguera", "Anhembi Morumbi", "Uniasselvi", "Unicesumar", "Afya",
+    ],
+}
+
+# Só entram atos destes orgaos — mata o ruido cross-setor (o mesmo termo aparece em
+# ANTAQ, Agricultura, Fazenda etc.). Comparacao sem acento, em minusculas.
+DOU_ORGAOS = {
+    "saude": ["ministerio da saude", "vigilancia sanitaria", "saude suplementar",
+              "defesa economica"],
+    "educacao": ["ministerio da educacao", "estudos e pesquisas educacionais",
+                 "aperfeicoamento de pessoal", "desenvolvimento da educacao",
+                 "defesa economica"],
 }
 
 # CVM — fato relevante / comunicado ao mercado das empresas cobertas
@@ -150,7 +183,7 @@ def _rss(nome, url, filtrar, cutoff, ctx, exige=None):
     return rows
 
 
-def _dou(termo, from_date, ctx):
+def _dou(termo, from_date, ctx, orgaos=()):
     """Busca por FRASE EXATA no DOU. Devolve atos (portarias, decisoes, extratos)."""
     dias = (date.today() - from_date).days
     janela = "dia" if dias <= 1 else ("semana" if dias <= 7 else "mes")
@@ -177,8 +210,16 @@ def _dou(termo, from_date, ctx):
             slug = it.get("urlTitle") or ""
             link = ("https://www.in.gov.br/web/dou/-/" + slug.lstrip("/")) if slug \
                 else "https://www.in.gov.br/consulta/-/buscar/dou"
-            orgao = (it.get("hierarchyStr") or "").split("/")[-1].strip()
-            rows.append((f"{titulo}" + (f" — {orgao}" if orgao else ""), "DOU",
+            hier = it.get("hierarchyStr") or ""
+            if orgaos and not any(o in ctx["norm"](hier) for o in orgaos):
+                continue          # ato de outro setor (ANTAQ, Agricultura...) — descarta
+            orgao = hier.split("/")[-1].strip()
+            # o titulo do DOU sozinho e inutil ("DECISAO de 7 de agosto"); o trecho do ato
+            # e o que informa (ex.: "Processo ANS ... HAPVIDA ... Valor da Multa")
+            trecho = re.sub(r"<[^>]+>", "", it.get("content") or "")
+            trecho = re.sub(r"\s+", " ", trecho).strip()[:150]
+            titulo_full = titulo + (f" — {orgao}" if orgao else "") + (f": {trecho}" if trecho else "")
+            rows.append((titulo_full[:230], "DOU",
                          d0.strftime("%a, %d %b %Y") if d0 else "", "",
                          f"DOU: {termo}", link, "https://www.in.gov.br"))
     except Exception:
@@ -224,10 +265,12 @@ def _cvm(empresas, from_date, ctx):
 
 
 # ------------------------------------------------------------------ orquestrador
-def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print):
+def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print, norm_fn=None):
     """Coleta de todas as fontes extras da vertical, em paralelo.
     Devolve linhas no formato COLS do clipping_core."""
-    ctx = {"match": match_fn, "to_dt": to_dt_fn, "tz": tz}
+    ctx = {"match": match_fn, "to_dt": to_dt_fn, "tz": tz, "norm": norm_fn}
+    norm_fn = norm_fn or (lambda x: str(x).lower())
+    ctx["norm"] = norm_fn
     v = vertical if vertical in WP_SITES else "saude"
     tarefas = []
     for nome, base, filtrar in WP_SITES.get(v, []):
@@ -237,8 +280,9 @@ def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print):
         exige = item[3] if len(item) > 3 else None
         tarefas.append((f"rss:{nome}",
                         lambda n=nome, u=url, f=filtrar, e=exige: _rss(n, u, f, cutoff, ctx, e)))
+    orgaos = DOU_ORGAOS.get(v, ())
     for termo in DOU_TERMOS.get(v, []):
-        tarefas.append((f"dou:{termo}", lambda t=termo: _dou(t, from_date, ctx)))
+        tarefas.append((f"dou:{termo}", lambda t=termo: _dou(t, from_date, ctx, orgaos)))
     if CVM_EMPRESAS.get(v):
         tarefas.append(("cvm", lambda: _cvm(CVM_EMPRESAS[v], from_date, ctx)))
 
