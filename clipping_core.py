@@ -25,6 +25,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from pygooglenews import GoogleNews
 from googlenewsdecoder import gnewsdecoder
+import fontes_extra
 
 try:
     from zoneinfo import ZoneInfo
@@ -653,8 +654,17 @@ def collect(period: str = "1d", progress=None, vertical: str | None = None) -> p
     _p("Brazil Stock Guide (sitemap)…")
     bsg = _scrape_bsg_sitemap(cutoff) if keywords else []
 
+    # fontes complementares da vertical (entidades, DOU, CVM, RSS proprios) — tudo em paralelo
+    _p("Fontes complementares (entidades, DOU, CVM)…")
+    try:
+        extras = fontes_extra.coletar(VERTICAL, cutoff, from_date, match_keywords, to_dt, TZ,
+                                      log=lambda m: print(m, flush=True))
+    except Exception as e:
+        print(f"[fontes_extra] erro: {e}", flush=True)
+        extras = []
+
     frames = [df_gn] + [pd.DataFrame(r, columns=COLS)
-                        for r in (portais + [valor, bsg]) if r]
+                        for r in (portais + [valor, bsg, extras]) if r]
     allnews = pd.concat(frames, ignore_index=True)
     if allnews.empty:
         _p("Nenhuma notícia no período.")

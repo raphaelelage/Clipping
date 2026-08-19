@@ -1,9 +1,9 @@
-# Fontes aceitas do Google News (1 por linha, # = comentário). Editável pelo app.
+# Fontes aceitas do Google News na vertical EDUCACAO (1 por linha, # = comentario).
 # O nome tem que bater EXATAMENTE com o nome da fonte no Google News.
+# Base: veiculos gerais da saude (sem os especificos de farma/saude) + veiculos de educacao.
 GOV.BR
 CNN Brasil
 Senado Federal
-Cofen
 ConJur
 Agência Brasil
 UOL
@@ -25,28 +25,22 @@ Gazeta do Povo
 Seu Dinheiro
 Estadão
 Extra
-Fenacor
 JOTA Info
 UOL Economia
 Valor Investe
 Globo.com
 OLiberal.com
 SpaceMoney
-Rede D'Or São Luiz
-Medicina S/A
 Finance News
 E-Investidor
 br.ADVFN.com
-saudebusiness.com
 Investnews
-Setor Saúde
 Pipeline
 Money Times
 Istoé Dinheiro
 Época NEGÓCIOS
 Investing.com Brasil
 Suno Notícias
-Guia da Farmácia
 Brazil Journal
 NeoFeed
 Vogue Brasil
@@ -62,20 +56,33 @@ Revista Fórum
 Governo
 Contábeis
 Brasil 61
-Canal Autismo / Revista Autismo
 Congresso em Foco
 Consumidor Moderno
 Correio Braziliense
 O Tempo
 Portal de Fusões e Aquisições
-Portal Farmacêutico
 Política Estadão
-Portal Panorama Farmacêutico
-Panorama Farmacêutico
-Revista Apólice
-Futuro da Saúde
 Migalhas
 Bloomberg.com
 Bloomberg Linea Brasil
 Folha de S.Paulo
 pipelinevalor
+Desafios da Educação
+Revista Ensino Superior
+Semesp
+ABMES
+Todos Pela Educação
+Nova Escola
+Porvir
+Jornal da USP
+Agência Gov
+Ministério da Educação
+INEP
+Capes
+Portal MEC
+Educa Insights
+Revista Educação
+Folha Dirigida
+Guia do Estudante
+Quero Bolsa
+Estudar Fora

@@ -1,3 +1,70 @@
 # Palavras-chave da vertical EDUCACAO (1 por linha, # = comentario).
-# Edite pelo app (aba Config). Enquanto estiver vazio, o Google News nao e consultado
-# e a coleta traz so os portais gov.br (MEC, Capes).
+# Lista inicial sugerida — edite pelo app (aba Config -> Educacao).
+
+# --- setor / temas gerais
+educação
+ensino
+ensino superior
+educação básica
+ead
+ensino tecnico
+faculdade
+universidade
+matriculas
+evasão
+mensalidade
+curso superior
+pos-graduacao
+vestibular
+escola
+professor
+piso salarial
+
+# --- reguladores, programas e exames
+mec
+inep
+capes
+cne
+enem
+enade
+enamed
+sisu
+prouni
+fies
+fundeb
+pnld
+censo escolar
+novo ensino medio
+credenciamento
+recredenciamento
+autorizacao de curso
+polo ead
+curso de medicina
+mais medicos
+
+# --- empresas listadas e marcas
+Cogna
+YDUQS
+Ser Educacional
+Ânima
+Vasta Educação
+Arco Educação
+Afya
+Vitru
+Cruzeiro do Sul
+Estacio
+Anhanguera
+Kroton
+Uniasselvi
+Unicesumar
+Anhembi Morumbi
+Descomplica
+Pravaler
+Educbank
+
+# --- temas de mercado
+block trade
+aquisicao
+ICMS
+beneficio fiscal
+medida provisória
