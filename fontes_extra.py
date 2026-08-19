@@ -17,6 +17,7 @@ entidades do setor publicam quase so o que interessa (filtrar=False); fontes amp
 from __future__ import annotations
 import io
 import json
+import time
 import re
 import zipfile
 from datetime import datetime, date, timedelta
@@ -315,6 +316,21 @@ def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print, norm
             if got:
                 por_fonte[futs[f].split(":")[0]] = por_fonte.get(futs[f].split(":")[0], 0) + len(got)
             rows.extend(got)
+    # se TODOS os termos do DOU falharam, quase sempre e o in.gov.br fora do ar naquele
+    # instante (visto em runners do GitHub). Uma retentativa depois de uma pausa recupera.
+    termos_dou = DOU_TERMOS.get(v, [])
+    if termos_dou and len(ctx.get("dou_falhas") or []) >= len(termos_dou):
+        if log:
+            log(f"[fontes_extra/{v}] DOU indisponivel — tentando de novo em 15s")
+        time.sleep(15)
+        ctx["dou_falhas"] = []
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for got in ex.map(lambda t: _dou(t, from_date, ctx, DOU_ORGAOS.get(v, ())),
+                              termos_dou):
+                if got:
+                    por_fonte["dou"] = por_fonte.get("dou", 0) + len(got)
+                    rows.extend(got)
+
     if log:
         resumo = " ".join(f"{k}={v2}" for k, v2 in sorted(por_fonte.items())) or "nada"
         falhas = ctx.get("dou_falhas") or []
