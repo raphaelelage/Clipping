@@ -52,8 +52,25 @@ WP_SITES = {
     ],
 }
 
+# Feeds AMPLOS dos grandes veiculos: entram com filtro de keyword (filtrar=True), senao viram
+# ruido. Vantagem sobre o Google News: sem risco de bloqueio e com data confiavel.
+GRANDES_ECONOMIA = [
+    ("G1", "https://g1.globo.com/rss/g1/economia/", True),
+    ("O Globo", "https://oglobo.globo.com/rss/oglobo/economia", True),
+    ("Folha de S.Paulo", "https://feeds.folha.uol.com.br/mercado/rss091.xml", True),
+    ("Agência Brasil", "https://agenciabrasil.ebc.com.br/rss/economia/feed.xml", True),
+    ("Estadão", "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/economia/?outputType=xml", True),
+    ("UOL Economia", "https://rss.uol.com.br/feed/economia.xml", True),
+]
+
 RSS_FEEDS = {
     "saude": [
+        ("G1", "https://g1.globo.com/rss/g1/saude/", True),
+        ("O Globo", "https://oglobo.globo.com/rss/oglobo/saude", True),
+        ("Folha de S.Paulo", "https://feeds.folha.uol.com.br/equilibrioesaude/rss091.xml", True),
+        ("Agência Brasil", "https://agenciabrasil.ebc.com.br/rss/saude/feed.xml", True),
+        ("Estadão", "https://www.estadao.com.br/arc/outboundfeeds/feeds/rss/sections/saude/?outputType=xml", True),
+        *GRANDES_ECONOMIA,
         ("Medicina S/A", "https://medicinasa.com.br/feed/", False),
         ("Setor Saúde", "https://www.setorsaude.com.br/feed/", False),
         ("Fiocruz", "https://agencia.fiocruz.br/rss-afn.xml", True),
@@ -62,6 +79,11 @@ RSS_FEEDS = {
         ("Consumidor Moderno", "https://www.consumidormoderno.com.br/feed/", True),
     ],
     "educacao": [
+        ("G1", "https://g1.globo.com/rss/g1/educacao/", True),
+        ("Folha de S.Paulo", "https://feeds.folha.uol.com.br/educacao/rss091.xml", True),
+        ("Agência Brasil", "https://agenciabrasil.ebc.com.br/rss/educacao/feed.xml", True),
+        ("Jornal da USP", "https://jornal.usp.br/feed/", True),
+        *GRANDES_ECONOMIA,
         ("INEP", "https://www.gov.br/inep/rss.xml", False, "/noticias/"),
         ("JOTA", "https://www.jota.info/feed", True),
         ("CADE", "https://www.gov.br/cade/rss.xml", True, "/noticias/"),
@@ -136,6 +158,16 @@ CVM_EMPRESAS["saude_educacao"] = _uniao(CVM_EMPRESAS, lambda x: x)
 
 CVM_CATEGORIAS = ("Fato Relevante", "Comunicado ao Mercado")
 CVM_URL = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{ano}.zip"
+RAD_URL = "https://www.rad.cvm.gov.br/ENET/frmConsultaExternaCVM.aspx"
+RAD_TIPOS = ("Fato Relevante", "Comunicado ao Mercado", "Aviso aos Acionistas")
+
+# Empresas que sao ADR na NASDAQ e NAO aparecem na CVM (buraco de cobertura).
+# A SEC exige User-Agent com contato (politica deles).
+SEC_EMPRESAS = {"saude": {}, "educacao": {"Afya": "0001771007"}}
+SEC_EMPRESAS["saude_educacao"] = {**SEC_EMPRESAS["saude"], **SEC_EMPRESAS["educacao"]}
+SEC_FORMS = ("6-K", "20-F", "8-K")
+SEC_HEADERS = {"User-Agent": "clipping-bot (github.com/raphaelelage/Clipping)",
+               "Accept-Encoding": "gzip, deflate"}
 
 
 # ------------------------------------------------------------------ coletores
@@ -266,6 +298,93 @@ def _dou(termo, from_date, ctx, orgaos=()):
     return rows
 
 
+def _cvm_rad(empresas, from_date, ctx):
+    """Fato relevante / comunicado direto do sistema da CVM (RAD) — no MESMO DIA.
+    O zip anual do IPE (_cvm) so traz o dado consolidado no dia seguinte; este e o endpoint
+    que o proprio site da CVM usa. Nao e documentado — por isso e primaria com o zip de reserva.
+    Devolve None se falhar (sinal para o chamador usar o zip)."""
+    dias = (date.today() - from_date).days
+    periodo = "0" if dias <= 1 else ("1" if dias <= 7 else "2")   # hoje / semana / mes
+    try:
+        ses = requests.Session()
+        ses.headers.update(HEADERS)
+        ses.get(RAD_URL, timeout=TIMEOUT)                          # cookies de sessao
+        payload = {"dataDe": "", "dataAte": "", "empresa": "", "setorAtividade": "-1",
+                   "categoriaEmissor": "-1", "situacaoEmissor": "-1", "tipoParticipante": "-1",
+                   "dataReferencia": "", "categoria": "", "periodo": periodo, "horaIni": "",
+                   "horaFim": "", "palavraChave": "", "ultimaDtRef": "false",
+                   "tipoEmpresa": "0", "token": "", "versaoCaptcha": ""}
+        r = ses.post(RAD_URL + "/ListarDocumentos", json=payload, timeout=25,
+                     headers={"Content-Type": "application/json; charset=UTF-8",
+                              "Referer": RAD_URL})
+        d = r.json().get("d") or {}
+        if d.get("temErro"):
+            return None
+        dados = d.get("dados") or ""
+    except Exception:
+        return None
+    rows = []
+    alvo = [e.upper() for e in empresas]
+    for bruto in dados.split("&*"):
+        c = bruto.split("$&")
+        if len(c) < 11:
+            continue
+        nome, tipo, status = c[1], c[2], c[7]
+        if status.strip().lower() != "ativo":          # descarta documento cancelado
+            continue
+        if tipo not in RAD_TIPOS or not any(a in nome.upper() for a in alvo):
+            continue
+        m = re.search(r"(\d{2}/\d{2}/\d{4})", c[6])
+        try:
+            d0 = datetime.strptime(m.group(1), "%d/%m/%Y").date() if m else None
+        except Exception:
+            d0 = None
+        if d0 and d0 < from_date:
+            continue
+        prot = re.search(r"NumeroProtocoloEntrega=(\d+)", c[10])
+        link = ("https://www.rad.cvm.gov.br/ENET/frmExibirArquivoIPEExterno.aspx"
+                "?NumeroProtocoloEntrega=" + prot.group(1)) if prot else RAD_URL
+        assunto = (c[3] or "").strip()
+        desc = re.sub(r"<[^>]+>", "", c[4] or "").strip(" -")
+        titulo = nome.title() + " \u2014 " + tipo
+        if desc or assunto:
+            titulo += ": " + (desc or assunto)
+        rows.append((titulo[:200], "CVM", d0.strftime("%a, %d %b %Y") if d0 else "", "",
+                     "CVM: " + tipo, link, "https://www.rad.cvm.gov.br"))
+    return rows
+
+
+def _sec(empresas, from_date, ctx):
+    """Filings da SEC das empresas que sao ADR e nao aparecem na CVM (ex.: Afya na NASDAQ)."""
+    rows = []
+    for nome, cik in (empresas or {}).items():
+        try:
+            r = requests.get("https://data.sec.gov/submissions/CIK" + cik + ".json",
+                             headers=SEC_HEADERS, timeout=20)
+            if r.status_code != 200:
+                continue
+            rec = (r.json().get("filings") or {}).get("recent") or {}
+            for f, dt, doc, acc in zip(rec.get("form", []), rec.get("filingDate", []),
+                                       rec.get("primaryDocument", []),
+                                       rec.get("accessionNumber", [])):
+                if f not in SEC_FORMS:
+                    continue
+                try:
+                    d0 = datetime.strptime(dt, "%Y-%m-%d").date()
+                except Exception:
+                    continue
+                if d0 < from_date:
+                    continue
+                link = ("https://www.sec.gov/Archives/edgar/data/" + str(int(cik)) + "/"
+                        + acc.replace("-", "") + "/" + doc)
+                rows.append((nome + " \u2014 SEC " + f + " (NASDAQ)", "SEC",
+                             d0.strftime("%a, %d %b %Y"), "", "SEC: " + f, link,
+                             "https://www.sec.gov"))
+        except Exception:
+            pass
+    return rows
+
+
 def _cvm(empresas, from_date, ctx):
     """Fatos relevantes / comunicados ao mercado (dados abertos da CVM)."""
     rows = []
@@ -323,7 +442,16 @@ def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print, norm
     for termo in DOU_TERMOS.get(v, []):
         tarefas.append((f"dou:{termo}", lambda t=termo: _dou(t, from_date, ctx, orgaos)))
     if CVM_EMPRESAS.get(v):
-        tarefas.append(("cvm", lambda: _cvm(CVM_EMPRESAS[v], from_date, ctx)))
+        def _cvm_com_reserva(_v=v):
+            got = _cvm_rad(CVM_EMPRESAS[_v], from_date, ctx)      # tempo real
+            if got is None:
+                if log:
+                    log("[fontes_extra] CVM: RAD indisponivel — caindo no zip do IPE")
+                return _cvm(CVM_EMPRESAS[_v], from_date, ctx)     # reserva
+            return got
+        tarefas.append(("cvm", _cvm_com_reserva))
+    if SEC_EMPRESAS.get(v):
+        tarefas.append(("sec", lambda _v=v: _sec(SEC_EMPRESAS[_v], from_date, ctx)))
 
     rows, por_fonte = [], {}
     with ThreadPoolExecutor(max_workers=12) as ex:

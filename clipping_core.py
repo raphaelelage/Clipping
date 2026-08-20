@@ -29,6 +29,10 @@ try:
     import trafilatura
 except Exception:
     trafilatura = None
+try:
+    from rapidfuzz import fuzz as _fuzz
+except Exception:
+    _fuzz = None
 import fontes_extra
 
 try:
@@ -668,6 +672,68 @@ def _decode_links(df):
     df["link"] = df["link"].map(lambda l: dmap.get(l, l))
     return df
 
+# --------------------------------------------------------- dedup por similaridade
+# TRAVAS do dedup por similaridade -------------------------------------------------
+# Sem elas, o fuzzy funde noticias DIFERENTES de alto valor. Medido no corpus real de 906
+# titulos (20/08/2026): "Hapvida tem lucro de R$ 500 mi no 2T26" x "Cogna tem lucro de R$ 200
+# mi no 2T26" pontua 78 — MAIS que duas versoes da mesma noticia da Hapvida (72). Idem
+# "RD Saude tem lucro no 2o trimestre" x "Raia Drogasil alta no lucro do 1o trimestre" (72).
+# Por isso: empresas diferentes ou trimestres diferentes NUNCA se fundem, em nenhum limiar.
+EMPRESAS_TRAVA = [
+    "hapvida", "rede d'or", "rede dor", "dasa", "oncoclinicas", "qualicorp", "hypera", "blau",
+    "viveo", "mater dei", "raia", "drogasil", "pague menos", "panvel", "dimed", "odontoprev",
+    "fleury", "pardini", "amil", "sulamerica", "bradesco saude", "cogna", "yduqs", "estacio",
+    "anhanguera", "ser educacional", "anima", "vasta", "afya", "vitru", "cruzeiro do sul",
+    "uniasselvi", "unicesumar", "kroton", "arco",
+]
+_TRIM_RX = re.compile(r"\b([1-4])\s*t\s*\d{2}\b"
+                      r"|\b(primeiro|segundo|terceiro|quarto)\s+trimestre\b"
+                      r"|\b([1-4])[o\u00ba]?\s+trimestre\b")
+_ORD = {"primeiro": "1", "segundo": "2", "terceiro": "3", "quarto": "4"}
+
+
+def _travas(t_norm):
+    """Marcadores que impedem fusao: empresas citadas + trimestre citado."""
+    emp = frozenset(e for e in EMPRESAS_TRAVA if e in t_norm)
+    tri = frozenset(_ORD.get(m[1], m[0] or m[2]) for m in _TRIM_RX.findall(t_norm))
+    return emp, tri
+
+
+def _dedup_similar(df, limiar=85, log=print):
+    """Junta a MESMA noticia publicada por veiculos diferentes com titulos ligeiramente
+    diferentes — o dedup exato (titulo normalizado + link) nao pega esses casos.
+    Mantem a versao mais republicada (count_news maior), que costuma ser a manchete canonica.
+
+    LIMIAR 85 foi escolhido auditando as fusoes no corpus real de 906 titulos:
+      85 -> 39 fusoes, 38 corretas (limpa ate titulos-lixo tipo "Industria farmaceutica")
+      72 -> 95 fusoes, varias ERRADAS separando trimestres e eventos societarios
+    Nao baixe o limiar sem repetir essa auditoria: perder uma duplicata e barato,
+    perder um fato relevante de empresa coberta nao e."""
+    if _fuzz is None or len(df) < 2:
+        return df
+    df = df.sort_values("count_news", ascending=False).reset_index(drop=True)
+    titulos = (df["_t"] if "_t" in df.columns else df["title"].map(_norm)).tolist()
+    manter, vistos, removidos = [], [], []
+    for i, t in enumerate(titulos):
+        emp, tri = _travas(t)
+        dup = None
+        for j, t2, emp2, tri2 in vistos:
+            if (emp and emp2 and emp != emp2) or (tri and tri2 and tri != tri2):
+                continue                      # empresa/trimestre diferente: nunca funde
+            if _fuzz.token_set_ratio(t, t2) >= limiar:
+                dup = j
+                break
+        if dup is None:
+            manter.append(i)
+            vistos.append((i, t, emp, tri))
+        else:
+            removidos.append((df.at[i, "title"], df.at[dup, "title"]))
+    if log and removidos:
+        log(f"[dedup] {len(removidos)} repetida(s) de outro veiculo removida(s)")
+        for a, b in removidos[:5]:
+            log(f"        '{str(a)[:60]}' == '{str(b)[:60]}'")
+    return df.iloc[manter].reset_index(drop=True)
+
 # --------------------------------------------------------------- resumo (3 paragrafos)
 _DOU_META_RX = re.compile(r"^(publicado em|órgão|orgao|edição|edicao)\s*:", re.I)
 
@@ -783,6 +849,8 @@ def collect(period: str = "1d", progress=None, vertical: str | None = None) -> p
     _p("Decodificando links do Google News…")
     allnews = _decode_links(allnews)
     allnews = allnews.drop_duplicates(subset="link").reset_index(drop=True)
+
+    allnews = _dedup_similar(allnews, log=lambda m: print(m, flush=True))
 
     _p("Extraindo os primeiros parágrafos de cada notícia…")
     allnews = _extrair_resumos(allnews, log=lambda m: print(m, flush=True))

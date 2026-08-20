@@ -10,3 +10,4 @@ google-auth==2.35.0
 googlenewsdecoder
 lxml
 trafilatura
+rapidfuzz

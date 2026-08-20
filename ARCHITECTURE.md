@@ -47,8 +47,18 @@ Suporte: `clipping_requirements.txt` (deps), `SETUP_APP.md` (passo-a-passo de co
                                        sync_to_drive    -->  Google Drive + backlog
 ```
 - **Coleta** (`clipping_core.collect`): roda cada fonte, junta, remove duplicatas (título e link),
-  decodifica links do Google News para a URL real do veículo. Devolve as colunas:
-  `title, count_news, link, source, date, hour, searched_keyword, source_link`.
+  decodifica links do Google News para a URL real do veículo, junta a **mesma notícia publicada
+  por veículos diferentes** (`_dedup_similar`) e baixa os 3 primeiros parágrafos de cada notícia
+  (`_extrair_resumos` → coluna `resumo`, que vira o `TRECHO:` no texto para a IA). Colunas:
+  `title, count_news, link, source, date, hour, searched_keyword, source_link, resumo`.
+
+### `_dedup_similar` — cuidado ao mexer
+Usa `rapidfuzz.token_set_ratio` com **limiar 85**, escolhido auditando o corpus real de 906 títulos:
+85 → 39 fusões, 38 corretas; 72 → 95 fusões, várias **erradas**. Tem duas travas que valem em
+qualquer limiar: não funde títulos que citam **empresas cobertas diferentes** nem **trimestres
+diferentes** (sem elas, "Hapvida tem lucro no 2T26" × "Cogna tem lucro no 2T26" pontua 78 — mais
+que duas versões da mesma notícia da Hapvida, que pontuam 72). Perder uma duplicata é barato;
+perder um fato relevante de empresa coberta não é. Não baixe o limiar sem refazer a auditoria.
 - **Janela** (`WHEN`): "1h","6h","1d","3d"… é um corte por data/hora (`1d` = últimas 24h).
 
 ## Onde mexer pra cada coisa (cheat-sheet)
@@ -74,13 +84,20 @@ Dois templates de listagem são suportados: `.listagem-noticias-com-foto li` (AN
 `article.tileItem` (MEC — sem data na listagem, buscada na página do artigo).
 
 ## Fontes complementares (`fontes_extra.py`)
-Rodam **todas em paralelo** (~4s no total, para não pesar no Actions). Quatro grupos:
+Rodam **todas em paralelo** (~4s no total, para não pesar no Actions). Cinco grupos:
 | Grupo | Como | Exemplos |
 |---|---|---|
 | WP | `<site>/wp-json/wp/v2/posts?after=<ISO>` | ANAHP, Interfarma, SindHosp, ABIMED, Abifina, ABIIS, Cofen · Semesp, ANUP, Todos Pela Educação, Educa Insights |
-| RSS | feed próprio | Medicina S/A, Setor Saúde, Fiocruz, JOTA, CADE, Consumidor Moderno, INEP |
-| DOU | `in.gov.br` busca por **frase exata**, seção DO1 (atos normativos) | portarias do MEC, decisões da ANS, registros da Anvisa |
-| CVM | dados abertos IPE (zip 1,5 MB) | fato relevante / comunicado ao mercado das empresas cobertas |
+| RSS setorial | feed próprio | Medicina S/A, Setor Saúde, Fiocruz, JOTA, CADE, Consumidor Moderno, INEP |
+| RSS grandes | feed oficial do veículo, **com** filtro de keyword | G1, O Globo, Folha, Estadão, UOL, Agência Brasil, Jornal da USP (`GRANDES_ECONOMIA` + feeds de saúde/educação) |
+| DOU | `in.gov.br` busca por **frase exata**, seções DO1 + DO1E (extra) | portarias do MEC, decisões da ANS, registros da Anvisa |
+| CVM/SEC | **RAD** (tempo real) com o zip do IPE de reserva; SEC EDGAR para ADR | fato relevante / comunicado das cobertas · Afya (NASDAQ, CIK 0001771007) |
+
+**Por que o RAD e não só o zip do IPE:** o zip de dados abertos só consolida o documento no dia
+seguinte — um fato relevante da manhã não sairia no clipping do mesmo dia. `_cvm_rad()` chama o
+endpoint que o próprio site da CVM usa (sem captcha), descarta documento com status "Cancelado",
+e devolve `None` se falhar — aí `_cvm_com_reserva()` cai automaticamente no zip. Como o endpoint
+não é documentado, **a reserva é obrigatória**: nunca remova o fallback.
 
 Cada fonte diz se aplica filtro de keyword: entidades do setor entram inteiras (`filtrar=False`);
 fontes amplas (JOTA, CADE, DOU) filtram por palavra-chave. Links de arquivo (`.pdf`, `.jpg`) são
