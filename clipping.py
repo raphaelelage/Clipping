@@ -46,7 +46,7 @@ def fetch_news() -> pd.DataFrame:
     df = clipping_core.collect(WHEN, progress=lambda m: print("·", m, flush=True),
                                vertical=VERTICAL)
     cols = ["title", "count_news", "link", "source", "date", "hour",
-            "searched_keyword", "source_link"]
+            "searched_keyword", "source_link", "resumo"]
     if df.empty:
         return df
     return df[cols].reset_index(drop=True)
@@ -162,9 +162,16 @@ def _load_ai_prompt() -> str:
 
 
 def build_ai_text(df: pd.DataFrame) -> str:
-    lines = [f"{i}. {row.title} | {row.link}"
-             for i, row in enumerate(df.itertuples(index=False), start=1)]
-    return _load_ai_prompt() + "\n\nNOTÍCIAS:\n" + "\n".join(lines)
+    """Lista para o AI: titulo + link + os primeiros paragrafos da materia.
+    So o titulo costuma nao dizer nada (ex.: DECISAO de 7 de agosto de 2026)."""
+    linhas = []
+    for i, row in enumerate(df.itertuples(index=False), start=1):
+        linhas.append(f"{i}. {row.title} | {row.link}")
+        resumo = str(getattr(row, "resumo", "") or "").strip()
+        if resumo:
+            linhas.append(f"   TRECHO: {resumo}")
+    nl = chr(10)
+    return _load_ai_prompt() + nl + nl + "NOTÍCIAS:" + nl + nl.join(linhas)
 
 
 def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[str, int]:

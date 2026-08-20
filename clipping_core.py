@@ -25,6 +25,10 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from pygooglenews import GoogleNews
 from googlenewsdecoder import gnewsdecoder
+try:
+    import trafilatura
+except Exception:
+    trafilatura = None
 import fontes_extra
 
 try:
@@ -664,6 +668,58 @@ def _decode_links(df):
     df["link"] = df["link"].map(lambda l: dmap.get(l, l))
     return df
 
+# --------------------------------------------------------------- resumo (3 paragrafos)
+_DOU_META_RX = re.compile(r"^(publicado em|órgão|orgao|edição|edicao)\s*:", re.I)
+
+def _paragrafos(url, html, n=3):
+    """Os `n` primeiros paragrafos de conteudo da noticia.
+    O in.gov.br nao e entendido pelo trafilatura (devolve vazio) — la usamos o seletor
+    proprio do DOU e descartamos o cabecalho (Publicado em / Orgao / Edicao)."""
+    ps = []
+    try:
+        if "in.gov.br" in url:
+            soup = BeautifulSoup(html, "html.parser")
+            ps = [x.get_text(" ", strip=True) for x in soup.select("p.dou-paragraph")]
+            ps = [x for x in ps if len(x) > 30 and not _DOU_META_RX.match(x)]
+        elif trafilatura is not None:
+            txt = trafilatura.extract(html, include_comments=False, include_tables=False,
+                                      favor_precision=True) or ""
+            ps = [x.strip() for x in txt.split(chr(10)) if len(x.strip()) > 60]
+    except Exception:
+        return ""
+    return " ".join(ps[:n])[:1500]
+
+def _extrair_resumos(df, workers=12, timeout=8, budget=200, log=print):
+    """Baixa cada noticia e guarda os primeiros paragrafos na coluna 'resumo'.
+    E o que da contexto ao input do AI — so o titulo costuma nao dizer nada
+    (ex.: 'DECISAO de 7 de agosto de 2026')."""
+    df["resumo"] = ""
+    links = [l for l in df["link"].astype(str).tolist() if l.startswith("http")]
+    if not links:
+        return df
+    fim = time.monotonic() + budget
+
+    def baixar(u):
+        if time.monotonic() > fim:
+            return u, ""
+        try:
+            r = requests.get(u, headers=HEADERS, timeout=timeout)
+            if r.status_code != 200:
+                return u, ""
+            return u, _paragrafos(u, r.text)
+        except Exception:
+            return u, ""
+
+    mapa = {}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for u, txt in ex.map(baixar, links):
+            if txt:
+                mapa[u] = txt
+    df["resumo"] = df["link"].astype(str).map(lambda l: mapa.get(l, ""))
+    if log:
+        log(f"[resumos] {len(mapa)}/{len(links)} noticias com texto extraido")
+    return df
+
 # ----------------------------------------------------------------------------- orquestrador
 def collect(period: str = "1d", progress=None, vertical: str | None = None) -> pd.DataFrame:
     """Coleta de todas as fontes dentro da janela `period` ('1h','3d',...), para a `vertical`
@@ -718,7 +774,7 @@ def collect(period: str = "1d", progress=None, vertical: str | None = None) -> p
         _p("Nenhuma notícia no período.")
         return pd.DataFrame([], columns=["title", "count_news", "link", "source", "date",
                                          "hour", "searched_keyword", "source_link",
-                                         "markdown", "setor"])
+                                         "markdown", "setor", "resumo"])
 
     allnews["_t"] = allnews["title"].map(_norm)
     allnews["count_news"] = allnews.groupby("_t")["title"].transform("size")
@@ -728,10 +784,13 @@ def collect(period: str = "1d", progress=None, vertical: str | None = None) -> p
     allnews = _decode_links(allnews)
     allnews = allnews.drop_duplicates(subset="link").reset_index(drop=True)
 
+    _p("Extraindo os primeiros parágrafos de cada notícia…")
+    allnews = _extrair_resumos(allnews, log=lambda m: print(m, flush=True))
+
     allnews["markdown"] = "[" + allnews["title"].astype(str) + "](" + allnews["link"].astype(str) + ")"
     allnews["setor"] = allnews.apply(_classify, axis=1)
     allnews = allnews[["title", "count_news", "link", "source", "date", "hour",
-                       "searched_keyword", "source_link", "markdown", "setor"]]
+                       "searched_keyword", "source_link", "markdown", "setor", "resumo"]]
     _p(f"Pronto: {len(allnews)} notícias.")
     return allnews
 
