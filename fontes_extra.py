@@ -199,6 +199,23 @@ def _rss(nome, url, filtrar, cutoff, ctx, exige=None):
     return rows
 
 
+# ATENCAO: o WAF do in.gov.br DERRUBA a conexao se o User-Agent nao parecer navegador
+# (testado: UA identificavel tipo "clipping-bot/1.0" => ConnectionError em 100% dos termos).
+# Por isso mantemos o UA de navegador. O fallback para HTTP cobre falhas de TLS
+# vistas a partir dos runners do GitHub.
+DOU_HEADERS = {**HEADERS,
+               "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"}
+
+def _dou_get(url):
+    for u in (url, url.replace("https://", "http://", 1)):
+        try:
+            r = requests.get(u, headers=DOU_HEADERS, timeout=12)
+            if r.status_code == 200:
+                return r
+        except Exception:
+            continue
+    return None
+
 def _dou(termo, from_date, ctx, orgaos=()):
     """Busca por FRASE EXATA no DOU. Devolve atos (portarias, decisoes, extratos)."""
     # NAO usar exactDate=dia: devolve 0 mesmo havendo atos publicados. Minimo = semana,
@@ -206,10 +223,13 @@ def _dou(termo, from_date, ctx, orgaos=()):
     dias = (date.today() - from_date).days
     janela = "semana" if dias <= 7 else "mes"
     url = ("https://www.in.gov.br/consulta/-/buscar/dou?q=%22"
-           + requests.utils.quote(termo) + f"%22&s=do1&exactDate={janela}&sortType=0")   # DO1 = atos normativos
+           + requests.utils.quote(termo) + f"%22&s=do1,do1e&exactDate={janela}&sortType=0")  # DO1 + Edicao Extra
     rows = []
     try:
-        r = requests.get(url, headers=HEADERS, timeout=12)
+        r = _dou_get(url)
+        if r is None:
+            ctx.setdefault("dou_falhas", []).append(termo)
+            return rows
         m = re.search(r'<script[^>]*type="application/json"[^>]*>(.*?)</script>', r.text, re.S)
         if not m:
             ctx.setdefault("dou_falhas", []).append(termo)
