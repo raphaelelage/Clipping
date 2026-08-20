@@ -524,7 +524,20 @@ with tab_sched:
                                   default=["Seg", "Ter", "Qua", "Qui", "Sex"],
                                   key=f"nd_{VERT}")
         to_s = email_editor(f"sched_{VERT}", "E-mails do agendamento")
-        if st.button("➕ Criar agendamento"):
+        # trava anti-duplicata: se a criacao devolve erro (ex.: 429) mas chegou a ser
+        # criada no servidor, um novo clique gerava DOIS agendamentos no mesmo horario
+        # — e dois e-mails por dia. Ja aconteceu.
+        dup = [j for j in jobs
+               if (j.get("schedule", {}).get("hours") or [None])[0] == t.hour
+               and (j.get("schedule", {}).get("minutes") or [None])[0] == t.minute]
+        forcar = False
+        if dup:
+            st.warning(f"⚠️ Já existe um agendamento de **{V['label']}** às "
+                       f"**{t.strftime('%H:%M')}**. Criar outro faria o robô rodar duas "
+                       "vezes e mandar dois e-mails. Prefira **✏️ editar** o existente.")
+            forcar = st.checkbox("Quero criar mesmo assim (dois no mesmo horário)",
+                                 key=f"dup_{VERT}")
+        if st.button("➕ Criar agendamento", disabled=bool(dup) and not forcar):
             wdays = sorted(DIAS[d] for d in dias_sel) or [-1]
             with st.spinner("Criando no cron-job.org…"):
                 r = cron_create(VERT, [t.hour], [t.minute], wdays, period_s, to_s)
