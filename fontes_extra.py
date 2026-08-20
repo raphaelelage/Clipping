@@ -16,6 +16,7 @@ entidades do setor publicam quase so o que interessa (filtrar=False); fontes amp
 """
 from __future__ import annotations
 import io
+import os
 import json
 import time
 import re
@@ -166,8 +167,15 @@ RAD_TIPOS = ("Fato Relevante", "Comunicado ao Mercado", "Aviso aos Acionistas")
 SEC_EMPRESAS = {"saude": {}, "educacao": {"Afya": "0001771007"}}
 SEC_EMPRESAS["saude_educacao"] = {**SEC_EMPRESAS["saude"], **SEC_EMPRESAS["educacao"]}
 SEC_FORMS = ("6-K", "20-F", "8-K")
-SEC_HEADERS = {"User-Agent": "clipping-bot (github.com/raphaelelage/Clipping)",
-               "Accept-Encoding": "gzip, deflate"}
+# A SEC EXIGE User-Agent com e-mail de contato: sem e-mail ela devolve HTTP 403 (medido).
+# Como o repositorio e publico, o e-mail NUNCA fica no codigo — vem do ambiente:
+# variavel de repo SEC_CONTATO (preferida) ou o secret EMAIL_REMETENTE ja existente.
+# Sem nenhum dos dois a SEC e simplesmente pulada, sem quebrar a coleta.
+def _sec_headers():
+    contato = (os.environ.get("SEC_CONTATO") or os.environ.get("EMAIL_REMETENTE") or "").strip()
+    if "@" not in contato:
+        return None
+    return {"User-Agent": "Clipping Bot " + contato, "Accept-Encoding": "gzip, deflate"}
 
 
 # ------------------------------------------------------------------ coletores
@@ -298,13 +306,30 @@ def _dou(termo, from_date, ctx, orgaos=()):
     return rows
 
 
+_RX_EMPRESA_CACHE = {}
+
+
+def _rx_empresas(empresas):
+    """Casa o nome da empresa por PALAVRA INTEIRA. Substring simples deixava
+    "ARCO" (Arco Educacao) casar com MARCOPOLO e ARCOS DORADOS (McDonald's)."""
+    chave = tuple(empresas)
+    rx = _RX_EMPRESA_CACHE.get(chave)
+    if rx is None:
+        alt = "|".join(re.escape(e.upper()) for e in empresas)
+        rx = re.compile(r"\b(?:" + alt + r")\b")
+        _RX_EMPRESA_CACHE[chave] = rx
+    return rx
+
+
 def _cvm_rad(empresas, from_date, ctx):
     """Fato relevante / comunicado direto do sistema da CVM (RAD) — no MESMO DIA.
     O zip anual do IPE (_cvm) so traz o dado consolidado no dia seguinte; este e o endpoint
     que o proprio site da CVM usa. Nao e documentado — por isso e primaria com o zip de reserva.
     Devolve None se falhar (sinal para o chamador usar o zip)."""
     dias = (date.today() - from_date).days
-    periodo = "0" if dias <= 1 else ("1" if dias <= 7 else "2")   # hoje / semana / mes
+    # "1d" pede a SEMANA e filtra por data localmente: pedir "hoje" perderia o fato relevante
+    # publicado ontem a noite, que a rodada das 06h45 precisa pegar.
+    periodo = "0" if dias < 1 else ("1" if dias <= 7 else "2")   # hoje / semana / mes
     try:
         ses = requests.Session()
         ses.headers.update(HEADERS)
@@ -324,7 +349,7 @@ def _cvm_rad(empresas, from_date, ctx):
     except Exception:
         return None
     rows = []
-    alvo = [e.upper() for e in empresas]
+    rx = _rx_empresas(empresas)
     for bruto in dados.split("&*"):
         c = bruto.split("$&")
         if len(c) < 11:
@@ -332,7 +357,7 @@ def _cvm_rad(empresas, from_date, ctx):
         nome, tipo, status = c[1], c[2], c[7]
         if status.strip().lower() != "ativo":          # descarta documento cancelado
             continue
-        if tipo not in RAD_TIPOS or not any(a in nome.upper() for a in alvo):
+        if tipo not in RAD_TIPOS or not rx.search(nome.upper()):
             continue
         m = re.search(r"(\d{2}/\d{2}/\d{4})", c[6])
         try:
@@ -356,11 +381,17 @@ def _cvm_rad(empresas, from_date, ctx):
 
 def _sec(empresas, from_date, ctx):
     """Filings da SEC das empresas que sao ADR e nao aparecem na CVM (ex.: Afya na NASDAQ)."""
+    headers = _sec_headers()
+    if headers is None:
+        log = (ctx or {}).get("log")
+        if log:
+            log("[fontes_extra] SEC pulada: defina SEC_CONTATO (e-mail) — a SEC exige contato no User-Agent")
+        return []
     rows = []
     for nome, cik in (empresas or {}).items():
         try:
             r = requests.get("https://data.sec.gov/submissions/CIK" + cik + ".json",
-                             headers=SEC_HEADERS, timeout=20)
+                             headers=headers, timeout=20)
             if r.status_code != 200:
                 continue
             rec = (r.json().get("filings") or {}).get("recent") or {}
@@ -396,13 +427,13 @@ def _cvm(empresas, from_date, ctx):
         linhas = z.read(z.namelist()[0]).decode("latin-1").splitlines()
         cab = linhas[0].split(";")
         idx = {c: i for i, c in enumerate(cab)}
-        alvo = [e.upper() for e in empresas]
+        rx = _rx_empresas(empresas)
         for ln in linhas[1:]:
             c = ln.split(";")
             if len(c) < len(cab):
                 continue
             nome = c[idx["Nome_Companhia"]].upper()
-            if not any(a in nome for a in alvo):
+            if not rx.search(nome):
                 continue
             if c[idx["Categoria"]] not in CVM_CATEGORIAS:
                 continue

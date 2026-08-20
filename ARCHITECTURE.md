@@ -93,6 +93,16 @@ Rodam **todas em paralelo** (~4s no total, para não pesar no Actions). Cinco gr
 | DOU | `in.gov.br` busca por **frase exata**, seções DO1 + DO1E (extra) | portarias do MEC, decisões da ANS, registros da Anvisa |
 | CVM/SEC | **RAD** (tempo real) com o zip do IPE de reserva; SEC EDGAR para ADR | fato relevante / comunicado das cobertas · Afya (NASDAQ, CIK 0001771007) |
 
+**Três armadilhas já medidas nesta parte** (não desfaça sem testar):
+1. A SEC devolve **HTTP 403** se o `User-Agent` não tiver e-mail de contato. Como o repo é
+   público, o e-mail vem do ambiente (`SEC_CONTATO`, senão `EMAIL_REMETENTE`) — nunca do código.
+   Sem nenhum dos dois a SEC é pulada com aviso no log, sem quebrar a coleta.
+2. O nome da empresa casa por **palavra inteira** (`_rx_empresas`). Substring simples fazia
+   "ARCO" (Arco Educação) casar com **MARCOPOLO** e **ARCOS DORADOS** (McDonald's).
+3. Uma janela de "1d" pede a **semana** à CVM e filtra por data localmente. Pedir "hoje"
+   perdia o fato relevante publicado ontem à noite — que é justamente o que a rodada das
+   06h45 precisa pegar (medido: 0 documentos com "hoje" × 5 com "semana").
+
 **Por que o RAD e não só o zip do IPE:** o zip de dados abertos só consolida o documento no dia
 seguinte — um fato relevante da manhã não sairia no clipping do mesmo dia. `_cvm_rad()` chama o
 endpoint que o próprio site da CVM usa (sem captcha), descarta documento com status "Cancelado",

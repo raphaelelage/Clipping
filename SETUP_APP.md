@@ -52,3 +52,9 @@ Não há `schedule:` no GitHub (que atrasa); quem agenda é o **cron-job.org**, 
 > Os secrets do **e-mail** e do **Google Drive** continuam onde sempre estiveram: em
 > **Settings → Secrets and variables → Actions** do repositório (EMAIL_REMETENTE, EMAIL_SENHA,
 > GOOGLE_CREDENTIALS_JSON, DRIVE_FOLDER_ID). O app não precisa deles.
+
+## Variável opcional: `SEC_CONTATO`
+GitHub → Settings → Secrets and variables → Actions → aba **Variables** → `SEC_CONTATO`.
+É o e-mail de contato que a SEC exige no `User-Agent` (sem ele a SEC responde HTTP 403).
+Se você não criar, o robô usa o `EMAIL_REMETENTE` automaticamente; crie apenas se quiser
+que a SEC receba um endereço diferente do remetente do clipping.
