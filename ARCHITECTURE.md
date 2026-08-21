@@ -192,3 +192,16 @@ Aba **🔧 Debug** do app: checa conexões, lista as execuções e **mostra o lo
 
 ## Como pedir pro Claude editar (no plano Pro, com contexto menor)
 > "Leia `ARCHITECTURE.md` e o `clipping_core.py`. Quero adicionar a fonte X." — isso basta; não precisa colar o repo inteiro.
+
+## Levantamento histórico de regulação (ferramentas avulsas, não rodam no clipping diário)
+Pedido: todos os atos que autorizam/barram cursos superiores desde 2018, foco em Medicina.
+- `dou_historico.py` — varre a **edição diária** do DOU (`leiturajornal?data=...&secao=do1`) e
+  guarda todos os atos cujo órgão começa com "Ministério da Educação". Não usa busca por frase
+  de propósito: portaria com redação diferente escaparia. O endpoint falha de forma intermitente
+  (200 sem o bloco JSON `{"typeNormDay"...}`) — há retry, e dia que falhar fica listado.
+- `dou_extrair.py` — 1 linha por curso: explode as tabelas dos atos (a coluna de processo se
+  chama "Registro e-MEC nº"; município/UF sai do endereço de funcionamento), classifica o tipo
+  de ato e marca referência judicial.
+- `medicina_mec_pdfs.py` — planilhas oficiais da SERES (tramitação + sobrestados ADC 81).
+  O caminho no site é `assuntos/es/cursos-de-medicina/...` (o antigo `areas-de-atuacao/...` dá 404).
+- `dou_montar.py` — junta tudo no Excel de 4 abas (Atos, Medicina, Medicina_SERES, Notas).
