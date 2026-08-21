@@ -60,6 +60,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+          cache: pip                      # sem isso o pip install roda do zero nos 5 jobs
+          cache-dependency-path: clipping_requirements.txt
 
       - name: Install deps
         run: |
@@ -91,6 +93,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+          cache: pip                      # sem isso o pip install roda do zero nos 5 jobs
+          cache-dependency-path: clipping_requirements.txt
 
       - name: Install deps
         run: |
