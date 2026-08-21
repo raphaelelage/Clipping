@@ -56,6 +56,23 @@ def _norm(s):
 # 9 digitos = formato atual (AAAA+5); 8 digitos = formato antigo (AAAA+4), ainda visto
 # em renovacoes de pedidos protocolados ate ~2010 e decididos anos depois
 RX_EMEC = re.compile(r"^(200\d|201\d|202\d)\d{4,5}$")
+
+# Sufixos societarios que variam entre o DOU e o Censo sem mudar quem e a mantenedora
+# ("EDUCACIONAL X LTDA" no DOU, "EDUCACIONAL X" no Censo). Removidos APENAS da chave de
+# comparacao — o nome exibido na planilha continua o original.
+_RX_SOCIETARIO = re.compile(
+    r"\b(ltda|s[ /.]?a|eireli|epp|me|cia|s[ /.]?s|s[ /.]?c|sociedade simples|"
+    r"sociedade civil)\b\.?", )
+_RX_PONTUACAO = re.compile(r"[^\w ]")
+
+
+def _chave(s):
+    """Chave de casamento: sem acento, sem pontuacao, caixa unica, espacos colapsados."""
+    return re.sub(r"\s+", " ", _RX_PONTUACAO.sub(" ", _norm(s))).strip()
+
+
+def _chave_mant(s):
+    return re.sub(r"\s+", " ", _RX_SOCIETARIO.sub(" ", _chave(s))).strip()
 RX_SEI = re.compile(r"/(\d{4})-\d{2}$")
 
 # padrao de recurso com contexto juridico; exclui os "recursos" que nao sao apelacao
@@ -170,55 +187,113 @@ def compilar(parquet_dou, parquet_seres, inep_ies=(), inep_cursos=(), log=print)
     # Matching por nome EXATO normalizado, com dois fallbacks deterministicos:
     # "FACULDADE X - FX" tenta o trecho antes do " - " e depois a sigla. So preenche
     # quando o nome mapeia para UM UNICO codigo — ambiguidade nunca vira chute.
-    pares_ies, pares_mant, pares_local = [], [], []
+    pares_ies, pares_ies_uf, pares_ies_mun, pares_mant, pares_local = [], [], [], [], []
+    ies_para_mant = {}          # CO_IES -> CO_MANTENEDORA (censo mais recente vence)
     cursos_cad = []
-    for pq in (inep_ies or []):
+    for pq in sorted(inep_ies or []):        # ordem alfabetica = cronologica (2018..2023)
         inep = pd.read_parquet(pq)
-        pares_ies += [(_norm(n), str(c)) for n, c in zip(inep["NO_IES"], inep["CO_IES"])]
+        pares_ies += [(_chave(n), str(c)) for n, c in zip(inep["NO_IES"], inep["CO_IES"])]
         if "SG_IES" in inep:
-            pares_ies += [(_norm(sg), str(c)) for sg, c in zip(inep["SG_IES"], inep["CO_IES"])
+            pares_ies += [(_chave(sg), str(c)) for sg, c in zip(inep["SG_IES"], inep["CO_IES"])
                           if isinstance(sg, str) and len(str(sg)) > 3]
-        pares_mant += [(_norm(m), str(c)) for m, c in
+        pares_mant += [(_chave_mant(m), str(c)) for m, c in
                        zip(inep["NO_MANTENEDORA"], inep["CO_MANTENEDORA"])]
+        if "SG_UF_IES" in inep:
+            pares_ies_uf += [((_chave(n), str(u)), str(c)) for n, u, c in
+                             zip(inep["NO_IES"], inep["SG_UF_IES"], inep["CO_IES"])]
         if "NO_MUNICIPIO_IES" in inep:
-            pares_local += [(_norm(n), f"{mu}|{u}") for n, mu, u in
+            pares_ies_mun += [((_chave(n), _chave(mu)), str(c)) for n, mu, c in
+                              zip(inep["NO_IES"], inep["NO_MUNICIPIO_IES"], inep["CO_IES"])]
+        if "NO_MUNICIPIO_IES" in inep:
+            pares_local += [(_chave(n), f"{mu}|{u}") for n, mu, u in
                             zip(inep["NO_IES"], inep["NO_MUNICIPIO_IES"], inep["SG_UF_IES"])]
+        for ci, cm in zip(inep["CO_IES"], inep["CO_MANTENEDORA"]):
+            ies_para_mant[str(ci)] = str(cm)     # ano mais novo sobrescreve o antigo
     for pq in (inep_cursos or []):
         cursos_cad.append(pd.read_parquet(pq))
 
     m_cod_ies = _mapa_unico(
-        [(_norm(i), c) for i, c in zip(df.get("ies", ""), df.get("cod_ies", "")) if str(c).strip()]
-        + [(_norm(i), c) for i, c in zip(seres["ies"], seres["cod_ies"])]
+        [(_chave(i), c) for i, c in zip(df.get("ies", ""), df.get("cod_ies", "")) if str(c).strip()]
+        + [(_chave(i), c) for i, c in zip(seres["ies"], seres["cod_ies"])]
         + pares_ies)
-    m_cod_mant = _mapa_unico([(_norm(m), c) for m, c in
+    # nome ambiguo no pais inteiro pode ser unico DENTRO da UF (ex.: duas "Faculdade Sao
+    # Judas" em estados diferentes) — segundo mapa, chaveado por (nome, UF)
+    m_cod_ies_uf = _mapa_unico(pares_ies_uf)
+    m_cod_ies_mun = _mapa_unico(pares_ies_mun)   # homonimas nacionais, unicas no municipio
+    m_cod_mant = _mapa_unico([(_chave_mant(m), c) for m, c in
                               zip(seres["mantenedora"], seres["cod_mantenedora"])]
                              + pares_mant)
     # municipio em CASCATA: primeiro o que o proprio DOU prova (municipio do CAMPUS),
     # so depois a sede do cadastro INEP. Misturar os dois num mapa so criava conflito
     # campus x sede, a IES virava "ambigua" e a propagacao morria (medido: 73% -> 58%).
-    m_local_dou = _mapa_unico([(_norm(i), f"{mu}|{u}") for i, mu, u in
+    m_local_dou = _mapa_unico([(_chave(i), f"{mu}|{u}") for i, mu, u in
                                zip(df.get("ies", ""), df.get("municipio", ""), df.get("uf", ""))
                                if str(mu).strip() and str(u).strip()])
     m_local_inep = _mapa_unico(pares_local)
     m_local = {**m_local_inep, **m_local_dou}          # DOU ganha do INEP
 
-    def _busca_ies(nome_n):
-        """nome exato -> antes do ' - ' -> sigla depois do ' - '."""
+    def _busca_ies(nome_original, uf, municipio=""):
+        """Cascata: nome exato -> (nome, municipio) -> (nome, UF) -> quebra no ' - '.
+        A quebra no hifen usa o nome ORIGINAL (na chave a pontuacao ja virou espaco)."""
+        nome_n = _chave(nome_original)
+        if not nome_n:
+            return ""
         if nome_n in m_cod_ies:
             return m_cod_ies[nome_n]
-        if " - " in nome_n:
-            antes, _, depois = nome_n.partition(" - ")
-            if antes.strip() in m_cod_ies:
-                return m_cod_ies[antes.strip()]
-            if depois.strip() in m_cod_ies:
-                return m_cod_ies[depois.strip()]
+        mu = _chave(municipio)
+        if mu and (nome_n, mu) in m_cod_ies_mun:
+            return m_cod_ies_mun[(nome_n, mu)]
+        if uf and (nome_n, uf) in m_cod_ies_uf:
+            return m_cod_ies_uf[(nome_n, uf)]
+        if " - " in str(nome_original):
+            antes, _, depois = str(nome_original).partition(" - ")
+            for pedaco in (antes, depois):
+                k = _chave(pedaco)
+                if k in m_cod_ies:
+                    return m_cod_ies[k]
+                if uf and (k, uf) in m_cod_ies_uf:
+                    return m_cod_ies_uf[(k, uf)]
         return ""
 
-    df["_ies_n"] = df["ies"].map(_norm)
+    # Dois padroes vindos das proprias tabelas do DOU, com codigo exato (sem casamento):
+    #   "UNIVERSIDADE FEDERAL DO PARANA(571)"  -> codigo entre parenteses no nome
+    #   "516"                                  -> a celula da IES E o proprio codigo
+    ies_nome_oficial = {}
+    for pq in sorted(inep_ies or []):
+        inep2 = pd.read_parquet(pq)
+        for ci, nn in zip(inep2["CO_IES"], inep2["NO_IES"]):
+            ies_nome_oficial[str(ci)] = str(nn)          # ano mais novo sobrescreve
+
+    rx_cod_no_nome = re.compile(r"\((\d{2,6})\)\s*$")
+    def _cod_embutido(r):
+        cod = str(r.get("cod_ies") or "").strip()
+        nome = str(r.get("ies") or "").strip()
+        if cod:
+            return cod, nome
+        m = rx_cod_no_nome.search(nome)
+        if m:                                            # nome com "(571)" no fim
+            return m.group(1), rx_cod_no_nome.sub("", nome).strip()
+        if nome.isdigit() and 2 <= len(nome) <= 6:       # celula que so tem o codigo
+            return nome, ies_nome_oficial.get(nome, nome)
+        return "", nome
+    extraidos = df.apply(_cod_embutido, axis=1)
+    df["cod_ies"] = [c for c, _ in extraidos]
+    df["ies"] = [n for _, n in extraidos]
+
+    df["_ies_n"] = df["ies"].map(_chave)
     df["cod_ies"] = df.apply(
         lambda r: r["cod_ies"] if str(r.get("cod_ies") or "").strip()
-        else _busca_ies(r["_ies_n"]), axis=1)
-    df["cod_mantenedora"] = [m_cod_mant.get(_norm(m), "") for m in df.get("mantenedora", "")]
+        else _busca_ies(r["ies"], str(r.get("uf") or "").strip(),
+                        str(r.get("municipio") or "")), axis=1)
+
+    # cod_mantenedora em CASCATA: 1) via cod_ies no censo (join exato por codigo, sem nome);
+    # 2) pelo nome da mantenedora (chave sem sufixo societario)
+    def _busca_mant(r):
+        ci = str(r.get("cod_ies") or "").strip()
+        if ci and ci in ies_para_mant:
+            return ies_para_mant[ci]
+        return m_cod_mant.get(_chave_mant(r.get("mantenedora")), "")
+    df["cod_mantenedora"] = df.apply(_busca_mant, axis=1)
     faltava_local = ~(df["municipio"].astype(str).str.strip().astype(bool))
     df.loc[faltava_local, "municipio"] = [
         m_local.get(n, "|").split("|")[0] for n in df.loc[faltava_local, "_ies_n"]]
