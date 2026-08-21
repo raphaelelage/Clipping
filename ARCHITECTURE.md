@@ -74,6 +74,28 @@ invisível — o pior tipo de falha. E-mail que não chega, você percebe.
 
 **Reverter para o modo sequencial:** `GN_SHARDS: "0"` no topo do `clipping.yml`. Nada mais muda —
 `collect()` volta a buscar sozinho.
+
+### Thread pode aqui, não podia no Google News
+Dentro de `collect()`, as fontes restantes (4 portais gov.br + Valor + Brazil Stock Guide +
+`fontes_extra`) rodam **todas ao mesmo tempo** num `ThreadPoolExecutor`. Isso parece contradizer
+a regra "não usar thread no Google News", mas a diferença é qual servidor apanha: o desastre do
+Google News foi **rajada contra um host só**, que limita por IP. Aqui cada tarefa fala com um
+servidor diferente. A única concentração é o `gov.br`, que atende 4 portais — medido em série
+× simultâneo: **38,1s → 29,3s** com as mesmas contagens e nenhuma recusa.
+Se um dia o gov.br começar a recusar, limite **só ele** (menos workers ou os 4 portais de volta
+em fila) — não serialize tudo de novo.
+Medido no conjunto: esse bloco caiu de ~133s para ~31s.
+
+### Onde o tempo está hoje (rodada de 3min04)
+| Etapa | Tempo |
+|---|---|
+| 4 robôs do Google News (em paralelo) | ~60s (dos quais ~30s é coleta, resto é setup) |
+| Fontes restantes (simultâneas) | ~31s — dominado pelo MEC, que sozinho leva ~35s |
+| Extrair parágrafos de cada notícia | ~44s |
+| Decodificar links + e-mail + Drive | ~40s |
+
+O próximo alvo, se algum dia precisar, é o **MEC**: o template dele não traz data na listagem,
+então é preciso abrir cada artigo para descobrir a data — e isso ainda é feito em fila.
 - **Coleta** (`clipping_core.collect`): roda cada fonte, junta, remove duplicatas (título e link),
   decodifica links do Google News para a URL real do veículo, junta a **mesma notícia publicada
   por veículos diferentes** (`_dedup_similar`) e baixa os 3 primeiros parágrafos de cada notícia
