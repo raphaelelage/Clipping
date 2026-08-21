@@ -189,6 +189,7 @@ def compilar(parquet_dou, parquet_seres, inep_ies=(), inep_cursos=(), log=print)
     # quando o nome mapeia para UM UNICO codigo — ambiguidade nunca vira chute.
     pares_ies, pares_ies_uf, pares_ies_mun, pares_mant, pares_local = [], [], [], [], []
     ies_para_mant = {}          # CO_IES -> CO_MANTENEDORA (censo mais recente vence)
+    ies_sede = {}               # CO_IES -> (municipio sede, UF) do censo mais recente
     cursos_cad = []
     for pq in sorted(inep_ies or []):        # ordem alfabetica = cronologica (2018..2023)
         inep = pd.read_parquet(pq)
@@ -209,6 +210,9 @@ def compilar(parquet_dou, parquet_seres, inep_ies=(), inep_cursos=(), log=print)
                             zip(inep["NO_IES"], inep["NO_MUNICIPIO_IES"], inep["SG_UF_IES"])]
         for ci, cm in zip(inep["CO_IES"], inep["CO_MANTENEDORA"]):
             ies_para_mant[str(ci)] = str(cm)     # ano mais novo sobrescreve o antigo
+        if "NO_MUNICIPIO_IES" in inep:
+            for ci, mu, u in zip(inep["CO_IES"], inep["NO_MUNICIPIO_IES"], inep["SG_UF_IES"]):
+                ies_sede[str(ci)] = (str(mu), str(u))
     for pq in (inep_cursos or []):
         cursos_cad.append(pd.read_parquet(pq))
 
@@ -300,6 +304,21 @@ def compilar(parquet_dou, parquet_seres, inep_ies=(), inep_cursos=(), log=print)
     faltava_uf = ~(df["uf"].astype(str).str.strip().astype(bool))
     df.loc[faltava_uf, "uf"] = [
         m_local.get(n, "|").split("|")[1] for n in df.loc[faltava_uf, "_ies_n"]]
+
+    # o que AINDA ficou sem local ganha o municipio-SEDE da IES via cod_ies (join por
+    # codigo no censo — exato). Quando o ato nao diz o endereco do campus, a sede e a
+    # melhor informacao oficial disponivel; a aba Notas registra a convencao.
+    def _sede(r, idx):
+        v = str(r).strip()
+        if v:
+            return v
+        return ies_sede.get(str(dfc), ("", ""))[idx]
+    sem_mu = ~(df["municipio"].astype(str).str.strip().astype(bool))
+    df.loc[sem_mu, "municipio"] = [ies_sede.get(str(c), ("", ""))[0]
+                                   for c in df.loc[sem_mu, "cod_ies"]]
+    sem_uf = ~(df["uf"].astype(str).str.strip().astype(bool))
+    df.loc[sem_uf, "uf"] = [ies_sede.get(str(c), ("", ""))[1]
+                            for c in df.loc[sem_uf, "cod_ies"]]
 
     # ------- cod_curso: (cod_ies + nome do curso) e, se ambiguo, + municipio.
     # O DOU escreve "HISTORIA (Licenciatura)" e o Censo so "Historia" — o grau entre
@@ -423,6 +442,9 @@ NOTAS = [
      "nome APENAS quando o nome mapeia para um unico valor em toda a base (IES multicampi nao "
      "recebe propagacao). O que restou impossivel de determinar esta como 'nao consta na "
      "fonte' — e ausencia real da fonte publica, nao falha de coleta."],
+    ["municipio/UF", "Prioridade: endereco do CAMPUS declarado no ato > municipio unico "
+     "da IES na base > SEDE da IES no censo (via cod_ies). Quando o ato nao informa o "
+     "endereco, o municipio mostrado e o da sede — pode diferir do campus do curso."],
     ["Pendentes", "Apenas Medicina tem lista publica de processos sem decisao (SERES, "
      "fotografia de 04/06/2024). Para os demais cursos o MEC nao publica lista equivalente; "
      "a consulta e caso a caso no e-MEC."],
@@ -434,8 +456,11 @@ NOTAS = [
 
 def montar(parquet_dou, parquet_seres, saida, inep_ies=(), inep_cursos=(), log=print):
     corpo, seres = compilar(parquet_dou, parquet_seres, inep_ies, inep_cursos, log)
-    corpo["_d"] = pd.to_datetime(corpo["data_decisao"], format="%d/%m/%Y", errors="coerce")
+    corpo["_d"] = pd.to_datetime(corpo["data_decisao"], errors="coerce")
     corpo = corpo.sort_values("_d").drop(columns="_d")
+    # valor de DATA pura na celula (sem 00:00:00 na barra de formulas do Excel)
+    for c in ("data_pedido", "data_decisao"):
+        corpo[c] = pd.to_datetime(corpo[c], errors="coerce").dt.date
     med = corpo[corpo["curso"].astype(str).str.contains("MEDICINA", case=False)
                 & ~corpo["curso"].astype(str).str.contains("VETERIN", case=False)]
     log(f"[montar] Atos={len(corpo)} | Medicina={len(med)}")
@@ -450,6 +475,8 @@ def montar(parquet_dou, parquet_seres, saida, inep_ies=(), inep_cursos=(), log=p
             ws = xw.book[aba]
             ws.freeze_panes = "A2"
             ws.auto_filter.ref = ws.dimensions
+            ws.column_dimensions["A"].width = 12   # data_pedido
+            ws.column_dimensions["B"].width = 12   # data_decisao
     log(f"[ok] {saida}")
 
 
