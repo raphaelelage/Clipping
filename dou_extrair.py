@@ -180,7 +180,12 @@ def extrair(atos, workers=6, log=print):
                 html = ""
             tipo = classificar(a.get("title", ""), texto)
             jud = RX_JUDICIAL.search(texto)
+            # processos citados no texto alem do da propria linha: e assim que um ato de
+            # RECURSO aponta para o pedido original (detectado depois, em pedidos_compilar)
+            citados = ";".join(dict.fromkeys(RX_PROCESSO.findall(texto)))
             base = {
+                "texto_inicio": texto[:2500],
+                "processos_citados": citados,
                 "data_publicacao": a.get("pubDate", ""),
                 "secao": a.get("_secao", "do1"),
                 "orgao": a.get("hierarchyStr", ""),
