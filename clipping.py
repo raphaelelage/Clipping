@@ -6,6 +6,8 @@ Clipping — Saúde & Educação (News Scrapper)
 """
 
 import os
+import glob
+import re
 
 # =============================================================================
 # >>>>>>>>>>>>>>>>>>>>>>>>>  AJUSTE MANUAL AQUI  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
@@ -41,10 +43,37 @@ LEGACY_VERTICAL = "saude"   # dona dos arquivos que ficavam soltos na raiz do Dr
 DRIVE_PASTA = "Saúde e Educação"   # pasta unica no Drive — as 3 secoes usam os mesmos arquivos
 
 
+def _juntar_shards():
+    """Junta as fatias do Google News coletadas pelos robos paralelos do Actions.
+
+    Devolve None quando a coleta dividida nao esta em uso (aí o clipping_core busca sozinho,
+    do jeito sequencial de sempre — o modo dividido e opcional e reversivel).
+
+    TRAVA IMPORTANTE: se faltar qualquer fatia, ABORTA. Sem isso o clipping sairia com cara
+    de normal, so que sem nenhuma das keywords daquele robo — perda invisivel, que e o pior
+    tipo de falha. Faltando fatia, e melhor nao chegar e-mail nenhum: a ausencia do e-mail
+    voce percebe, um e-mail incompleto nao."""
+    esperadas = int(os.environ.get("GN_SHARDS", "0") or 0)
+    if esperadas <= 0:
+        return None
+    achadas = sorted(glob.glob("gn_shards/**/gn_shard_*.csv", recursive=True))
+    if len(achadas) != esperadas:
+        nums = sorted(int(re.search(r"gn_shard_(\d+)", a).group(1)) for a in achadas)
+        faltando = [n for n in range(1, esperadas + 1) if n not in nums]
+        raise SystemExit(
+            f"[ERRO] coleta dividida incompleta: {len(achadas)}/{esperadas} fatias "
+            f"(faltou robo {faltando}). Abortando para nao enviar clipping incompleto.")
+    partes = [pd.read_csv(a) for a in achadas]
+    df = pd.concat(partes, ignore_index=True)
+    print(f"[ok] coleta dividida: {esperadas} robos, {len(df)} itens do Google News "
+          f"({[len(x) for x in partes]})", flush=True)
+    return df
+
+
 def fetch_news() -> pd.DataFrame:
     """Coleta multi-fonte (clipping_core) e devolve no schema esperado pelo restante do pipeline."""
     df = clipping_core.collect(WHEN, progress=lambda m: print("·", m, flush=True),
-                               vertical=VERTICAL)
+                               vertical=VERTICAL, gn_pronto=_juntar_shards())
     cols = ["title", "count_news", "link", "source", "date", "hour",
             "searched_keyword", "source_link", "resumo"]
     if df.empty:

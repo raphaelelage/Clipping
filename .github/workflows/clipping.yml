@@ -33,8 +33,57 @@ on:
 # Sem 'schedule:' de propósito — o agendamento é por gatilho externo
 # (cron-job.org -> workflow_dispatch via API), que dispara na hora, sem a fila do cron do GitHub.
 
+# COLETA DIVIDIDA — por que existe:
+# O Google News respondia em 153s, e a MAIOR PARTE disso nao era rede: eram as pausas de
+# 0,5s entre as 122 buscas, obrigatorias para nao tomar bloqueio. Threads dentro de um
+# processo so ja foram testadas e falharam feio (coleta caiu de ~225 para 12 noticias),
+# porque o Google limita por IP e a rajada saia toda do mesmo lugar.
+# A saida: varios JOBS, que o Actions coloca em MAQUINAS diferentes com IPs diferentes
+# (medido numa mesma execucao: 20.119.x, 20.168.x, 135.232.x, 172.182.x). Cada robo mantem
+# o mesmo ritmo seguro de 0,5s, so que sobre um quarto das keywords.
+# Resultado medido: 153s -> ~28s, com cobertura IDENTICA (3549 itens, as mesmas 13 vazias).
+# Se um robo falhar, o job 'montar' ABORTA em vez de enviar clipping incompleto.
+# Para voltar ao modo antigo: e so por GN_SHARDS: "0" no job montar (nada mais muda).
+env:
+  GN_SHARDS: "4"
+
 jobs:
-  run:
+  coletar:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false          # um robo cair nao deve matar os outros; a trava fica no 'montar'
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          pip install --upgrade pip
+          pip install -r clipping_requirements.txt
+          pip install --no-deps pygooglenews==0.1.2
+
+      - name: Coletar fatia ${{ matrix.shard }}
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARDS: "4"
+          VERTICAL: ${{ github.event.inputs.vertical }}
+          WHEN: ${{ github.event.inputs.when }}
+        run: python coletar_shard.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gn-shard-${{ matrix.shard }}
+          path: gn_shard_${{ matrix.shard }}.csv
+          retention-days: 1
+
+  montar:
+    needs: coletar
+    if: always()                # roda mesmo se um robo falhou, para a trava dar o aviso claro
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -49,6 +98,11 @@ jobs:
           pip install -r clipping_requirements.txt
           pip install --no-deps pygooglenews==0.1.2
 
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gn-shard-*
+          path: gn_shards
+
       - name: Run bot
         env:
           EMAIL_REMETENTE: ${{ secrets.EMAIL_REMETENTE }}
@@ -62,4 +116,5 @@ jobs:
           BACKLOG_MERGE_FROM: ${{ github.event.inputs.merge_from }}
           WHEN_OVERRIDE: ${{ github.event.inputs.when }}
           EMAIL_TO_OVERRIDE: ${{ github.event.inputs.recipients || vars.CLIP_RECIPIENTS }}
+          GN_SHARDS: ${{ env.GN_SHARDS }}
         run: python clipping.py

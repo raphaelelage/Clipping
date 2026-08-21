@@ -313,11 +313,18 @@ def _whitelist_norm():
     return {_fonte_norm(w) for w in WHITELIST}
 
 
-def _google_news(when):
+def fatia_keywords(shard, shards):
+    """Fatia INTERCALADA (1 de cada N), nao blocos contiguos: assim toda fatia recebe uma
+    mistura de keywords produtivas e raras e as fatias terminam em tempos parecidos."""
+    return keywords[shard - 1::shards]
+
+
+def _google_news(when, kws=None, incluir_bsg=True):
     # SEQUENCIAL com uma unica instancia (igual ao codigo antigo que pegava ~200).
     # O Google News, do IP do GitHub Actions, bloqueia rajadas concorrentes e devolve vazio —
     # por isso NAO usar ThreadPoolExecutor aqui. Operador nativo 'when:' (when:1d, when:12h, when:1h).
     gn = GoogleNews(lang="pt", country="BR")
+    kws = list(keywords if kws is None else kws)
     rows, empties = [], []
 
     usar_lib = os.environ.get("USE_PYGOOGLENEWS") == "1"
@@ -336,7 +343,7 @@ def _google_news(when):
             rows.append((it.title, it.source["title"], d, h, kw, it.link, it.source["href"]))
 
     # passe 1
-    for kw in keywords:
+    for kw in kws:
         e = _fetch(kw)
         if e:
             _add(kw, e)
@@ -350,7 +357,7 @@ def _google_news(when):
         e = _fetch(kw)
         if e:
             _add(kw, e); recovered += 1
-    print(f"[google_news] {len(keywords)-len(empties)}/{len(keywords)} no passe 1, "
+    print(f"[google_news] {len(kws)-len(empties)}/{len(kws)} no passe 1, "
           f"+{recovered} recuperadas no retry, {len(rows)} itens brutos", flush=True)
     df = pd.DataFrame(rows, columns=COLS)
     wl = _whitelist_norm()
@@ -360,7 +367,7 @@ def _google_news(when):
 
     # Brazil Stock Guide via Google News (EN + PT) — tambem sequencial
     bsg = []
-    for lang in ("en", "pt"):
+    for lang in (("en", "pt") if incluir_bsg else ()):
         try:
             if usar_lib:
                 entries = GoogleNews(lang=lang, country="BR").search(
@@ -846,9 +853,14 @@ def _extrair_resumos(df, workers=12, timeout=8, budget=200, log=print):
     return df
 
 # ----------------------------------------------------------------------------- orquestrador
-def collect(period: str = "1d", progress=None, vertical: str | None = None) -> pd.DataFrame:
+def collect(period: str = "1d", progress=None, vertical: str | None = None,
+            gn_pronto: pd.DataFrame | None = None) -> pd.DataFrame:
     """Coleta de todas as fontes dentro da janela `period` ('1h','3d',...), para a `vertical`
-    ('saude' ou 'educacao'). Retorna DataFrame."""
+    ('saude' ou 'educacao'). Retorna DataFrame.
+
+    `gn_pronto`: resultado do Google News ja coletado por fora (pelos robos divididos do
+    Actions, ver coletar_shard.py). Quando vem preenchido, esta etapa e pulada aqui —
+    o resto do pipeline continua identico."""
     def _p(msg):
         if progress:
             progress(msg)
@@ -861,7 +873,10 @@ def collect(period: str = "1d", progress=None, vertical: str | None = None) -> p
     cutoff = now - delta
     from_date = cutoff.date()
 
-    if not keywords:
+    if gn_pronto is not None:
+        _p(f"Google News: {len(gn_pronto)} itens vindos dos robos divididos")
+        df_gn = gn_pronto
+    elif not keywords:
         print(f"[{VERTICAL}] AVISO: nenhuma palavra-chave configurada "
               f"({arquivos_vertical(VERTICAL)['keywords']}) — Google News nao sera consultado.",
               flush=True)
