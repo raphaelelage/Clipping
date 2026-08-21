@@ -43,29 +43,68 @@ LEGACY_VERTICAL = "saude"   # dona dos arquivos que ficavam soltos na raiz do Dr
 DRIVE_PASTA = "Saúde e Educação"   # pasta unica no Drive — as 3 secoes usam os mesmos arquivos
 
 
+# Preenchido por _juntar_shards() quando algum robo falhou e a fatia dele nao pode ser
+# refeita. Vira um aviso no topo do e-mail e no assunto — o clipping vai assim mesmo,
+# mas voce sabe que veio incompleto e o que ficou de fora.
+AVISO_COLETA = ""
+
+
+def _refazer_fatia(n, esperadas):
+    """Refaz aqui mesmo a fatia do robo que caiu.
+
+    E mais simples e mais rapido do que reexecutar o job la no Actions: este processo ja tem
+    a mesma lista de keywords e o mesmo codigo de busca. So essa fatia e refeita — as outras
+    tres ja estao prontas. Custa ~30s.
+    """
+    kws = clipping_core.fatia_keywords(n, esperadas)
+    print(f"[retry] robo {n} falhou — refazendo as {len(kws)} keywords dele aqui", flush=True)
+    df, _ = clipping_core._google_news(WHEN, kws=kws, incluir_bsg=False)
+    print(f"[retry] robo {n}: {len(df)} itens recuperados", flush=True)
+    return df
+
+
 def _juntar_shards():
     """Junta as fatias do Google News coletadas pelos robos paralelos do Actions.
 
     Devolve None quando a coleta dividida nao esta em uso (aí o clipping_core busca sozinho,
     do jeito sequencial de sempre — o modo dividido e opcional e reversivel).
 
-    TRAVA IMPORTANTE: se faltar qualquer fatia, ABORTA. Sem isso o clipping sairia com cara
-    de normal, so que sem nenhuma das keywords daquele robo — perda invisivel, que e o pior
-    tipo de falha. Faltando fatia, e melhor nao chegar e-mail nenhum: a ausencia do e-mail
-    voce percebe, um e-mail incompleto nao."""
+    Se faltar alguma fatia, tenta REFAZER a fatia aqui mesmo. So se a segunda tentativa
+    tambem falhar o clipping segue incompleto — e nesse caso avisa em cima de tudo (assunto
+    do e-mail + faixa vermelha no topo), dizendo exatamente quais palavras-chave ficaram de
+    fora. O que nao pode acontecer e sair um clipping incompleto com cara de completo."""
+    global AVISO_COLETA
     esperadas = int(os.environ.get("GN_SHARDS", "0") or 0)
     if esperadas <= 0:
         return None
     achadas = sorted(glob.glob("gn_shards/**/gn_shard_*.csv", recursive=True))
-    if len(achadas) != esperadas:
-        nums = sorted(int(re.search(r"gn_shard_(\d+)", a).group(1)) for a in achadas)
-        faltando = [n for n in range(1, esperadas + 1) if n not in nums]
-        raise SystemExit(
-            f"[ERRO] coleta dividida incompleta: {len(achadas)}/{esperadas} fatias "
-            f"(faltou robo {faltando}). Abortando para nao enviar clipping incompleto.")
     partes = [pd.read_csv(a) for a in achadas]
-    df = pd.concat(partes, ignore_index=True)
-    print(f"[ok] coleta dividida: {esperadas} robos, {len(df)} itens do Google News "
+    nums = sorted(int(re.search(r"gn_shard_(\d+)", a).group(1)) for a in achadas)
+    faltando = [n for n in range(1, esperadas + 1) if n not in nums]
+
+    perdidas = []
+    for n in faltando:
+        try:
+            df_n = _refazer_fatia(n, esperadas)
+            if len(df_n):
+                partes.append(df_n)
+            else:
+                perdidas.append(n)
+        except Exception as e:
+            print(f"[retry] robo {n} falhou de novo: {e}", flush=True)
+            perdidas.append(n)
+
+    if perdidas:
+        kws = [k for n in perdidas for k in clipping_core.fatia_keywords(n, esperadas)]
+        AVISO_COLETA = (
+            f"Coleta incompleta: {len(perdidas)} de {esperadas} robos do Google News "
+            f"falharam e nao foi possivel refazer. Estas {len(kws)} palavras-chave nao "
+            f"foram buscadas nesta rodada: {', '.join(kws)}. "
+            f"As demais fontes (portais, DOU, CVM, RSS) vieram normalmente.")
+        print(f"[AVISO] {AVISO_COLETA}", flush=True)
+
+    df = pd.concat(partes, ignore_index=True) if partes else pd.DataFrame()
+    print(f"[ok] coleta dividida: {len(partes)} fatia(s), {len(df)} itens do Google News "
           f"({[len(x) for x in partes]})", flush=True)
     return df
 
@@ -96,6 +135,16 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
       </tr>
     </table>
     <hr style="border:none;border-top:2px solid {RED};margin:6px 0 18px 0;">
+    """
+
+    if AVISO_COLETA:
+        header += f"""
+    <table width="100%" style="border-collapse:collapse;margin:0 0 18px 0;">
+      <tr><td style="background:#FFF3F3;border-left:4px solid {RED};padding:10px 12px;
+                     font-family:Arial,sans-serif;font-size:13px;color:#8A1020;">
+        <b>&#9888; Atencao — este clipping pode estar incompleto.</b><br>{AVISO_COLETA}
+      </td></tr>
+    </table>
     """
 
     if df.empty:
@@ -375,7 +424,9 @@ def send_email(df: pd.DataFrame, xlsx_path: Path, drive_url: str, novas_backlog:
     pwd = os.environ["EMAIL_SENHA"].replace(" ", "").strip()
 
     msg = EmailMessage()
-    msg["Subject"] = f"Clipping {VLABEL} — {date.today().strftime('%d/%m/%Y')} ({WHEN})"
+    prefixo = "[INCOMPLETO] " if AVISO_COLETA else ""
+    msg["Subject"] = (f"{prefixo}Clipping {VLABEL} — "
+                      f"{date.today().strftime('%d/%m/%Y')} ({WHEN})")
     msg["From"] = user
     msg["To"] = ", ".join(EMAIL_TO)
     msg.set_content(f"News Scrapper: {len(df)} noticias ({novas_backlog} ineditas).")

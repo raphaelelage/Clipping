@@ -68,9 +68,15 @@ keywords. **Medido: 153s → ~30s, com cobertura idêntica** (3549 itens, as mes
 A fatia é **intercalada** (`keywords[shard-1::shards]`), não em blocos: assim toda fatia
 recebe uma mistura de keywords produtivas e raras e todas terminam em tempo parecido.
 
-**A trava que não pode sair:** se qualquer fatia faltar, `_juntar_shards()` (em `clipping.py`)
-**aborta e nenhum e-mail é enviado**. Um clipping incompleto com cara de normal é perda
-invisível — o pior tipo de falha. E-mail que não chega, você percebe.
+**Se um robô cair** (`_juntar_shards()`, em `clipping.py`), há dois degraus antes de desistir:
+1. **Refaz a fatia ali mesmo.** O job de montagem já tem a mesma lista de keywords e o mesmo
+   código de busca, então recoletar só aquela fatia custa ~30-45s e é mais simples que
+   reexecutar o job. Medido: robô 3 derrubado → 125 itens recuperados em 44s, sem aviso.
+2. **Se a segunda tentativa também falhar**, o clipping vai assim mesmo — mas gritando:
+   `[INCOMPLETO]` no assunto e uma faixa vermelha no topo do e-mail listando exatamente
+   quais palavras-chave ficaram de fora.
+
+O que não pode acontecer é clipping incompleto com cara de completo: essa é a perda invisível.
 
 **Reverter para o modo sequencial:** `GN_SHARDS: "0"` no topo do `clipping.yml`. Nada mais muda —
 `collect()` volta a buscar sozinho.
