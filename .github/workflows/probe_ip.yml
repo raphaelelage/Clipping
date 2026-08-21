@@ -1,10 +1,13 @@
 name: probe-ip
 
-# Responde UMA pergunta: jobs paralelos do GitHub Actions saem de IPs diferentes?
-# Disso depende a ideia de dividir a coleta em varios robos simultaneos — se todos
-# sairem do mesmo IP (ou da mesma faixa), dividir so reproduz a rajada concorrente
-# que ja derrubou a coleta de ~225 para 12 noticias.
-# Custa segundos e nao toca em nada da producao.
+# Responde DUAS perguntas de uma vez, e delas depende a ideia de dividir a coleta em
+# varios robos simultaneos:
+#   1) jobs paralelos do Actions saem de IPs diferentes? (se nao, dividir so reproduz
+#      a rajada concorrente que ja derrubou a coleta de ~225 para 12 noticias)
+#   2) cada job, sozinho no seu IP, coleta normalmente ENQUANTO os outros coletam?
+# Usa o MESMO codigo da producao (clipping_core._gn_fetch) — curl nao serve para essa
+# resposta: sem user-agent de navegador e sem descompactar, ele volta 0 itens sempre.
+# Nao envia e-mail e nao toca no Drive.
 
 on:
   workflow_dispatch:
@@ -13,16 +16,25 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
     steps:
-      - name: IP de saida do shard ${{ matrix.shard }}
-        run: |
-          IP=$(curl -s --max-time 10 https://api.ipify.org)
-          echo "shard=${{ matrix.shard }} ip=$IP"
+      - uses: actions/checkout@v5
 
-      - name: O Google responde normalmente deste IP?
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
         run: |
-          URL="https://news.google.com/rss/search?q=hapvida+when%3A1d&ceid=BR:pt&hl=pt&gl=BR"
-          N=$(curl -s --max-time 20 "$URL" | grep -c "<item>" || true)
-          echo "shard=${{ matrix.shard }} itens_no_feed=$N"
+          pip install --upgrade pip
+          pip install -r clipping_requirements.txt
+          pip install --no-deps pygooglenews==0.1.2
+
+      - name: Coletar a fatia ${{ matrix.shard }} de 4
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARDS: "4"
+          VERTICAL: saude_educacao
+        run: python probe_shard.py
