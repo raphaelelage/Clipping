@@ -58,3 +58,46 @@ GitHub → Settings → Secrets and variables → Actions → aba **Variables** 
 É o e-mail de contato que a SEC exige no `User-Agent` (sem ele a SEC responde HTTP 403).
 Se você não criar, o robô usa o `EMAIL_REMETENTE` automaticamente; crie apenas se quiser
 que a SEC receba um endereço diferente do remetente do clipping.
+
+## Rodar no seu PC quando ele estiver ligado (e no GitHub quando não estiver)
+
+O workflow decide sozinho, a cada execução, onde rodar. São dois modos porque a máquina muda o
+que vale a pena:
+
+| | PC ligado | PC desligado |
+|---|---|---|
+| Onde roda | seu computador | GitHub |
+| Coleta do Google News | sequencial, 1 job | 4 robôs em paralelo |
+| Por quê | um runner atende um job por vez, e todos sairiam do mesmo IP de casa | cada robô ganha uma máquina com IP próprio |
+
+**Em caso de qualquer dúvida ele escolhe o GitHub**, que sempre funciona. O contrário — mandar o
+job para uma máquina desligada — deixaria o clipping preso na fila.
+
+### Passo 1 — instalar o runner no PC (uma vez)
+1. Vá em **github.com/raphaelelage/Clipping → Settings → Actions → Runners → New self-hosted runner**
+2. Escolha **Windows**, e rode no PowerShell os comandos que a própria página mostra
+   (baixar, `config.cmd`, e por fim `run.cmd`)
+3. Quando ele perguntar os labels, pode aceitar os padrões
+
+Para o runner subir sozinho com o Windows, em vez de `run.cmd` instale como serviço:
+```powershell
+./svc.sh install
+./svc.sh start
+```
+(no Windows: `.\svc.cmd install` e `.\svc.cmd start`, no diretório do runner)
+
+### Passo 2 — dar ao workflow permissão para enxergar o runner
+Listar runners exige um token com **Administration: Read** — permissão que o token automático do
+Actions **não** tem. Sem isso o workflow sempre escolhe o GitHub (funciona, só não usa o PC).
+
+1. **github.com/settings/personal-access-tokens/new** → fine-grained token
+2. Repository access: **só o repo Clipping**
+3. Repository permissions → **Administration: Read-only**
+4. Copie o token e crie o secret **`RUNNER_PAT`** em Settings → Secrets and variables → Actions
+
+### Requisitos no PC
+Python 3.11+ instalado e no PATH. As dependências o próprio workflow instala.
+
+### Como saber onde rodou
+A primeira linha do job `escolher`, no log da execução, diz:
+`PC ligado (1 runner livre) -> rodando local` ou `PC indisponivel -> rodando no GitHub com 4 robos`.

@@ -44,11 +44,55 @@ on:
 # Resultado medido: 153s -> ~28s, com cobertura IDENTICA (3549 itens, as mesmas 13 vazias).
 # Se um robo falhar, o job 'montar' ABORTA em vez de enviar clipping incompleto.
 # Para voltar ao modo antigo: e so por GN_SHARDS: "0" no job montar (nada mais muda).
-env:
-  GN_SHARDS: "4"
+# ONDE RODA: no PC do Raphael quando ele estiver ligado; no GitHub quando nao estiver.
+# O job 'escolher' pergunta a API se ha runner proprio online e o resto obedece.
+# Sao dois modos, porque a maquina muda o que e vantajoso:
+#   PC ligado  -> UM job so, coleta sequencial (GN_SHARDS=0). Um runner atende um job por vez,
+#                 entao dividir em 4 nao paralelizaria nada — e todos sairiam do MESMO IP
+#                 residencial, que e justamente a rajada que derruba o Google.
+#   PC desligado -> 4 robos no GitHub, cada um numa maquina com IP proprio (o modo medido:
+#                 153s -> ~28s com cobertura identica).
+# Em qualquer duvida (API fora do ar, token sem permissao) cai no GitHub, que sempre funciona.
+
+permissions:
+  contents: read
 
 jobs:
+  escolher:
+    runs-on: ubuntu-latest
+    outputs:
+      maquina: ${{ steps.decidir.outputs.maquina }}
+      shards: ${{ steps.decidir.outputs.shards }}
+    steps:
+      - id: decidir
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_PAT || github.token }}
+        run: |
+          # runner "online e livre". Se a chamada falhar por qualquer motivo, ONLINE=0 e vamos
+          # para o GitHub — nunca o contrario, para nao mandar o job para uma maquina desligada.
+          ONLINE=$(gh api "repos/${{ github.repository }}/actions/runners" \
+                     --jq '[.runners[] | select(.status=="online" and (.busy|not))] | length' \
+                   2>/dev/null || echo 0)
+          if [ "${ONLINE:-0}" -gt 0 ]; then
+            echo "PC ligado ($ONLINE runner livre) -> rodando local, modo sequencial"
+            echo "maquina=self-hosted" >> "$GITHUB_OUTPUT"
+            echo "shards=0"            >> "$GITHUB_OUTPUT"
+          else
+            # Distingue "PC desligado" de "nao consegui nem perguntar": listar runners exige um
+            # token com permissao de Administration:Read, que o GITHUB_TOKEN padrao NAO tem.
+            # Sem o secret RUNNER_PAT, este job sempre escolhe o GitHub — que funciona, so nao
+            # aproveita o PC. Veja SETUP_APP.md.
+            if [ -z "${{ secrets.RUNNER_PAT }}" ]; then
+              echo "AVISO: secret RUNNER_PAT ausente — nao da para consultar o PC, indo de GitHub"
+            fi
+            echo "PC indisponivel -> rodando no GitHub com 4 robos"
+            echo "maquina=ubuntu-latest" >> "$GITHUB_OUTPUT"
+            echo "shards=4"              >> "$GITHUB_OUTPUT"
+          fi
+
   coletar:
+    needs: escolher
+    if: needs.escolher.outputs.shards != '0'    # no PC nao ha o que dividir
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false          # um robo cair nao deve matar os outros; a trava fica no 'montar'
@@ -84,9 +128,11 @@ jobs:
           retention-days: 1
 
   montar:
-    needs: coletar
-    if: always()                # roda mesmo se um robo falhou, para a trava dar o aviso claro
-    runs-on: ubuntu-latest
+    needs: [escolher, coletar]
+    # always() para rodar mesmo se um robo falhou (a trava avisa) e tambem quando 'coletar' foi
+    # pulado de proposito por estarmos no PC. So nao roda se a propria escolha falhar.
+    if: always() && needs.escolher.result == 'success'
+    runs-on: ${{ needs.escolher.outputs.maquina }}
     steps:
       - uses: actions/checkout@v5
 
@@ -103,6 +149,7 @@ jobs:
           pip install --no-deps pygooglenews==0.1.2
 
       - uses: actions/download-artifact@v4
+        if: needs.escolher.outputs.shards != '0'
         with:
           pattern: gn-shard-*
           path: gn_shards
@@ -120,5 +167,5 @@ jobs:
           BACKLOG_MERGE_FROM: ${{ github.event.inputs.merge_from }}
           WHEN_OVERRIDE: ${{ github.event.inputs.when }}
           EMAIL_TO_OVERRIDE: ${{ github.event.inputs.recipients || vars.CLIP_RECIPIENTS }}
-          GN_SHARDS: ${{ env.GN_SHARDS }}
+          GN_SHARDS: ${{ needs.escolher.outputs.shards }}
         run: python clipping.py
