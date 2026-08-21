@@ -29,6 +29,8 @@ vertical em questão. Sem palavras-chave, a vertical coleta só os portais gov.b
 |---|---|---|---|
 | `clipping_core.py` | **Coleta** (Google News, portais gov.br, Valor RSS, Brazil Stock Guide) + decode de links + verticais | mudar fontes, keywords, portais, janela | ~640 ln |
 | `clipping.py` | **Entrega**: e-mail + Google Drive + backlog + `main()` | mudar e-mail, Drive, destinatários | ~250 ln |
+| `coletar_shard.py` | **Um robô da coleta dividida** — busca só a sua fatia | mexer no fatiamento | ~50 ln |
+| `benchmark_gn.py` | Compara regimes de busca no IP do Actions | validar mudança na busca | ~120 ln |
 | `fontes_extra.py` | **Fontes complementares** (entidades WP, RSS próprios, DOU, CVM) | adicionar/remover fonte extra | ~240 ln |
 | `streamlit_app.py` | **Painel** (celular): rodar agora, config, agendar, debug | mudar a UI / o agendamento / os logs | ~330 ln |
 | `.github/workflows/clipping.yml` | **Execução** no GitHub (workflow_dispatch) | mudar inputs, deps, env | ~35 ln |
@@ -39,13 +41,39 @@ Suporte: `clipping_requirements.txt` (deps), `SETUP_APP.md` (passo-a-passo de co
 ```
 [App Streamlit / cron-job.org]  --workflow_dispatch (API)-->  [GitHub Action]
                                                                     |
-                                                          python clipping.py
+        ┌───────────────── job "coletar" (matriz de 4, em paralelo) ─────────────────┐
+        │  robô 1: keywords 1,5,9…    robô 3: keywords 3,7,11…                       │
+        │  robô 2: keywords 2,6,10…   robô 4: keywords 4,8,12…                       │
+        │  cada um: coletar_shard.py -> gn_shard_N.csv (artifact)                    │
+        └────────────────────────────────────────────────────────────────────────────┘
                                                                     |
-                          clipping_core.collect(WHEN)  -->  DataFrame (8 colunas)
+                                              job "montar": python clipping.py
+                                                                    |
+                          clipping_core.collect(WHEN)  -->  DataFrame (9 colunas)
+                                    (Google News já pronto, vindo das 4 fatias)
                                                                     |
                               build_email_html + XLSX  -->  e-mail (Gmail SMTP)
                                        sync_to_drive    -->  Google Drive + backlog
 ```
+
+### Por que a coleta é dividida em 4 robôs
+Os 153s do Google News **não eram rede**: eram as pausas de 0,5s entre as 122 buscas,
+obrigatórias para não tomar bloqueio. Threads dentro de um processo só **já foram testadas
+e falharam feio** — a coleta caiu de ~225 para 12 notícias, porque o Google limita por IP e
+a rajada saía toda do mesmo lugar. Jobs separados resolvem porque o Actions põe cada um numa
+máquina com IP próprio (medido numa mesma execução: `20.119.x`, `20.168.x`, `135.232.x`,
+`172.182.x`). Cada robô mantém o mesmo ritmo seguro de 0,5s, só que sobre um quarto das
+keywords. **Medido: 153s → ~30s, com cobertura idêntica** (3549 itens, as mesmas 13 vazias).
+
+A fatia é **intercalada** (`keywords[shard-1::shards]`), não em blocos: assim toda fatia
+recebe uma mistura de keywords produtivas e raras e todas terminam em tempo parecido.
+
+**A trava que não pode sair:** se qualquer fatia faltar, `_juntar_shards()` (em `clipping.py`)
+**aborta e nenhum e-mail é enviado**. Um clipping incompleto com cara de normal é perda
+invisível — o pior tipo de falha. E-mail que não chega, você percebe.
+
+**Reverter para o modo sequencial:** `GN_SHARDS: "0"` no topo do `clipping.yml`. Nada mais muda —
+`collect()` volta a buscar sozinho.
 - **Coleta** (`clipping_core.collect`): roda cada fonte, junta, remove duplicatas (título e link),
   decodifica links do Google News para a URL real do veículo, junta a **mesma notícia publicada
   por veículos diferentes** (`_dedup_similar`) e baixa os 3 primeiros parágrafos de cada notícia
@@ -73,6 +101,12 @@ perder um fato relevante de empresa coberta não é. Não baixe o limiar sem ref
 - **Mudar o prompt da IA** → `clipping.py`, `AI_PROMPT`.
 - **Mudar horário agendado** → pelo app (aba 🕗 Agendamento) — não precisa editar código.
 - **Mudar a UI do app** → `streamlit_app.py`.
+- **Mudar quantos robôs coletam em paralelo** → `GN_SHARDS` e a `matrix.shard` no
+  `clipping.yml` (os dois têm que bater). `0` volta ao modo sequencial.
+- **Testar se uma mudança na busca perde notícia** → `benchmark.yml` compara dois regimes na
+  mesma rodada, por conjunto de links de cada keyword. Nunca compare só a contagem: duas
+  coletas separadas por minutos sempre diferem (medido: 51 perdidos × 54 ganhos = rotação
+  normal, não regressão).
 
 ## Portais gov.br — à prova de mudança de endereço
 `_scrape_govbr_auto()` tenta, nesta ordem: **1)** API REST na raiz do site (`++api++/@search`);
