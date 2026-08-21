@@ -885,30 +885,44 @@ def collect(period: str = "1d", progress=None, vertical: str | None = None,
         _p("Google News + Brazil Stock Guide…")
         df_gn, _ = _google_news(when)   # operador 'when:' nativo (abrangente, suporta horas)
 
-    # portais gov.br da vertical, "a prova de mudanca de endereco":
-    # API raiz -> descoberta no menu -> caminhos conhecidos
-    portais = []
-    for site, nome, paths in v["govbr"]:
-        _p(f"{nome}…")
-        portais.append(_scrape_govbr_auto(site, nome, from_date, paths))
+    # Tudo o que sobrou roda AO MESMO TEMPO. Rodava em fila e somava ~133s.
+    #
+    # Por que aqui thread pode e no Google News nao podia: sao SITES DIFERENTES. O desastre
+    # das threads no Google News (coleta de ~225 caiu para 12) foi rajada contra um host so,
+    # que limita por IP. Aqui cada tarefa fala com um servidor diferente, entao ninguem leva
+    # rajada. A unica concentracao real e o gov.br, que atende 4 portais — sao 4 conexoes
+    # simultaneas, nada perto das 122 buscas seguidas que irritavam o Google.
+    # Se algum dia o gov.br comecar a recusar, o caminho e limitar SO ele (max_workers menor
+    # ou voltar os 4 portais para a fila), nao serializar tudo de novo.
+    tarefas = [(nome, (lambda st=site, nm=nome, pt=paths:
+                       _scrape_govbr_auto(st, nm, from_date, pt)))
+               for site, nome, paths in v["govbr"]]
+    if keywords:
+        tarefas.append(("Valor (RSS)", lambda: _scrape_valor_rss(cutoff)))
+        tarefas.append(("Brazil Stock Guide", lambda: _scrape_bsg_sitemap(cutoff)))
+    tarefas.append(("Fontes complementares",
+                    lambda: fontes_extra.coletar(VERTICAL, cutoff, from_date, match_keywords,
+                                                 to_dt, TZ,
+                                                 log=lambda m: print(m, flush=True),
+                                                 norm_fn=_norm)))
 
-    _p("Valor (RSS)…")
-    valor = _scrape_valor_rss(cutoff) if keywords else []
-
-    _p("Brazil Stock Guide (sitemap)…")
-    bsg = _scrape_bsg_sitemap(cutoff) if keywords else []
-
-    # fontes complementares da vertical (entidades, DOU, CVM, RSS proprios) — tudo em paralelo
-    _p("Fontes complementares (entidades, DOU, CVM)…")
-    try:
-        extras = fontes_extra.coletar(VERTICAL, cutoff, from_date, match_keywords, to_dt, TZ,
-                                      log=lambda m: print(m, flush=True), norm_fn=_norm)
-    except Exception as e:
-        print(f"[fontes_extra] erro: {e}", flush=True)
-        extras = []
+    _p(f"Coletando {len(tarefas)} fontes ao mesmo tempo "
+       f"({', '.join(n for n, _ in tarefas)})…")
+    resultados = {}
+    with ThreadPoolExecutor(max_workers=len(tarefas)) as ex:
+        futuros = {ex.submit(fn): nome for nome, fn in tarefas}
+        for fut in as_completed(futuros):
+            nome = futuros[fut]
+            try:
+                resultados[nome] = fut.result() or []
+            except Exception as e:
+                print(f"[{nome}] erro: {e}", flush=True)
+                resultados[nome] = []
+    print("[fontes] " + " | ".join(f"{n}={len(resultados.get(n, []))}"
+                                   for n, _ in tarefas), flush=True)
 
     frames = [df_gn] + [pd.DataFrame(r, columns=COLS)
-                        for r in (portais + [valor, bsg, extras]) if r]
+                        for r in (resultados[n] for n, _ in tarefas) if r]
     allnews = pd.concat(frames, ignore_index=True)
     if allnews.empty:
         _p("Nenhuma notícia no período.")
