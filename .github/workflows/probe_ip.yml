@@ -1,0 +1,28 @@
+name: probe-ip
+
+# Responde UMA pergunta: jobs paralelos do GitHub Actions saem de IPs diferentes?
+# Disso depende a ideia de dividir a coleta em varios robos simultaneos — se todos
+# sairem do mesmo IP (ou da mesma faixa), dividir so reproduz a rajada concorrente
+# que ja derrubou a coleta de ~225 para 12 noticias.
+# Custa segundos e nao toca em nada da producao.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: IP de saida do shard ${{ matrix.shard }}
+        run: |
+          IP=$(curl -s --max-time 10 https://api.ipify.org)
+          echo "shard=${{ matrix.shard }} ip=$IP"
+
+      - name: O Google responde normalmente deste IP?
+        run: |
+          URL="https://news.google.com/rss/search?q=hapvida+when%3A1d&ceid=BR:pt&hl=pt&gl=BR"
+          N=$(curl -s --max-time 20 "$URL" | grep -c "<item>" || true)
+          echo "shard=${{ matrix.shard }} itens_no_feed=$N"

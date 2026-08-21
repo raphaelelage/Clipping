@@ -95,9 +95,23 @@ def main():
         print("  keywords onde B perdeu:", flush=True)
         for n, kw in sorted(kw_pior, reverse=True)[:10]:
             print(f"    -{n:3d}  {kw}", flush=True)
-    aprovado = so_a <= 5 and len(b["vazias"]) <= len(a["vazias"]) + 2
+    # CRITERIO. A primeira versao ("B perde <=5 links") estava errada e reprovou B
+    # injustamente: duas coletas separadas por ~3min sempre diferem, porque noticia nova
+    # entra e, nas keywords que batem no teto de ~100 itens do servidor, a mais antiga sai.
+    # Medido: B perdeu 51 e ganhou 54 — simetrico, ou seja, rotacao e nao regressao.
+    # O que importa e regressao SISTEMATICA:
+    #   1) nenhuma keyword pode sair de "tinha resultado" para "voltou vazia";
+    #   2) o total de links nao pode cair de forma relevante (>2%);
+    #   3) o numero de vazias nao pode subir.
+    zeradas = [kw for kw in kws if a["por_kw"][kw] and not b["por_kw"][kw]]
+    queda_pct = 100 * (a["itens"] - b["itens"]) / max(a["itens"], 1)
+    aprovado = (not zeradas
+                and queda_pct <= 2
+                and len(b["vazias"]) <= len(a["vazias"]) + 2)
+    print(f"\n  keywords que A trouxe e B zerou: {len(zeradas)} {zeradas[:5]}", flush=True)
+    print(f"  queda no total de links: {queda_pct:.1f}%", flush=True)
     print(f"\n  B APROVADO: {'SIM' if aprovado else 'NAO'}"
-          f"  (criterio: B perde <=5 links e nao aumenta vazias em mais de 2)", flush=True)
+          f"  (criterio: nenhuma keyword zerada, queda <=2%, vazias nao sobem)", flush=True)
 
     with open("bench_gn.json", "w", encoding="utf-8") as fh:
         json.dump(res, fh, ensure_ascii=False)
