@@ -44,7 +44,7 @@ COLUNAS_FINAIS = [
     "data_pedido", "data_decisao", "tipo_decisao", "uf", "municipio",
     "mantenedora", "cod_mantenedora", "ies", "cod_ies", "curso", "numero_vagas",
     "processo", "situacao_recurso", "ref_judicial", "orgao_resumido",
-    "resumo_texto", "fonte_detalhe", "link", "recurso_ref_processo",
+    "resumo_texto", "retificacao", "fonte_detalhe", "link", "recurso_ref_processo",
 ]
 
 # ------------------------------------------------------------------ helpers
@@ -72,14 +72,14 @@ RX_VAGAS_TXT = re.compile(r"\b(\d{1,4})\s*(?:\([^)]{2,30}\))?\s*vagas\b")
 
 
 def ano_do_pedido(processo):
+    """So o ANO do protocolo e conhecivel pelo numero do processo. Para a coluna sair com
+    TIPO DE DATA no Excel, o ano vira 01/01 do ano — a aba Notas explica que dia e mes sao
+    convencao. Data exata so os pendentes da SERES tem."""
     p = str(processo or "").strip()
-    m = RX_EMEC.match(p)
+    m = RX_EMEC.match(p) or RX_SEI.search(p)
     if m:
-        return f"{m.group(1)} (ano do protocolo, do nº e-MEC)"
-    m = RX_SEI.search(p)
-    if m:
-        return f"{m.group(1)} (ano do protocolo, do nº SEI)"
-    return MARCA_VAZIO
+        return pd.Timestamp(int(m.group(1)), 1, 1)
+    return None
 
 
 def eh_recurso(titulo, texto):
@@ -101,13 +101,24 @@ def _mapa_unico(pares):
 
 
 # ------------------------------------------------------------------ pipeline
-def compilar(parquet_dou, parquet_seres, log=print):
+def compilar(parquet_dou, parquet_seres, parquet_inep=None, log=print):
     df = pd.read_parquet(parquet_dou)
     log(f"[compilar] {len(df)} linhas do DOU")
     for c in ("texto_inicio", "processos_citados"):
         if c not in df.columns:
             raise SystemExit(f"[ERRO] parquet sem a coluna '{c}': foi gerado por uma versao "
                              "antiga do dou_extrair.py — rode a extracao de novo antes.")
+
+    # LIMPEZA CRITICA: celula ausente vira NaN no parquet e, convertida para string,
+    # vira o texto "nan" — que parece preenchido e fazia a propagacao PULAR a celula
+    # (bug pego em auditoria: 94% "preenchido" no log, 1% de verdade no Excel).
+    # No pandas 3 as colunas de texto vem com dtype "str" (nao "object") e o vazio e <NA>,
+    # que convertido para string vira o TEXTO "<NA>" — mais um jeito de celula vazia se
+    # passar por preenchida. A limpeza cobre os dois dtypes e os tres disfarcos.
+    for c in df.columns:
+        if df[c].dtype == object or str(df[c].dtype) in ("str", "string"):
+            df[c] = (df[c].fillna("").astype(str)
+                     .replace({"nan": "", "None": "", "<NA>": ""}))
 
     # dedup de republicacao (retificacao (*)): fica a publicacao mais recente; a marca
     # segue visivel em fonte_detalhe
@@ -120,6 +131,10 @@ def compilar(parquet_dou, parquet_seres, log=print):
     log(f"[compilar] apos dedup de republicacao: {len(df)}")
 
     seres = pd.read_parquet(parquet_seres)
+    for c in seres.columns:
+        if seres[c].dtype == object or str(seres[c].dtype) in ("str", "string"):
+            seres[c] = (seres[c].fillna("").astype(str)
+                        .replace({"nan": "", "None": "", "<NA>": ""}))
 
     # ---------------- recurso
     df["_eh_recurso"] = [eh_recurso(t, x) for t, x in zip(df["ato"], df.get("texto_inicio", ""))]
@@ -149,11 +164,25 @@ def compilar(parquet_dou, parquet_seres, log=print):
         f"pedidos marcados como recorridos: {len(recorridos)}")
 
     # ---------------- preenchimento por propagacao (so onde nao ha ambiguidade)
+    # Terceira fonte de codigos: o cadastro de IES do Censo INEP (2.580 IES com codigo,
+    # mantenedora e municipio oficiais) — e o que permite preencher cod_ies para IES que
+    # nunca tiveram o codigo citado num ato do DOU.
+    pares_ies, pares_mant = [], []
+    if parquet_inep:
+        inep = pd.read_parquet(parquet_inep)
+        pares_ies = [(_norm(n), str(c)) for n, c in zip(inep["NO_IES"], inep["CO_IES"])]
+        if "SG_IES" in inep:
+            pares_ies += [(_norm(sg), str(c)) for sg, c in zip(inep["SG_IES"], inep["CO_IES"])
+                          if isinstance(sg, str) and len(str(sg)) > 3]
+        pares_mant = [(_norm(m), str(c)) for m, c in
+                      zip(inep["NO_MANTENEDORA"], inep["CO_MANTENEDORA"])]
     m_cod_ies = _mapa_unico(
         [( _norm(i), c) for i, c in zip(df.get("ies", ""), df.get("cod_ies", "")) if str(c).strip()]
-        + [(_norm(i), c) for i, c in zip(seres["ies"], seres["cod_ies"])])
+        + [(_norm(i), c) for i, c in zip(seres["ies"], seres["cod_ies"])]
+        + pares_ies)
     m_cod_mant = _mapa_unico([(_norm(m), c) for m, c in
-                              zip(seres["mantenedora"], seres["cod_mantenedora"])])
+                              zip(seres["mantenedora"], seres["cod_mantenedora"])]
+                             + pares_mant)
     m_local = _mapa_unico([(_norm(i), f"{mu}|{u}") for i, mu, u in
                            zip(df.get("ies", ""), df.get("municipio", ""), df.get("uf", ""))
                            if str(mu).strip() and str(u).strip()])
@@ -174,32 +203,39 @@ def compilar(parquet_dou, parquet_seres, log=print):
     # vagas dos atos de texto corrido
     sem_vagas = df["vagas_num"].isna() & (df["fonte_detalhe"] == "texto corrido")
     df.loc[sem_vagas, "vagas_num"] = [
-        (int(m.group(1)) if (m := RX_VAGAS_TXT.search(str(t))) else None)
+        (float(m.group(1)) if (m := RX_VAGAS_TXT.search(str(t))) else float("nan"))
         for t in df.loc[sem_vagas, "texto_inicio"]]
     log(f"[compilar] pos-preenchimento: cod_ies {df['cod_ies'].astype(str).str.strip().astype(bool).mean()*100:.0f}% | "
         f"municipio {df['municipio'].astype(str).str.strip().astype(bool).mean()*100:.0f}%")
 
     # ---------------- colunas finais dos atos do DOU
+    df["orgao_resumido"] = df["orgao"].astype(str).str.split("/").str[-1].str.strip()
     df["data_pedido"] = df["processo_emec"].map(ano_do_pedido)
-    df["data_decisao"] = df["data_publicacao"]
+    df["data_decisao"] = df["_data"]          # datetime de verdade
     df["tipo_decisao"] = df["tipo_ato"]
     df["numero_vagas"] = df["vagas_num"]
     df["processo"] = df["processo_emec"]
-    marca_ret = df.get("retificacao", False).map(
-        lambda x: "; republicado com correcao (*)" if x else "")
-    df["fonte_detalhe"] = df["fonte_detalhe"].astype(str) + marca_ret
+    df["retificacao"] = df.get("retificacao", False).map(
+        lambda x: "Sim (republicado com correcao)" if x else "Nao")
     if "resumo_texto" not in df:
         df["resumo_texto"] = ""
     vazio_resumo = ~df["resumo_texto"].astype(str).str.strip().astype(bool)
     df.loc[vazio_resumo, "resumo_texto"] = df.loc[vazio_resumo, "texto_inicio"].astype(str).str[:300]
 
-    # ---------------- pendentes da SERES que nao tem ato no DOU
-    ja_no_dou = set(df["processo"].astype(str))
+    # ---------------- pendentes da SERES que nao tem DECISAO no DOU
+    # Conferencia pelo proprio DOU: como toda decisao obrigatoriamente sai la, um processo
+    # pendente so deixa a lista se apareceu num ato DECISORIO. Mencao em ato intermediario
+    # (sobrestamento, cautelar, diligencia) nao e decisao — a linha pendente permanece.
+    DECISORIOS = {"autorizacao", "reconhecimento", "renovacao_reconhecimento",
+                  "credenciamento", "recredenciamento", "aditamento_aumento_vagas",
+                  "reducao_vagas", "descredenciamento", "desativacao"}
+    ja_no_dou = set(df.loc[df["tipo_decisao"].isin(DECISORIOS), "processo"].astype(str))
     pend = seres[~seres["ref_emec"].astype(str).isin(ja_no_dou)].copy()
     log(f"[compilar] pendentes SERES sem ato no DOU: {len(pend)} de {len(seres)}")
     pend_rows = pd.DataFrame({
-        "data_pedido": pend.get("data_protocolo", "").replace("", MARCA_VAZIO).fillna(MARCA_VAZIO),
-        "data_decisao": f"sem decisao (SERES, {DATA_SERES})",
+        "data_pedido": pd.to_datetime(pend.get("data_protocolo", ""), format="%d/%m/%Y",
+                                      errors="coerce"),
+        "data_decisao": pd.NaT,               # sem decisao: fica vazio na coluna de data
         "tipo_decisao": "pendente: " + pend["situacao_mec"].astype(str),
         "uf": pend["uf"], "municipio": pend["municipio"],
         "mantenedora": pend["mantenedora"], "cod_mantenedora": pend["cod_mantenedora"],
@@ -208,6 +244,7 @@ def compilar(parquet_dou, parquet_seres, log=print):
         "numero_vagas": None,
         "processo": pend["ref_emec"],
         "situacao_recurso": "nao se aplica (sem decisao)",
+        "retificacao": "Nao",
         "ref_judicial": pend["ref_judicial"],
         "orgao_resumido": "SERES (planilha oficial)",
         "resumo_texto": ("Natureza: " + pend.get("natureza", "").astype(str)
@@ -222,7 +259,9 @@ def compilar(parquet_dou, parquet_seres, log=print):
     corpo = pd.concat([df[COLUNAS_FINAIS], pend_rows[COLUNAS_FINAIS]], ignore_index=True)
 
     # ---------------- toda celula vazia recebe a marca explicita
-    for c in COLUNAS_FINAIS:
+    # (exceto as colunas de DATA, que precisam continuar tipadas como data no Excel;
+    #  nelas o vazio significa "sem decisao"/"protocolo desconhecido" — explicado nas Notas)
+    for c in [c for c in COLUNAS_FINAIS if c not in ("data_pedido", "data_decisao", "numero_vagas")]:
         col = corpo[c]
         vazio = col.isna() | (col.astype(str).str.strip().isin(["", "nan", "None"]))
         corpo.loc[vazio, c] = MARCA_VAZIO
@@ -237,15 +276,23 @@ NOTAS = [
      "vagas, processo, situacao de recurso, ref. judicial, orgao, resumo, fonte, link e, por "
      "ultimo, o processo recorrido (so em atos de recurso)."],
     ["data_pedido", "O DOU publica a DECISAO, nao o protocolo. O ano do pedido vem do proprio "
-     "numero do processo (e-MEC comeca pelo ano: 2018xxxxx; SEI traz o ano apos a barra). "
-     "Data exata de protocolo so existe para os pendentes de Medicina (planilha SERES)."],
+     "numero do processo (e-MEC comeca pelo ano: 2018xxxxx; SEI traz o ano apos a barra) e, "
+     "para a coluna ser DATA no Excel, aparece como 01/01 do ano — dia e mes sao convencao. "
+     "Data exata de protocolo so existe para os pendentes de Medicina (planilha SERES). "
+     "Celula vazia = numero de processo que nao carrega o ano."],
+    ["data_decisao", "Data de publicacao do ato no DOU (tipo data). VAZIA = processo ainda "
+     "sem decisao (pendente da planilha SERES). Um pendente so sai da lista quando aparece "
+     "em ato DECISORIO no DOU — mencao em sobrestamento/cautelar nao conta como decisao."],
+    ["retificacao", "'Sim' = o ato foi republicado com correcao (o DOU marca com (*) no "
+     "titulo). A linha mantida e sempre a versao mais recente (corrigida)."],
     ["tipo_decisao", "autorizacao, reconhecimento, renovacao, credenciamento, cautelar, "
      "sancionador etc. 'pendente: ...' = processo da planilha SERES ainda sem decisao."],
     ["situacao_recurso", "'ato de recurso' = a linha E um recurso (detectado por padrao "
      "textual juridico, excluindo 'recursos financeiros/humanos/orcamentarios'); 'decisao "
      "recorrida' = alguma linha de recurso aponta para este processo; a ultima coluna traz o "
      "processo recorrido ('mesmo processo' quando o recurso corre no proprio pedido)."],
-    ["Preenchimento", "Nada e inventado. Codigos e municipio/UF ausentes foram propagados por "
+    ["Preenchimento", "Codigos de IES/mantenedora tambem vem do cadastro oficial do Censo "
+     "INEP 2023 (2.580 IES), casados por nome exato normalizado. Nada e inventado. "
      "nome APENAS quando o nome mapeia para um unico valor em toda a base (IES multicampi nao "
      "recebe propagacao). O que restou impossivel de determinar esta como 'nao consta na "
      "fonte' — e ausencia real da fonte publica, nao falha de coleta."],
@@ -258,8 +305,8 @@ NOTAS = [
 ]
 
 
-def montar(parquet_dou, parquet_seres, saida, log=print):
-    corpo, seres = compilar(parquet_dou, parquet_seres, log)
+def montar(parquet_dou, parquet_seres, saida, parquet_inep=None, log=print):
+    corpo, seres = compilar(parquet_dou, parquet_seres, parquet_inep, log)
     corpo["_d"] = pd.to_datetime(corpo["data_decisao"], format="%d/%m/%Y", errors="coerce")
     corpo = corpo.sort_values("_d").drop(columns="_d")
     med = corpo[corpo["curso"].astype(str).str.contains("MEDICINA", case=False)
@@ -280,4 +327,5 @@ def montar(parquet_dou, parquet_seres, saida, log=print):
 
 if __name__ == "__main__":
     montar(sys.argv[1], sys.argv[2],
-           sys.argv[3] if len(sys.argv) > 3 else "Regulacao_Cursos_2018-2026.xlsx")
+           sys.argv[3] if len(sys.argv) > 3 else "Regulacao_Cursos_2018-2026.xlsx",
+           sys.argv[4] if len(sys.argv) > 4 else None)
