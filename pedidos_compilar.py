@@ -42,7 +42,7 @@ MARCA_VAZIO = "nao consta na fonte"
 
 COLUNAS_FINAIS = [
     "data_pedido", "data_decisao", "tipo_decisao", "uf", "municipio",
-    "mantenedora", "cod_mantenedora", "ies", "cod_ies", "curso", "numero_vagas",
+    "mantenedora", "cod_mantenedora", "ies", "cod_ies", "cod_curso", "curso", "numero_vagas",
     "processo", "situacao_recurso", "ref_judicial", "orgao_resumido",
     "resumo_texto", "retificacao", "fonte_detalhe", "link", "recurso_ref_processo",
 ]
@@ -53,7 +53,9 @@ def _norm(s):
     return re.sub(r"\s+", " ", "".join(c for c in s if not unicodedata.combining(c))).lower().strip()
 
 
-RX_EMEC = re.compile(r"^(20[0-2]\d)\d{5}$")
+# 9 digitos = formato atual (AAAA+5); 8 digitos = formato antigo (AAAA+4), ainda visto
+# em renovacoes de pedidos protocolados ate ~2010 e decididos anos depois
+RX_EMEC = re.compile(r"^(200\d|201\d|202\d)\d{4,5}$")
 RX_SEI = re.compile(r"/(\d{4})-\d{2}$")
 
 # padrao de recurso com contexto juridico; exclui os "recursos" que nao sao apelacao
@@ -101,7 +103,7 @@ def _mapa_unico(pares):
 
 
 # ------------------------------------------------------------------ pipeline
-def compilar(parquet_dou, parquet_seres, parquet_inep=None, log=print):
+def compilar(parquet_dou, parquet_seres, inep_ies=(), inep_cursos=(), log=print):
     df = pd.read_parquet(parquet_dou)
     log(f"[compilar] {len(df)} linhas do DOU")
     for c in ("texto_inicio", "processos_citados"):
@@ -163,35 +165,59 @@ def compilar(parquet_dou, parquet_seres, parquet_inep=None, log=print):
     log(f"[compilar] atos de recurso: {int(df['_eh_recurso'].sum())} | "
         f"pedidos marcados como recorridos: {len(recorridos)}")
 
-    # ---------------- preenchimento por propagacao (so onde nao ha ambiguidade)
-    # Terceira fonte de codigos: o cadastro de IES do Censo INEP (2.580 IES com codigo,
-    # mantenedora e municipio oficiais) — e o que permite preencher cod_ies para IES que
-    # nunca tiveram o codigo citado num ato do DOU.
-    pares_ies, pares_mant = [], []
-    if parquet_inep:
-        inep = pd.read_parquet(parquet_inep)
-        pares_ies = [(_norm(n), str(c)) for n, c in zip(inep["NO_IES"], inep["CO_IES"])]
+    # ---------------- preenchimento pelos cadastros oficiais (Censo INEP 2018 + 2023)
+    # Multi-ano de proposito: IES extinta antes de 2023 so existe no cadastro antigo.
+    # Matching por nome EXATO normalizado, com dois fallbacks deterministicos:
+    # "FACULDADE X - FX" tenta o trecho antes do " - " e depois a sigla. So preenche
+    # quando o nome mapeia para UM UNICO codigo — ambiguidade nunca vira chute.
+    pares_ies, pares_mant, pares_local = [], [], []
+    cursos_cad = []
+    for pq in (inep_ies or []):
+        inep = pd.read_parquet(pq)
+        pares_ies += [(_norm(n), str(c)) for n, c in zip(inep["NO_IES"], inep["CO_IES"])]
         if "SG_IES" in inep:
             pares_ies += [(_norm(sg), str(c)) for sg, c in zip(inep["SG_IES"], inep["CO_IES"])
                           if isinstance(sg, str) and len(str(sg)) > 3]
-        pares_mant = [(_norm(m), str(c)) for m, c in
-                      zip(inep["NO_MANTENEDORA"], inep["CO_MANTENEDORA"])]
+        pares_mant += [(_norm(m), str(c)) for m, c in
+                       zip(inep["NO_MANTENEDORA"], inep["CO_MANTENEDORA"])]
+        if "NO_MUNICIPIO_IES" in inep:
+            pares_local += [(_norm(n), f"{mu}|{u}") for n, mu, u in
+                            zip(inep["NO_IES"], inep["NO_MUNICIPIO_IES"], inep["SG_UF_IES"])]
+    for pq in (inep_cursos or []):
+        cursos_cad.append(pd.read_parquet(pq))
+
     m_cod_ies = _mapa_unico(
-        [( _norm(i), c) for i, c in zip(df.get("ies", ""), df.get("cod_ies", "")) if str(c).strip()]
+        [(_norm(i), c) for i, c in zip(df.get("ies", ""), df.get("cod_ies", "")) if str(c).strip()]
         + [(_norm(i), c) for i, c in zip(seres["ies"], seres["cod_ies"])]
         + pares_ies)
     m_cod_mant = _mapa_unico([(_norm(m), c) for m, c in
                               zip(seres["mantenedora"], seres["cod_mantenedora"])]
                              + pares_mant)
-    m_local = _mapa_unico([(_norm(i), f"{mu}|{u}") for i, mu, u in
-                           zip(df.get("ies", ""), df.get("municipio", ""), df.get("uf", ""))
-                           if str(mu).strip() and str(u).strip()])
+    # municipio em CASCATA: primeiro o que o proprio DOU prova (municipio do CAMPUS),
+    # so depois a sede do cadastro INEP. Misturar os dois num mapa so criava conflito
+    # campus x sede, a IES virava "ambigua" e a propagacao morria (medido: 73% -> 58%).
+    m_local_dou = _mapa_unico([(_norm(i), f"{mu}|{u}") for i, mu, u in
+                               zip(df.get("ies", ""), df.get("municipio", ""), df.get("uf", ""))
+                               if str(mu).strip() and str(u).strip()])
+    m_local_inep = _mapa_unico(pares_local)
+    m_local = {**m_local_inep, **m_local_dou}          # DOU ganha do INEP
+
+    def _busca_ies(nome_n):
+        """nome exato -> antes do ' - ' -> sigla depois do ' - '."""
+        if nome_n in m_cod_ies:
+            return m_cod_ies[nome_n]
+        if " - " in nome_n:
+            antes, _, depois = nome_n.partition(" - ")
+            if antes.strip() in m_cod_ies:
+                return m_cod_ies[antes.strip()]
+            if depois.strip() in m_cod_ies:
+                return m_cod_ies[depois.strip()]
+        return ""
 
     df["_ies_n"] = df["ies"].map(_norm)
     df["cod_ies"] = df.apply(
         lambda r: r["cod_ies"] if str(r.get("cod_ies") or "").strip()
-        else m_cod_ies.get(r["_ies_n"], ""), axis=1)
-    df["cod_mantenedora"] = df.get("cod_mantenedora", "")
+        else _busca_ies(r["_ies_n"]), axis=1)
     df["cod_mantenedora"] = [m_cod_mant.get(_norm(m), "") for m in df.get("mantenedora", "")]
     faltava_local = ~(df["municipio"].astype(str).str.strip().astype(bool))
     df.loc[faltava_local, "municipio"] = [
@@ -200,12 +226,33 @@ def compilar(parquet_dou, parquet_seres, parquet_inep=None, log=print):
     df.loc[faltava_uf, "uf"] = [
         m_local.get(n, "|").split("|")[1] for n in df.loc[faltava_uf, "_ies_n"]]
 
-    # vagas dos atos de texto corrido
-    sem_vagas = df["vagas_num"].isna() & (df["fonte_detalhe"] == "texto corrido")
-    df.loc[sem_vagas, "vagas_num"] = [
-        (float(m.group(1)) if (m := RX_VAGAS_TXT.search(str(t))) else float("nan"))
-        for t in df.loc[sem_vagas, "texto_inicio"]]
+    # ------- cod_curso: (cod_ies + nome do curso) e, se ambiguo, + municipio.
+    # O DOU escreve "HISTORIA (Licenciatura)" e o Censo so "Historia" — o grau entre
+    # parenteses sai da chave de comparacao.
+    def _curso_n(c):
+        return _norm(re.sub(r"\(.*?\)", " ", str(c or "")))
+
+    m_curso, m_curso_mun = {}, {}
+    for cad in cursos_cad:
+        for ci, nc, cc, mu in zip(cad["CO_IES"], cad["NO_CURSO"], cad["CO_CURSO"],
+                                  cad.get("NO_MUNICIPIO", [""] * len(cad))):
+            k = (str(ci), _curso_n(nc))
+            m_curso.setdefault(k, set()).add(str(cc))
+            m_curso_mun.setdefault(k + (_norm(mu),), set()).add(str(cc))
+    m_curso = {k: v.pop() for k, v in m_curso.items() if len(v) == 1}
+    m_curso_mun = {k: v.pop() for k, v in m_curso_mun.items() if len(v) == 1}
+
+    def _busca_curso(r):
+        ci = str(r.get("cod_ies") or "").strip()
+        cn = _curso_n(r.get("curso"))
+        if not ci or not cn:
+            return ""
+        return m_curso.get((ci, cn)) or m_curso_mun.get((ci, cn, _norm(r.get("municipio"))), "")
+
+    df["cod_curso"] = df.apply(_busca_curso, axis=1)
+
     log(f"[compilar] pos-preenchimento: cod_ies {df['cod_ies'].astype(str).str.strip().astype(bool).mean()*100:.0f}% | "
+        f"cod_curso {df['cod_curso'].astype(str).str.strip().astype(bool).mean()*100:.0f}% | "
         f"municipio {df['municipio'].astype(str).str.strip().astype(bool).mean()*100:.0f}%")
 
     # ---------------- colunas finais dos atos do DOU
@@ -240,6 +287,7 @@ def compilar(parquet_dou, parquet_seres, parquet_inep=None, log=print):
         "uf": pend["uf"], "municipio": pend["municipio"],
         "mantenedora": pend["mantenedora"], "cod_mantenedora": pend["cod_mantenedora"],
         "ies": pend["ies"], "cod_ies": pend["cod_ies"],
+        "cod_curso": pend.get("cod_curso", ""),
         "curso": pend.get("curso", "MEDICINA").replace("", "MEDICINA"),
         "numero_vagas": None,
         "processo": pend["ref_emec"],
@@ -261,7 +309,11 @@ def compilar(parquet_dou, parquet_seres, parquet_inep=None, log=print):
     # ---------------- toda celula vazia recebe a marca explicita
     # (exceto as colunas de DATA, que precisam continuar tipadas como data no Excel;
     #  nelas o vazio significa "sem decisao"/"protocolo desconhecido" — explicado nas Notas)
-    for c in [c for c in COLUNAS_FINAIS if c not in ("data_pedido", "data_decisao", "numero_vagas")]:
+    # Colunas de codigo ficam VAZIAS quando nem o cadastro oficial resolve (a pedido:
+    # nada de "nao consta na fonte" nelas); as demais levam o marcador explicito.
+    SEM_MARCADOR = ("data_pedido", "data_decisao", "numero_vagas",
+                    "cod_ies", "cod_mantenedora", "cod_curso")
+    for c in [c for c in COLUNAS_FINAIS if c not in SEM_MARCADOR]:
         col = corpo[c]
         vazio = col.isna() | (col.astype(str).str.strip().isin(["", "nan", "None"]))
         corpo.loc[vazio, c] = MARCA_VAZIO
@@ -305,15 +357,16 @@ NOTAS = [
 ]
 
 
-def montar(parquet_dou, parquet_seres, saida, parquet_inep=None, log=print):
-    corpo, seres = compilar(parquet_dou, parquet_seres, parquet_inep, log)
+def montar(parquet_dou, parquet_seres, saida, inep_ies=(), inep_cursos=(), log=print):
+    corpo, seres = compilar(parquet_dou, parquet_seres, inep_ies, inep_cursos, log)
     corpo["_d"] = pd.to_datetime(corpo["data_decisao"], format="%d/%m/%Y", errors="coerce")
     corpo = corpo.sort_values("_d").drop(columns="_d")
     med = corpo[corpo["curso"].astype(str).str.contains("MEDICINA", case=False)
                 & ~corpo["curso"].astype(str).str.contains("VETERIN", case=False)]
     log(f"[montar] Atos={len(corpo)} | Medicina={len(med)}")
     notas = pd.DataFrame(NOTAS, columns=["Assunto", "Descricao"])
-    with pd.ExcelWriter(saida, engine="openpyxl") as xw:
+    with pd.ExcelWriter(saida, engine="openpyxl",
+                        date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY") as xw:
         corpo.to_excel(xw, sheet_name="Atos", index=False)
         med.to_excel(xw, sheet_name="Medicina", index=False)
         seres.to_excel(xw, sheet_name="Medicina_SERES", index=False)
@@ -326,6 +379,11 @@ def montar(parquet_dou, parquet_seres, saida, parquet_inep=None, log=print):
 
 
 if __name__ == "__main__":
+    # uso: pedidos_compilar.py <dou.parquet> <seres.parquet> <saida.xlsx> <dir_inep>
+    # onde dir_inep contem inep_ies*.parquet e inep_cursos*.parquet (Censo 2018/2023)
+    import glob as _glob
+    dir_inep = sys.argv[4] if len(sys.argv) > 4 else ""
     montar(sys.argv[1], sys.argv[2],
            sys.argv[3] if len(sys.argv) > 3 else "Regulacao_Cursos_2018-2026.xlsx",
-           sys.argv[4] if len(sys.argv) > 4 else None)
+           inep_ies=sorted(_glob.glob(dir_inep + "/inep_ies*.parquet")) if dir_inep else (),
+           inep_cursos=sorted(_glob.glob(dir_inep + "/inep_cursos*.parquet")) if dir_inep else ())
