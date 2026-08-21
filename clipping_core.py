@@ -14,7 +14,7 @@ Uso:
     df = collect("1d")
 """
 from __future__ import annotations
-import re, unicodedata, os, time, random, io, smtplib
+import re, unicodedata, os, time, random, io, smtplib, urllib.parse
 from datetime import datetime, timedelta, timezone, date
 from email.utils import parsedate_to_datetime
 from email.message import EmailMessage
@@ -264,6 +264,55 @@ def fetch_resilient(url, tries=3, base=2, timeout=15, jina=True):
     return None
 
 # ----------------------------------------------------------------------------- coletores
+# ---------------------------------------------- busca no Google News (GET unico)
+# A pygooglenews 0.1.2 tem um bug em __parse_feed: ela faz requests.get() na MESMA url
+# DUAS vezes e joga a primeira resposta fora (linhas 64-72 do __init__.py da lib).
+# Isso nao so gasta tempo — DOBRA a exposicao ao limite de requisicoes do Google, que e
+# exatamente o que derruba a coleta a partir do IP do GitHub Actions. Aqui fazemos 1 GET.
+#
+# O que foi preservado da lib de proposito (nao remova sem testar):
+#   - a URL montada e byte a byte a mesma;
+#   - o resgate quando o feed vem vazio: refetch pelo feedparser direto, que usa outro
+#     user-agent e as vezes recupera onde o requests levou vazio;
+#   - a checagem de /rss/unsupported;
+#   - nada de requests.Session: cada busca continua sem estado, para um cookie de
+#     anti-bot numa busca nao contaminar todas as seguintes.
+# Reversao de emergencia: variavel de ambiente USE_PYGOOGLENEWS=1 volta para a lib.
+_GN_TIMEOUT = (5, 20)
+
+
+def _gn_url(query, when, lang="pt", country="BR"):
+    q = urllib.parse.quote_plus(query + (" when:" + when if when else ""))
+    return (f"https://news.google.com/rss/search?q={q}"
+            f"&ceid={country.upper()}:{lang}&hl={lang}&gl={country.upper()}")
+
+
+def _gn_fetch(query, when, lang="pt", country="BR"):
+    """Devolve as entries da busca. Levanta excecao em erro de rede (o chamador trata)."""
+    url = _gn_url(query, when, lang, country)
+    r = requests.get(url, timeout=_GN_TIMEOUT)
+    if "https://news.google.com/rss/unsupported" in r.url:
+        raise RuntimeError("feed indisponivel")
+    d = feedparser.parse(r.text)
+    if len(d["entries"]) == 0:
+        d = feedparser.parse(url)          # resgate herdado da lib (user-agent diferente)
+    return d["entries"]
+
+
+def _fonte_norm(s):
+    """Normaliza o nome da fonte para COMPARACAO (nao para exibicao).
+    O Google News alterna a grafia do mesmo veiculo entre as buscas: manda "O Globo"
+    numa e "O GLOBO" noutra. Comparacao literal descartava a segunda em silencio —
+    medido: 38 noticias perdidas em 25 keywords numa janela de 2 dias, so por caixa
+    (O GLOBO, O TEMPO, BM&C News, InvestNews). Compare SEMPRE por aqui."""
+    s = unicodedata.normalize("NFKD", str(s))
+    return "".join(c for c in s if not unicodedata.combining(c)).casefold().strip()
+
+
+def _whitelist_norm():
+    return {_fonte_norm(w) for w in WHITELIST}
+
+
 def _google_news(when):
     # SEQUENCIAL com uma unica instancia (igual ao codigo antigo que pegava ~200).
     # O Google News, do IP do GitHub Actions, bloqueia rajadas concorrentes e devolve vazio —
@@ -271,9 +320,13 @@ def _google_news(when):
     gn = GoogleNews(lang="pt", country="BR")
     rows, empties = [], []
 
+    usar_lib = os.environ.get("USE_PYGOOGLENEWS") == "1"
+
     def _fetch(kw):
         try:
-            return gn.search(kw, when=when).get("entries", [])
+            if usar_lib:
+                return gn.search(kw, when=when).get("entries", [])
+            return _gn_fetch(kw, when)
         except Exception:
             return None
 
@@ -300,15 +353,21 @@ def _google_news(when):
     print(f"[google_news] {len(keywords)-len(empties)}/{len(keywords)} no passe 1, "
           f"+{recovered} recuperadas no retry, {len(rows)} itens brutos", flush=True)
     df = pd.DataFrame(rows, columns=COLS)
-    df = df[df["source"].isin(WHITELIST)].reset_index(drop=True)
+    wl = _whitelist_norm()
+    antes = len(df)
+    df = df[df["source"].map(_fonte_norm).isin(wl)].reset_index(drop=True)
+    print(f"[google_news] whitelist: {len(df)}/{antes} itens de fontes aceitas", flush=True)
 
     # Brazil Stock Guide via Google News (EN + PT) — tambem sequencial
     bsg = []
     for lang in ("en", "pt"):
         try:
-            g = GoogleNews(lang=lang, country="BR")
-            res = g.search("site:brazilstockguide.com", when=when)
-            for e in res.get("entries", []):
+            if usar_lib:
+                entries = GoogleNews(lang=lang, country="BR").search(
+                    "site:brazilstockguide.com", when=when).get("entries", [])
+            else:
+                entries = _gn_fetch("site:brazilstockguide.com", when, lang=lang)
+            for e in entries:
                 if e.get("source", {}).get("title") != "Brazil Stock Guide":
                     continue
                 title = e["title"].replace(" - Brazil Stock Guide", "").strip()

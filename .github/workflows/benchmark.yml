@@ -1,0 +1,46 @@
+name: benchmark-google-news
+
+# Compara dois regimes de busca do Google News DENTRO DA MESMA rodada, no IP do Actions.
+# Nao envia e-mail e nao toca no Drive — e seguro rodar quantas vezes quiser.
+# Nunca dispare junto com a rodada de producao: dois jobs batendo no Google ao mesmo
+# tempo, do mesmo IP, e justamente o que se quer evitar.
+
+on:
+  workflow_dispatch:
+    inputs:
+      when:
+        description: "Janela de busca (ex: 1d, 2d)"
+        required: false
+        default: "1d"
+      keywords:
+        description: "Quantas keywords testar (0 = todas as 122)"
+        required: false
+        default: "0"
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          pip install --upgrade pip
+          pip install -r clipping_requirements.txt
+          pip install --no-deps pygooglenews==0.1.2
+
+      - name: Comparar regimes
+        env:
+          VERTICAL: saude_educacao
+        run: |
+          python benchmark_gn.py "${{ github.event.inputs.when }}" "${{ github.event.inputs.keywords }}"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-gn
+          path: bench_gn.json
