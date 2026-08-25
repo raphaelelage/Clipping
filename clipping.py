@@ -48,6 +48,10 @@ DRIVE_PASTA = "Saúde e Educação"   # pasta unica no Drive — as 3 secoes usa
 # mas voce sabe que veio incompleto e o que ficou de fora.
 AVISO_COLETA = ""
 
+# Radar DOU: frases prontas para o topo do e-mail, preenchidas durante o sync do Drive
+# (so nas verticais educacao/saude_educacao). Cada item: {"frase","link","medicina","tipo"}.
+RADAR_FRASES: list = []
+
 
 def _refazer_fatia(n, esperadas):
     """Refaz aqui mesmo a fatia do robo que caiu.
@@ -135,6 +139,26 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
       </tr>
     </table>
     <hr style="border:none;border-top:2px solid {RED};margin:6px 0 18px 0;">
+    """
+
+    if RADAR_FRASES:
+        from html import escape as _esc
+        itens = "".join(
+            '<li style="margin:5px 0;">' + ("&#9878;&#65039; " if f["medicina"] else "")
+            + _esc(f["frase"]) + ' &nbsp;<a href="' + _esc(f["link"], quote=True)
+            + f'" style="color:{RED};font-weight:bold;">ver ato</a></li>'
+            for f in RADAR_FRASES[:12])
+        rotulo_extra = ("" if len(RADAR_FRASES) <= 12
+                        else f'<p style="margin:4px 0 0 0;">e mais {len(RADAR_FRASES)-12} '
+                             f'documento(s) — ver planilha no Drive.</p>')
+        header += f"""
+    <table width="100%" style="border-collapse:collapse;margin:0 0 18px 0;">
+      <tr><td style="background:#FDF6EC;border-left:4px solid {RED};padding:10px 12px;
+                     font-family:Arial,sans-serif;font-size:13px;color:#4A3B10;">
+        <b>&#128225; Radar DOU &mdash; regula&ccedil;&atilde;o de cursos</b>
+        <ul style="margin:6px 0 0 18px;padding:0;">{itens}</ul>{rotulo_extra}
+      </td></tr>
+    </table>
     """
 
     if AVISO_COLETA:
@@ -252,6 +276,80 @@ def build_ai_text(df: pd.DataFrame) -> str:
     return _load_ai_prompt() + nl + nl + "NOTÍCIAS:" + nl + nl.join(linhas)
 
 
+RADAR_DRIVE_NOME = "Regulacao_Cursos.xlsx"
+RADAR_SEED = "seed_regulacao_cursos.xlsx"     # levantamento 2018-2026 versionado no repo
+
+
+def _radar_e_excel(download_file, update_file, xlsx_mime):
+    """Radar DOU: detecta atos novos de regulacao de curso, alimenta o Excel do Drive e
+    deixa as frases prontas para o topo do e-mail.
+
+    So alerta documento com linha INEDITA no Excel — rodadas seguidas no mesmo dia nao
+    repetem o alarme. Se o Drive ainda nao tem o arquivo, comeca da semente versionada
+    no repo (o levantamento historico completo)."""
+    global RADAR_FRASES
+    if VERTICAL not in ("educacao", "saude_educacao"):
+        return
+    import dou_alerta
+    frases, cru = dou_alerta.coletar_novidades(dias=3, log=lambda m: print(m, flush=True))
+    if not frases:
+        print("[radar] nenhum ato alarmante nos ultimos dias uteis", flush=True)
+        return
+    novas = dou_alerta.para_formato_excel(cru)
+
+    local = Path(RADAR_DRIVE_NOME)
+    abas_extra = {}
+    existentes = None
+    if download_file(RADAR_DRIVE_NOME, local):
+        try:
+            xl = pd.ExcelFile(local)
+            existentes = xl.parse("Atos")
+            for aba in xl.sheet_names:
+                if aba not in ("Atos", "Medicina"):
+                    abas_extra[aba] = xl.parse(aba)
+        except Exception as e:
+            print(f"[radar] arquivo do Drive ilegivel ({e}) — recomecando da semente", flush=True)
+    if existentes is None and Path(RADAR_SEED).exists():
+        xl = pd.ExcelFile(RADAR_SEED)
+        existentes = xl.parse("Atos")
+        for aba in xl.sheet_names:
+            if aba not in ("Atos", "Medicina"):
+                abas_extra[aba] = xl.parse(aba)
+        print("[radar] Drive sem o arquivo — comecando da semente do repo", flush=True)
+    if existentes is None:
+        existentes = novas.iloc[0:0]
+
+    def _chave(d):
+        return (d["link"].astype(str) + "|" + d["processo"].astype(str)
+                + "|" + d["curso"].astype(str))
+    ineditas = novas[~_chave(novas).isin(set(_chave(existentes)))]
+    links_ineditos = set(ineditas["link"].astype(str))
+    RADAR_FRASES = [f for f in frases if str(f["link"]) in links_ineditos]
+    if ineditas.empty:
+        print("[radar] tudo ja registrado no Excel do Drive — sem alerta novo", flush=True)
+        return
+
+    todas = pd.concat([existentes, ineditas], ignore_index=True)
+    for c in ("data_pedido", "data_decisao"):
+        todas[c] = pd.to_datetime(todas[c], errors="coerce").dt.date
+    med = todas[todas["curso"].astype(str).str.contains(r"\bMEDICINA\b", case=False,
+                                                        regex=True)
+                & ~todas["curso"].astype(str).str.contains("VETERIN", case=False)]
+    with pd.ExcelWriter(local, engine="openpyxl",
+                        date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY") as xw:
+        todas.to_excel(xw, sheet_name="Atos", index=False)
+        med.to_excel(xw, sheet_name="Medicina", index=False)
+        for aba, conteudo in abas_extra.items():
+            conteudo.to_excel(xw, sheet_name=aba, index=False)
+        for aba in ("Atos", "Medicina"):
+            ws = xw.book[aba]
+            ws.freeze_panes = "A2"
+            ws.auto_filter.ref = ws.dimensions
+    update_file(local, RADAR_DRIVE_NOME, xlsx_mime)
+    print(f"[ok] radar: {len(ineditas)} linha(s) nova(s) no {RADAR_DRIVE_NOME} "
+          f"({len(RADAR_FRASES)} documento(s) no alerta do e-mail)", flush=True)
+
+
 def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[str, int]:
     """Atualiza ai_input.txt e news_scrapper.xlsx; adiciona ao backlog so links ineditos.
     Retorna (url do news_scrapper, qtd de noticias novas adicionadas ao backlog)."""
@@ -355,6 +453,11 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
 
     ai_url = update_file(txt_path, "ai_input.txt", "text/plain")
     xlsx_url = update_file(xlsx_path, "news_scrapper.xlsx", XLSX_MIME)
+
+    try:
+        _radar_e_excel(download_file, update_file, XLSX_MIME)
+    except Exception as e:
+        print(f"[radar] erro nao-fatal (clipping segue normal): {e}", flush=True)
     if ai_url != folder_url and xlsx_url != folder_url:
         print("[ok] Drive: ai_input.txt e news_scrapper.xlsx atualizados")
     else:

@@ -41,7 +41,7 @@ DATA_SERES = "04/06/2024"          # "Situação em ..." impressa nas planilhas 
 MARCA_VAZIO = "nao consta na fonte"
 
 COLUNAS_FINAIS = [
-    "data_pedido", "data_decisao", "tipo_decisao", "uf", "municipio",
+    "data_pedido", "data_decisao", "tipo_decisao", "ato", "uf", "municipio",
     "mantenedora", "cod_mantenedora", "ies", "cod_ies", "cod_curso", "curso", "numero_vagas",
     "processo", "situacao_recurso", "ref_judicial", "orgao_resumido",
     "resumo_texto", "retificacao", "fonte_detalhe", "link", "recurso_ref_processo",
@@ -378,6 +378,7 @@ def compilar(parquet_dou, parquet_seres, inep_ies=(), inep_cursos=(), log=print)
                                       errors="coerce"),
         "data_decisao": pd.NaT,               # sem decisao: fica vazio na coluna de data
         "tipo_decisao": "pendente: " + pend["situacao_mec"].astype(str),
+        "ato": "",
         "uf": pend["uf"], "municipio": pend["municipio"],
         "mantenedora": pend["mantenedora"], "cod_mantenedora": pend["cod_mantenedora"],
         "ies": pend["ies"], "cod_ies": pend["cod_ies"],
@@ -461,7 +462,9 @@ def montar(parquet_dou, parquet_seres, saida, inep_ies=(), inep_cursos=(), log=p
     # valor de DATA pura na celula (sem 00:00:00 na barra de formulas do Excel)
     for c in ("data_pedido", "data_decisao"):
         corpo[c] = pd.to_datetime(corpo[c], errors="coerce").dt.date
-    med = corpo[corpo["curso"].astype(str).str.contains("MEDICINA", case=False)
+    # \bMEDICINA\b com borda de palavra: "BIOMEDICINA" contem "MEDICINA" como substring
+    # e entrava indevidamente no recorte (bug pego em teste com dado real)
+    med = corpo[corpo["curso"].astype(str).str.contains(r"\bMEDICINA\b", case=False, regex=True)
                 & ~corpo["curso"].astype(str).str.contains("VETERIN", case=False)]
     log(f"[montar] Atos={len(corpo)} | Medicina={len(med)}")
     notas = pd.DataFrame(NOTAS, columns=["Assunto", "Descricao"])

@@ -205,3 +205,15 @@ Pedido: todos os atos que autorizam/barram cursos superiores desde 2018, foco em
 - `medicina_mec_pdfs.py` — planilhas oficiais da SERES (tramitação + sobrestados ADC 81).
   O caminho no site é `assuntos/es/cursos-de-medicina/...` (o antigo `areas-de-atuacao/...` dá 404).
 - `dou_montar.py` — junta tudo no Excel de 4 abas (Atos, Medicina, Medicina_SERES, Notas).
+
+## Radar DOU (alerta de regulação de cursos no e-mail + Excel no Drive)
+Nas verticais educação e saúde_educação, cada rodada lê a **edição diária** do DOU dos
+últimos 3 dias úteis (`dou_alerta.py`, reusando `dou_historico`/`dou_extrair`), classifica
+os atos do MEC e, para os alarmantes (autorização, vagas, credenciamento, cautelar,
+sancionador — e reconhecimento/renovação só para Medicina), põe **uma frase por documento
+no topo do e-mail** e anexa as linhas ao **`Regulacao_Cursos.xlsx` na pasta do Drive**
+(mesmo formato do levantamento 2018-2026; semente versionada em `seed_regulacao_cursos.xlsx`).
+Só alerta documento com linha inédita no Excel — rodadas seguidas não repetem o alarme.
+Erro no radar nunca derruba o clipping (try/except com log `[radar]`).
+Códigos de IES vêm de `cadastro_ies.parquet` (consolidado dos censos INEP 2018-2023).
+ATENÇÃO: "\bMEDICINA\b" com borda de palavra — sem isso BIOMEDICINA conta como Medicina.
