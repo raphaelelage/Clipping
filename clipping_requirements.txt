@@ -11,3 +11,4 @@ googlenewsdecoder
 lxml
 trafilatura
 rapidfuzz
+pyarrow
