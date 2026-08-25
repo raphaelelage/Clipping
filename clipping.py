@@ -320,8 +320,13 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
         existentes = novas.iloc[0:0]
 
     def _chave(d):
-        return (d["link"].astype(str) + "|" + d["processo"].astype(str)
-                + "|" + d["curso"].astype(str))
+        # Celula VAZIA vira NaN na volta do Excel e viraria a string "nan", enquanto do
+        # lado recem-coletado ela e "". A chave nunca batia e a linha se declarava inedita
+        # TODA rodada (medido: 1 alerta falso por dia). Normaliza os dois lados.
+        def _col(nome):
+            return (d[nome].fillna("").astype(str).str.strip()
+                    .replace({"nan": "", "None": "", "<NA>": ""}))
+        return _col("link") + "|" + _col("processo") + "|" + _col("curso")
     ineditas = novas[~_chave(novas).isin(set(_chave(existentes)))]
     links_ineditos = set(ineditas["link"].astype(str))
     RADAR_FRASES = [f for f in frases if str(f["link"]) in links_ineditos]
