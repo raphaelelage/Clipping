@@ -75,6 +75,9 @@ RSS_FEEDS = {
         *GRANDES_ECONOMIA,
         ("Medicina S/A", "https://medicinasa.com.br/feed/", False),
         ("Setor Saúde", "https://www.setorsaude.com.br/feed/", False),
+        # herdeiras do papel de curadoria (achadas na busca por concorrentes do Scoop.it):
+        ("Futuro da Saúde", "https://futurodasaude.com.br/feed/", False),
+        ("Valor & Saúde", "https://valoresaude.substack.com/feed", False),
         ("Fiocruz", "https://agencia.fiocruz.br/rss-afn.xml", True),
         ("JOTA", "https://www.jota.info/feed", True),
         ("CADE", "https://www.gov.br/cade/rss.xml", True, "/noticias/"),
