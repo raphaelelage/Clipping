@@ -468,19 +468,18 @@ def _cvm(empresas, from_date, ctx):
 def _scoopit(nome, base_url, cutoff, ctx, max_pag=8):
     """Scoop.it: compilado de noticias curado a mao, sem RSS e sem filtro de data.
 
-    REGRA DA JANELA (pedida pelo usuario): a pagina so mostra a data de CURADORIA na
-    ordem dos posts, e o curador pode demorar a postar. Entao a varredura desce ate o
-    DOBRO da janela (curadoria >= 2x cutoff) e o criterio final e a data de PUBLICACAO
-    da noticia no site original — que o proprio card informa (title="Publication date"),
-    entao NENHUMA noticia precisa ser visitada. Se o card nao trouxer a data de
-    publicacao (raro), vale a de curadoria.
+    REGRA DA JANELA: o criterio e a data de PUBLICACAO da noticia no site original,
+    que o proprio card informa (title="Publication date") — nenhuma noticia precisa ser
+    visitada. A varredura para quando a CURADORIA sai da janela: como ninguem cura uma
+    noticia antes de ela ser publicada, publicacao <= curadoria sempre — entao curadoria
+    fora da janela implica publicacao fora tambem, e as paginas seguintes so teriam
+    coisa mais velha. Card sem data de publicacao (raro) usa a de curadoria.
 
     O link devolvido e o do <a> do titulo, que aponta DIRETO para o site original."""
     import dateparser
     from urllib.parse import urlparse
 
     agora = datetime.now(ctx["tz"])
-    dobro = agora - 2 * (agora - cutoff)
     cfg_data = {"languages": ["en"],
                 "settings": {"PREFER_DATES_FROM": "past",
                              "RELATIVE_BASE": agora.replace(tzinfo=None)}}
@@ -529,7 +528,7 @@ def _scoopit(nome, base_url, cutoff, ctx, max_pag=8):
         alguma_dentro = False
         for c in cards:
             cur = c.get("cur")
-            if cur and cur >= dobro:
+            if cur and cur >= cutoff:
                 alguma_dentro = True
             ref = c.get("pub") or cur          # criterio final: data da noticia original
             if not ref or ref < cutoff or ref > agora + timedelta(hours=12):
@@ -546,7 +545,7 @@ def _scoopit(nome, base_url, cutoff, ctx, max_pag=8):
             d, h = _fmt(ref, ctx["tz"])
             rows.append((titulo, dominio, d, h, kw, link, f"https://{dominio}"))
         if not alguma_dentro:
-            break                               # pagina inteira mais velha que 2x a janela
+            break                               # curadoria da pagina inteira fora da janela
     return rows
 
 

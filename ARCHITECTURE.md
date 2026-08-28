@@ -222,6 +222,7 @@ ATENÇÃO: "\bMEDICINA\b" com borda de palavra — sem isso BIOMEDICINA conta co
 `fontes_extra._scoopit`: a pagina nao tem RSS nem filtro de data, mas cada card do HTML
 ja traz o LINK ORIGINAL da noticia (o <a> do titulo — nunca devolva o link do scoop.it),
 a data de curadoria e a data de publicacao no site original — por isso a coleta nao
-visita noticia nenhuma. Varre paginas ate a curadoria passar de 2x a janela e o criterio
-final e a data de PUBLICACAO original >= janela (regra pedida pelo usuario). Filtra pelas
+visita noticia nenhuma. O criterio e a data de PUBLICACAO original >= janela; a varredura para quando a
+CURADORIA sai da janela — como ninguem cura noticia antes de ela existir,
+publicacao <= curadoria sempre, entao nao ha nada mais novo nas paginas seguintes. Filtra pelas
 keywords da vertical (titulo + trecho do blockquote). Novas paginas: dict SCOOPIT.
