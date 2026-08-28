@@ -217,3 +217,11 @@ Só alerta documento com linha inédita no Excel — rodadas seguidas não repet
 Erro no radar nunca derruba o clipping (try/except com log `[radar]`).
 Códigos de IES vêm de `cadastro_ies.parquet` (consolidado dos censos INEP 2018-2023).
 ATENÇÃO: "\bMEDICINA\b" com borda de palavra — sem isso BIOMEDICINA conta como Medicina.
+
+## Scoop.it (curadoria "Educação 3.0")
+`fontes_extra._scoopit`: a pagina nao tem RSS nem filtro de data, mas cada card do HTML
+ja traz o LINK ORIGINAL da noticia (o <a> do titulo — nunca devolva o link do scoop.it),
+a data de curadoria e a data de publicacao no site original — por isso a coleta nao
+visita noticia nenhuma. Varre paginas ate a curadoria passar de 2x a janela e o criterio
+final e a data de PUBLICACAO original >= janela (regra pedida pelo usuario). Filtra pelas
+keywords da vertical (titulo + trecho do blockquote). Novas paginas: dict SCOOPIT.

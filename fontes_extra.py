@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 import feedparser
+from bs4 import BeautifulSoup
 
 ARQUIVO_RX = re.compile(r"\.(pdf|jpe?g|png|gif|zip|docx?|xlsx?|pptx?)(/view)?$", re.I)
 
@@ -167,6 +168,16 @@ RAD_TIPOS = ("Fato Relevante", "Comunicado ao Mercado", "Aviso aos Acionistas")
 SEC_EMPRESAS = {"saude": {}, "educacao": {"Afya": "0001771007"}}
 SEC_EMPRESAS["saude_educacao"] = {**SEC_EMPRESAS["saude"], **SEC_EMPRESAS["educacao"]}
 SEC_FORMS = ("6-K", "20-F", "8-K")
+
+# Paginas de curadoria no Scoop.it. Cada card ja traz TUDO no proprio HTML: o link
+# ORIGINAL da noticia (nao o do scoop.it), a data de curadoria e a data de publicacao
+# da noticia no site original — entao a coleta nao visita noticia nenhuma.
+SCOOPIT = {
+    "saude": [],
+    "educacao": [("Educação 3.0 (Scoop.it)",
+                  "https://www.scoop.it/topic/educacao-3-0-uma-jornada")],
+}
+SCOOPIT["saude_educacao"] = SCOOPIT["saude"] + SCOOPIT["educacao"]
 # A SEC EXIGE User-Agent com e-mail de contato: sem e-mail ela devolve HTTP 403 (medido).
 # Como o repositorio e publico, o e-mail NUNCA fica no codigo — vem do ambiente:
 # variavel de repo SEC_CONTATO (preferida) ou o secret EMAIL_REMETENTE ja existente.
@@ -454,6 +465,91 @@ def _cvm(empresas, from_date, ctx):
 
 
 # ------------------------------------------------------------------ orquestrador
+def _scoopit(nome, base_url, cutoff, ctx, max_pag=8):
+    """Scoop.it: compilado de noticias curado a mao, sem RSS e sem filtro de data.
+
+    REGRA DA JANELA (pedida pelo usuario): a pagina so mostra a data de CURADORIA na
+    ordem dos posts, e o curador pode demorar a postar. Entao a varredura desce ate o
+    DOBRO da janela (curadoria >= 2x cutoff) e o criterio final e a data de PUBLICACAO
+    da noticia no site original — que o proprio card informa (title="Publication date"),
+    entao NENHUMA noticia precisa ser visitada. Se o card nao trouxer a data de
+    publicacao (raro), vale a de curadoria.
+
+    O link devolvido e o do <a> do titulo, que aponta DIRETO para o site original."""
+    import dateparser
+    from urllib.parse import urlparse
+
+    agora = datetime.now(ctx["tz"])
+    dobro = agora - 2 * (agora - cutoff)
+    cfg_data = {"languages": ["en"],
+                "settings": {"PREFER_DATES_FROM": "past",
+                             "RELATIVE_BASE": agora.replace(tzinfo=None)}}
+
+    def _data(txt):
+        try:
+            d = dateparser.parse((txt or "").strip(), **cfg_data)
+            return d.replace(tzinfo=ctx["tz"]) if d else None
+        except Exception:
+            return None
+
+    rows, vistos = [], set()
+    for pag in range(1, max_pag + 1):
+        try:
+            r = requests.get(f"{base_url}?nosug=1&page={pag}", headers=HEADERS, timeout=25)
+            if r.status_code != 200:
+                break
+            soup = BeautifulSoup(r.text, "lxml")
+        except Exception:
+            break
+
+        # maquina de estados na ordem do documento: cada div.from_curationDate abre um
+        # card; titulo/link, data de publicacao e trecho vao caindo no card aberto
+        cards, atual = [], None
+        for el in soup.find_all(["div", "h2", "a", "blockquote"]):
+            classes = el.get("class") or []
+            if el.name == "div" and "from_curationDate" in classes:
+                if atual and atual.get("link"):
+                    cards.append(atual)
+                atual = {"cur": _data(el.get_text(" ", strip=True))}
+            elif atual is not None and el.name == "h2" and "postTitleView" in classes:
+                a = el.find("a", href=True)
+                if a and a["href"].startswith("http") and "scoop.it" not in a["href"]:
+                    atual["link"] = a["href"]
+                    atual["titulo"] = a.get_text(" ", strip=True)
+            elif (atual is not None and el.name == "a"
+                  and str(el.get("title", "")).startswith("Publication date")):
+                atual["pub"] = _data(el.get_text(" ", strip=True))
+            elif atual is not None and el.name == "blockquote" and "trecho" not in atual:
+                atual["trecho"] = el.get_text(" ", strip=True)[:400]
+        if atual and atual.get("link"):
+            cards.append(atual)
+        if not cards:
+            break
+
+        alguma_dentro = False
+        for c in cards:
+            cur = c.get("cur")
+            if cur and cur >= dobro:
+                alguma_dentro = True
+            ref = c.get("pub") or cur          # criterio final: data da noticia original
+            if not ref or ref < cutoff or ref > agora + timedelta(hours=12):
+                continue
+            link = c["link"]
+            if link in vistos:
+                continue
+            vistos.add(link)
+            titulo = c.get("titulo", "").strip()
+            kw = ctx["match"](titulo + " " + c.get("trecho", ""))
+            if not kw:
+                continue                        # mesmos filtros de keyword do clipping
+            dominio = urlparse(link).netloc.replace("www.", "")
+            d, h = _fmt(ref, ctx["tz"])
+            rows.append((titulo, dominio, d, h, kw, link, f"https://{dominio}"))
+        if not alguma_dentro:
+            break                               # pagina inteira mais velha que 2x a janela
+    return rows
+
+
 def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print, norm_fn=None):
     """Coleta de todas as fontes extras da vertical, em paralelo.
     Devolve linhas no formato COLS do clipping_core."""
@@ -469,6 +565,9 @@ def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print, norm
         exige = item[3] if len(item) > 3 else None
         tarefas.append((f"rss:{nome}",
                         lambda n=nome, u=url, f=filtrar, e=exige: _rss(n, u, f, cutoff, ctx, e)))
+    for nome, base in SCOOPIT.get(v, []):
+        tarefas.append((f"scoopit:{nome}",
+                        lambda n=nome, b=base: _scoopit(n, b, cutoff, ctx)))
     orgaos = DOU_ORGAOS.get(v, ())
     for termo in DOU_TERMOS.get(v, []):
         tarefas.append((f"dou:{termo}", lambda t=termo: _dou(t, from_date, ctx, orgaos)))
