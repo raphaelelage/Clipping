@@ -6,3 +6,5 @@ backlog.xlsx
 clipping_*.csv
 google_news_*.csv
 .streamlit/secrets.toml
+bbg_snapshot.json
+valuation_cache.json

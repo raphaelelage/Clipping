@@ -127,6 +127,42 @@ VERTICAIS["saude_educacao"] = {
 del _vistos
 VERTICAL = "saude"
 
+# ------------------- verticais dinamicas (verticais.json, editavel pelo app) --------
+# Alem das 3 fixas, o usuario pode criar secoes novas no app ("Farma", "Hospitais"...).
+# Cada secao herda a ESTRUTURA (portais gov.br, DOU, CVM, RSS...) de uma ou mais bases
+# (saude/educacao) e tem listas proprias de keywords/fontes/prompt/empresas — que, se
+# vazias ou ausentes, caem na uniao das bases herdadas (mesma regra da combinada).
+HERANCAS = {"saude": ["saude"], "educacao": ["educacao"],
+            "saude_educacao": ["saude", "educacao"]}
+ROTULOS = {}
+
+
+def carregar_verticais():
+    global HERANCAS, ROTULOS
+    try:
+        import json as _json
+        with io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "verticais.json"), encoding="utf-8") as fh:
+            reg = _json.load(fh)
+    except Exception:
+        return
+    for chave, cfg in reg.items():
+        bases = [b for b in (cfg.get("herda") or []) if b in ("saude", "educacao")]
+        if not bases:
+            continue
+        HERANCAS[chave] = bases
+        ROTULOS[chave] = cfg.get("label") or chave
+        if chave not in VERTICAIS:
+            vis = set()
+            govbr = [g for b in bases for g in VERTICAIS[b]["govbr"]
+                     if not (g[0] in vis or vis.add(g[0]))]
+            VERTICAIS[chave] = {"label": ROTULOS[chave], "govbr": govbr}
+        else:
+            VERTICAIS[chave]["label"] = ROTULOS.get(chave, VERTICAIS[chave]["label"])
+
+
+carregar_verticais()
+
 # A vertical combinada NAO tem listas proprias: elas sao a uniao das outras duas,
 # calculada a cada execucao. Assim editar Saude ou Educacao ja reflete na combinada.
 COMBINADA = "saude_educacao"
@@ -134,7 +170,7 @@ PARTES = ("saude", "educacao")
 
 def arquivos_vertical(vertical):
     """Arquivos de configuracao da vertical. Na combinada, keywords/sources sao None
-    (derivados) — so o prompt e proprio."""
+    (derivados); nas demais (incl. secoes criadas no app) sao arquivos proprios."""
     v = vertical if vertical in VERTICAIS else "saude"
     if v == COMBINADA:
         return {"keywords": None, "sources": None, "prompt": f"ai_prompt_{v}.txt"}
@@ -155,14 +191,24 @@ def set_vertical(vertical):
     Fallback: arquivos antigos sem sufixo (keywords.txt/sources.txt) e depois os defaults."""
     global VERTICAL, keywords, WHITELIST
     VERTICAL = vertical if vertical in VERTICAIS else "saude"
+    bases = HERANCAS.get(VERTICAL, [VERTICAL])
+
+    def _uniao_das_bases(tipo):
+        acc = []
+        for b in bases:
+            acc += _load_list(f"{tipo}_{b}.txt", [])
+        return _dedup(acc)
+
     if VERTICAL == COMBINADA:
-        kw, src = [], []
-        for parte in PARTES:
-            f2 = arquivos_vertical(parte)
-            kw += _load_list(f2["keywords"], [])
-            src += _load_list(f2["sources"], [])
-        keywords = _dedup(kw) or DEFAULT_KEYWORDS
-        WHITELIST = _dedup(src) or DEFAULT_WHITELIST
+        keywords = _uniao_das_bases("keywords") or DEFAULT_KEYWORDS
+        WHITELIST = _uniao_das_bases("sources") or DEFAULT_WHITELIST
+        return VERTICAL
+    if VERTICAL not in ("saude", "educacao"):
+        # secao criada no app: listas proprias mandam; vazias/ausentes -> heranca
+        kw_prop = _load_list(f"keywords_{VERTICAL}.txt", [])
+        src_prop = _load_list(f"sources_{VERTICAL}.txt", [])
+        keywords = _dedup(kw_prop) or _uniao_das_bases("keywords") or DEFAULT_KEYWORDS
+        WHITELIST = _dedup(src_prop) or _uniao_das_bases("sources") or DEFAULT_WHITELIST
         return VERTICAL
     f = arquivos_vertical(VERTICAL)
     base_kw = DEFAULT_KEYWORDS if VERTICAL == "saude" else []

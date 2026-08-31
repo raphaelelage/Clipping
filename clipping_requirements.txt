@@ -12,3 +12,4 @@ lxml
 trafilatura
 rapidfuzz
 pyarrow
+yfinance

@@ -1,0 +1,24 @@
+{
+  "saude_educacao": {
+    "label": "Saúde e Educação",
+    "icon": "📊",
+    "herda": [
+      "saude",
+      "educacao"
+    ]
+  },
+  "saude": {
+    "label": "Saúde",
+    "icon": "🏥",
+    "herda": [
+      "saude"
+    ]
+  },
+  "educacao": {
+    "label": "Educação",
+    "icon": "🎓",
+    "herda": [
+      "educacao"
+    ]
+  }
+}

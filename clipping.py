@@ -52,6 +52,11 @@ AVISO_COLETA = ""
 # (so nas verticais educacao/saude_educacao). Cada item: {"frase","link","medicina","tipo"}.
 RADAR_FRASES: list = []
 
+# Tabela de valuation da cobertura (valuation.py), montada durante o sync do Drive
+# e injetada no e-mail logo apos o botao de download. Vazia = sem summary (lista de
+# empresas vazia ou fontes fora do ar — o clipping segue normal).
+VALUATION_HTML = ""
+
 
 def _refazer_fatia(n, esperadas):
     """Refaz aqui mesmo a fatia do robo que caiu.
@@ -224,7 +229,7 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
     """
 
     return f"""<html><body style="font-family:Arial,sans-serif;max-width:760px;margin:auto;padding:16px;">
-      {header}{meta}{aviso}
+      {header}{meta}{aviso}{VALUATION_HTML}
       <table style="width:100%;border-collapse:collapse;">{''.join(items)}</table>
       {footer}
     </body></html>"""
@@ -288,8 +293,9 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
     repetem o alarme. Se o Drive ainda nao tem o arquivo, comeca da semente versionada
     no repo (o levantamento historico completo)."""
     global RADAR_FRASES
-    if VERTICAL not in ("educacao", "saude_educacao"):
-        return
+    _bases = clipping_core.HERANCAS.get(VERTICAL, [VERTICAL])
+    if "educacao" not in _bases:
+        return                      # radar DOU so faz sentido com educacao na heranca
     import dou_alerta
     frases, cru = dou_alerta.coletar_novidades(dias=3, log=lambda m: print(m, flush=True))
     if not frases:
@@ -353,6 +359,23 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
     update_file(local, RADAR_DRIVE_NOME, xlsx_mime)
     print(f"[ok] radar: {len(ineditas)} linha(s) nova(s) no {RADAR_DRIVE_NOME} "
           f"({len(RADAR_FRASES)} documento(s) no alerta do e-mail)", flush=True)
+
+
+def _valuation_summary(download_file, update_file):
+    """Summary de valuation: baixa cache/snapshot do Drive, roda a cadeia BBG > Yahoo >
+    cache (valuation.py), guarda o HTML pro e-mail e sobe o cache atualizado."""
+    global VALUATION_HTML
+    import valuation
+    if not valuation.empresas_da_vertical(VERTICAL):
+        return
+    for nome in ("valuation_cache.json", "bbg_snapshot.json"):
+        download_file(nome, Path(nome))          # ok nao existir ainda
+    dados = valuation.coletar(VERTICAL, log=lambda m: print(m, flush=True))
+    if dados:
+        VALUATION_HTML = valuation.tabela_html(dados, red=RED)
+        if Path("valuation_cache.json").exists():
+            update_file(Path("valuation_cache.json"), "valuation_cache.json",
+                        "application/json")
 
 
 def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[str, int]:
@@ -463,6 +486,11 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
         _radar_e_excel(download_file, update_file, XLSX_MIME)
     except Exception as e:
         print(f"[radar] erro nao-fatal (clipping segue normal): {e}", flush=True)
+
+    try:
+        _valuation_summary(download_file, update_file)
+    except Exception as e:
+        print(f"[valuation] erro nao-fatal (clipping segue normal): {e}", flush=True)
     if ai_url != folder_url and xlsx_url != folder_url:
         print("[ok] Drive: ai_input.txt e news_scrapper.xlsx atualizados")
     else:

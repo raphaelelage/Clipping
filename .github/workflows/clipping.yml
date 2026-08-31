@@ -4,11 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       vertical:
-        description: "Vertical"
+        description: "Vertical (chave do verticais.json — ex.: saude_educacao, saude, educacao ou secao criada no app)"
         required: false
         default: "saude_educacao"
-        type: choice
-        options: ["saude_educacao", "saude", "educacao"]
       when:
         description: "Período de busca (ex: 1d, 2d, 7d, 12h, 1h)"
         required: false
@@ -56,6 +54,7 @@ on:
 
 permissions:
   contents: read
+  actions: read     # a trava anti-duplicata precisa listar os runs recentes
 
 jobs:
   escolher:
@@ -63,7 +62,33 @@ jobs:
     outputs:
       maquina: ${{ steps.decidir.outputs.maquina }}
       shards: ${{ steps.decidir.outputs.shards }}
+      duplicado: ${{ steps.antidup.outputs.duplicado }}
     steps:
+      # ANTI-DUPLICATA: o cron-job.org as vezes reenvia o gatilho (retry por resposta
+      # lenta) e chegam DOIS disparos com segundos de diferenca -> dois e-mails identicos
+      # (medido em 31/08: 09:45:05 e 09:45:09). Regra: se existe um run deste workflow
+      # criado nos ultimos 5 minutos e MAIS ANTIGO que este (desempate por id), este
+      # run se anula. O desempate garante que exatamente UM sobrevive.
+      - id: antidup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          R="${{ github.repository }}"
+          MEU_ID="${{ github.run_id }}"
+          MEU_CRIADO=$(gh api "repos/$R/actions/runs/$MEU_ID" --jq .created_at)
+          DESDE=$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)
+          N=$(gh api "repos/$R/actions/workflows/clipping.yml/runs?created=>$DESDE&per_page=15"                 --jq "[.workflow_runs[]
+                       | select(.id != $MEU_ID)
+                       | select(.created_at < \"$MEU_CRIADO\"
+                                or (.created_at == \"$MEU_CRIADO\" and .id < $MEU_ID))
+                      ] | length" 2>/dev/null || echo 0)
+          if [ "${N:-0}" -gt 0 ]; then
+            echo "disparo duplicado: $N run(s) mais antigo(s) nos ultimos 5 min — este run se anula"
+            echo "duplicado=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "duplicado=0" >> "$GITHUB_OUTPUT"
+          fi
+
       - id: decidir
         env:
           GH_TOKEN: ${{ secrets.RUNNER_PAT || github.token }}
@@ -92,7 +117,7 @@ jobs:
 
   coletar:
     needs: escolher
-    if: needs.escolher.outputs.shards != '0'    # no PC nao ha o que dividir
+    if: needs.escolher.outputs.duplicado != '1' && needs.escolher.outputs.shards != '0'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false          # um robo cair nao deve matar os outros; a trava fica no 'montar'
@@ -131,7 +156,7 @@ jobs:
     needs: [escolher, coletar]
     # always() para rodar mesmo se um robo falhou (a trava avisa) e tambem quando 'coletar' foi
     # pulado de proposito por estarmos no PC. So nao roda se a propria escolha falhar.
-    if: always() && needs.escolher.result == 'success'
+    if: always() && needs.escolher.result == 'success' && needs.escolher.outputs.duplicado != '1'
     runs-on: ${{ needs.escolher.outputs.maquina }}
     steps:
       - uses: actions/checkout@v5

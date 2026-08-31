@@ -559,6 +559,16 @@ def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print, norm
     norm_fn = norm_fn or (lambda x: str(x).lower())
     ctx["norm"] = norm_fn
     v = vertical if vertical in WP_SITES else "saude"
+    # secao criada no app: herda as fontes estruturais (WP/RSS/DOU/CVM/SEC/scoop) da(s)
+    # base(s) definidas no verticais.json — uniao sem repetir
+    if vertical not in WP_SITES:
+        try:
+            import clipping_core as _cc
+            bases = _cc.HERANCAS.get(vertical)
+        except Exception:
+            bases = None
+        if bases:
+            v = "saude_educacao" if set(bases) == {"saude", "educacao"} else bases[0]
     tarefas = []
     for nome, base, filtrar in WP_SITES.get(v, []):
         tarefas.append((f"wp:{nome}", lambda n=nome, b=base, f=filtrar: _wp(n, b, f, from_date, ctx)))

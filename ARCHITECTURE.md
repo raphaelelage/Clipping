@@ -226,3 +226,25 @@ visita noticia nenhuma. O criterio e a data de PUBLICACAO original >= janela; a 
 CURADORIA sai da janela — como ninguem cura noticia antes de ela existir,
 publicacao <= curadoria sempre, entao nao ha nada mais novo nas paginas seguintes. Filtra pelas
 keywords da vertical (titulo + trecho do blockquote). Novas paginas: dict SCOOPIT.
+
+## Summary de valuation no e-mail (`valuation.py`)
+Tabela compacta no topo do e-mail (depois do botão de download) com a cobertura:
+preço/alvo/retorno/mktcap/ADTV/P-E 26E/EV-EBITDA/DL-EBITDA/ROE/ROIC + Receita/EBITDA/Lucro
+26E-27E. Cadeia de fontes POR CAMPO: snapshot Bloomberg (gerado no PC do usuário por
+`valuation_bbg.py`, válido 5 dias) > Yahoo (yfinance) > cache do Drive (último valor bom).
+Regras: nunca estimar número que a fonte não deu ("–"); P/E 26E só com consenso >=4
+analistas e moeda coerente (ADR mistura USD/BRL — senão usa forwardPE); 1ª rodada do dia
+consulta o Yahoo (~10s), as demais usam o cache diário. Empresas em
+`empresas_valuation_<vertical>.txt` (editável no app). `bbg_snapshot.json` e
+`valuation_cache.json` NUNCA vão ao repo (dados licenciados/derivados — .gitignore).
+
+## Seções (verticais) dinâmicas — `verticais.json`
+O app cria/renomeia/exclui seções. Cada seção nova herda a ESTRUTURA (portais gov.br,
+DOU, CVM, RSS, scoop.it, radar) das bases saude/educacao via `HERANCAS`; keywords/fontes/
+prompt/empresas são arquivos próprios `*_<chave>.txt` — vazios/ausentes caem na união da
+herança (mesma regra da combinada). O input `vertical` do workflow aceita qualquer chave.
+
+## Anti-duplicata de disparos
+O cron-job.org às vezes reenvia o gatilho (retry) — chegavam 2 runs com segundos de
+diferença e 2 e-mails. O job `escolher` se anula se existir run mais antigo (<5 min,
+desempate por id). Precisa de `permissions: actions: read`.

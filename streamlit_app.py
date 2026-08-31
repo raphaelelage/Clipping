@@ -53,8 +53,9 @@ CRON_API = "https://api.cron-job.org"
 CRON_PREFIX = "Clipping"
 DIAS = {"Seg": 1, "Ter": 2, "Qua": 3, "Qui": 4, "Sex": 5, "Sáb": 6, "Dom": 0}
 
-# Verticais — precisa espelhar VERTICAIS/arquivos_vertical do clipping_core.py
-VERTICAIS = {
+# Verticais FIXAS (fallback) — o registro dinamico verticais.json, editavel na secao
+# "Gerenciar seções" da aba Config, e carregado por cima em carregar_verticais_app().
+VERTICAIS_FIXAS = {
     # combinada: keywords/fontes sao a UNIAO de saude+educacao (sem arquivo proprio)
     "saude_educacao": {"label": "Saúde e Educação", "icon": "📊",
                        "keywords": None, "sources": None,
@@ -67,6 +68,33 @@ VERTICAIS = {
                  "keywords": "keywords_educacao.txt", "sources": "sources_educacao.txt",
                  "prompt": "ai_prompt_educacao.txt", "portais": "MEC · Capes"},
 }
+_PORTAIS_BASE = {"saude": "ANS · Anvisa", "educacao": "MEC · Capes"}
+
+
+def montar_verticais(registro_json):
+    """Dict de verticais do app a partir do verticais.json (custom herdam estrutura)."""
+    import json as _json
+    out = {k: dict(v) for k, v in VERTICAIS_FIXAS.items()}
+    try:
+        reg = _json.loads(registro_json) if registro_json else {}
+    except Exception:
+        return out
+    for chave, cfg in reg.items():
+        bases = [b for b in (cfg.get("herda") or []) if b in ("saude", "educacao")]
+        if chave in out:
+            out[chave]["label"] = cfg.get("label") or out[chave]["label"]
+            out[chave]["icon"] = cfg.get("icon") or out[chave]["icon"]
+            continue
+        if not bases:
+            continue
+        out[chave] = {
+            "label": cfg.get("label") or chave, "icon": cfg.get("icon") or "🗂️",
+            "keywords": f"keywords_{chave}.txt", "sources": f"sources_{chave}.txt",
+            "prompt": f"ai_prompt_{chave}.txt",
+            "portais": " · ".join(_PORTAIS_BASE[b] for b in bases),
+            "herda": bases, "custom": True,
+        }
+    return out
 
 class _SemRede:
     """Resposta falsa: erro de rede NUNCA pode derrubar o app (o Streamlit executa o
@@ -340,12 +368,74 @@ if not PAT:
     st.error("Falta o secret **github_pat**. Veja o SETUP_APP.md.")
     st.stop()
 
-# ---- seletor de vertical (cada uma tem config e agendamentos próprios)
+# ---- verticais dinamicas + seletor (cada uma tem config e agendamentos próprios)
+_REG_RAW, _REG_SHA = gh_get_file("verticais.json")
+VERTICAIS = montar_verticais(_REG_RAW)
 labels = {k: f"{v['icon']} {v['label']}" for k, v in VERTICAIS.items()}
 escolha = st.radio("Vertical", list(labels.values()), horizontal=True,
                    label_visibility="collapsed")
 VERT = next(k for k, v in labels.items() if v == escolha)
 V = VERTICAIS[VERT]
+
+with st.expander("🗂️ Gerenciar seções (renomear · criar · excluir)"):
+    import json as _json
+    try:
+        _reg = _json.loads(_REG_RAW) if _REG_RAW else {}
+    except Exception:
+        _reg = {}
+    st.caption("As seções viram opções aqui no app e valem como `vertical` nos "
+               "agendamentos. Seções novas herdam portais/DOU/CVM/RSS das bases "
+               "escolhidas; keywords, fontes, prompt e empresas são próprios "
+               "(vazios = herda também).")
+
+    c1, c2 = st.columns([3, 2])
+    novo_nome = c1.text_input("Renomear a seção atual", value=V["label"],
+                              key="ren_secao")
+    if c2.button("💾 Renomear", key="bt_ren") and novo_nome.strip():
+        _reg.setdefault(VERT, {"herda": V.get("herda")
+                               or {"saude_educacao": ["saude", "educacao"],
+                                   "saude": ["saude"],
+                                   "educacao": ["educacao"]}.get(VERT, ["saude"])})
+        _reg[VERT]["label"] = novo_nome.strip()
+        r = gh_put_file("verticais.json",
+                        _json.dumps(_reg, ensure_ascii=False, indent=2),
+                        _REG_SHA, f"Renomeia seção {VERT} pelo app")
+        st.success("✅ Renomeada — recarregue a página.") if r.status_code in (200, 201)             else st.error(f"Falhou ({r.status_code})")
+
+    st.divider()
+    c1, c2, c3 = st.columns([3, 3, 2])
+    criar_nome = c1.text_input("Nova seção (nome)", key="nv_nome",
+                               placeholder="ex.: Farmácias")
+    criar_herda = c2.multiselect("Herda a estrutura de", ["saude", "educacao"],
+                                 default=["saude"], key="nv_herda")
+    if c3.button("➕ Criar", key="bt_criar") and criar_nome.strip() and criar_herda:
+        import re as _re, unicodedata as _ud
+        chave = _re.sub(r"[^a-z0-9]+", "_",
+                        "".join(ch for ch in _ud.normalize("NFKD", criar_nome.lower())
+                                if not _ud.combining(ch))).strip("_")
+        if not chave or chave in VERTICAIS:
+            st.error("Nome inválido ou já existe.")
+        else:
+            _reg[chave] = {"label": criar_nome.strip(), "icon": "🗂️",
+                           "herda": criar_herda}
+            r = gh_put_file("verticais.json",
+                            _json.dumps(_reg, ensure_ascii=False, indent=2),
+                            _REG_SHA, f"Cria seção {chave} pelo app")
+            if r.status_code in (200, 201):
+                st.success(f"✅ Seção **{criar_nome}** criada (chave `{chave}`) — "
+                           "recarregue a página. Enquanto as listas dela estiverem "
+                           "vazias, ela usa as da herança.")
+            else:
+                st.error(f"Falhou ({r.status_code})")
+
+    if V.get("custom"):
+        st.divider()
+        if st.button(f"🗑️ Excluir a seção {V['label']}", key="bt_excluir"):
+            _reg.pop(VERT, None)
+            r = gh_put_file("verticais.json",
+                            _json.dumps(_reg, ensure_ascii=False, indent=2),
+                            _REG_SHA, f"Exclui seção {VERT} pelo app")
+            st.success("✅ Excluída — recarregue a página.") if r.status_code in (200, 201)                 else st.error(f"Falhou ({r.status_code})")
 if V["keywords"]:
     st.caption(f"Vertical **{V['label']}** · portais: {V['portais']} · "
                f"config em `{V['keywords']}` / `{V['sources']}`")
@@ -392,6 +482,16 @@ with tab_cfg:
         st.divider()
     file_editor("Prompt da IA", V["prompt"],
                 "Texto que vai junto da lista (o que você copia do e-mail e cola no Claude).", 300)
+    st.divider()
+    if VERT == "saude_educacao":
+        st.info("**Empresas do summary de valuation:** esta seção usa a **união** das "
+                "listas de Saúde e Educação — edite lá.")
+    else:
+        file_editor("Empresas do summary de valuation",
+                    f"empresas_valuation_{VERT}.txt",
+                    "Um ticker Yahoo por linha (B3 = XXXX3.SA; ADR = ticker dos EUA, ex. "
+                    "AFYA). A tabela sai no topo do e-mail; lista vazia = sem tabela"
+                    + (" (herda da base)." if V.get("custom") else "."), 220)
 
 with tab_sched:
     st.markdown(f"Agendamentos de **{V['label']}** — o robô roda sozinho "

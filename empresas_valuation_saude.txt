@@ -1,0 +1,14 @@
+# Empresas do summary de valuation (saude) — um ticker Yahoo por linha (B3 = XXXX3.SA)
+HAPV3.SA
+RDOR3.SA
+DASA3.SA
+ONCO3.SA
+QUAL3.SA
+HYPE3.SA
+BLAU3.SA
+VVEO3.SA
+MATD3.SA
+RADL3.SA
+PGMN3.SA
+PNVL3.SA
+FLRY3.SA

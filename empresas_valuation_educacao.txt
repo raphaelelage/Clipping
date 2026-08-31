@@ -1,0 +1,7 @@
+# Empresas do summary de valuation (educacao) — um ticker Yahoo por linha (ADR = ticker US)
+COGN3.SA
+YDUQ3.SA
+SEER3.SA
+ANIM3.SA
+VTRU3.SA
+AFYA
