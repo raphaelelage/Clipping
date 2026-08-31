@@ -365,13 +365,13 @@ def tabela_html(dados, red="#CC092F", grupos=None):
         cs += "".join(f'<td style="{td}">{c}</td>' for c in [
             _fm(d.get("mktcap"), "bi"), _fm(d.get("adtv"), "mi"),
             _fm(d.get("pe_26e"), "x"), _fm(d.get("pe_27e"), "x"),
-            _fm(d.get("ev_ebitda"), "x"), _fm(d.get("dl_ebitda"), "x"),
+            _fm(d.get("dl_ebitda"), "x"),
             _fm(d.get("lucro_26e"), "bi"), _fm(d.get("lucro_27e"), "bi")])
         return f'<tr><td style="{tdl}">{nome}</td>{cs}</tr>'
 
     if not grupos:
         grupos = [("Cobertura", list(dados.keys()))]
-    N_COLS = 15
+    N_COLS = 14
     corpo = ""
     for rotulo, tickers in grupos:
         presentes = [(tk, dados[tk]) for tk in tickers if tk in dados]
@@ -383,7 +383,7 @@ def tabela_html(dados, red="#CC092F", grupos=None):
 
     h = "".join(f'<th style="{th}">{c}</th>' for c in
                 ["Preço", "1d", "5d", "1m", "YTD", "YoY", "Mkt Cap", "ADTV",
-                 "P/E 26E", "P/E 27E", "EV/EBITDA 12m", "DL/EBITDA",
+                 "P/E 26E", "P/E 27E", "DL/EBITDA",
                  "Lucro 26E", "Lucro 27E"])
     fontes = {f.split()[0] for d in dados.values() for f in d.get("_fontes", {}).values()}
     rotulo_fonte = " + ".join(sorted(fontes)) if fontes else "?"
@@ -398,8 +398,7 @@ def tabela_html(dados, red="#CC092F", grupos=None):
     </div>
     <p style="font-family:Arial;font-size:10px;color:#888;margin:4px 0 16px 0;">
       Mkt Cap/Lucro em bi; ADTV em mi (3m). Retornos de preço (1d…YoY) sem dividendos.
-      EV/EBITDA e DL/EBITDA: últimos 12m realizados (forward só via Bloomberg).
-      26E/27E: consenso ({rotulo_fonte}).
+      DL/EBITDA: últimos 12m realizados. 26E/27E: consenso ({rotulo_fonte}).
       * = ADR: preço/alvo em USD; mkt cap e ADTV convertidos a BRL pelo câmbio do dia.
       "–" = sem dado na fonte.</p>
     """
