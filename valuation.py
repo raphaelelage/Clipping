@@ -256,7 +256,10 @@ def coletar(vertical, bbg_json="bbg_snapshot.json", cache_json="valuation_cache.
     try:
         with io.open(os.path.join(BASE, cache_json), encoding="utf-8") as fh:
             _c = json.load(fh)
-        if all(_c.get(t, {}).get("_quando") == date.today().isoformat() for t in tickers):
+        # fast-path so vale se o cache e de HOJE e do formato ATUAL (com os retornos);
+        # sem isso, um cache gravado por versao antiga serviria colunas vazias o dia todo
+        if all(_c.get(t, {}).get("_quando") == date.today().isoformat()
+               and "ret_ytd" in _c.get(t, {}) for t in tickers):
             log(f"[valuation] cache de hoje completo — sem consulta externa")
             return {t: _c[t] for t in tickers}
     except Exception:
