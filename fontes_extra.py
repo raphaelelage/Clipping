@@ -564,7 +564,7 @@ def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print, norm
     if vertical not in WP_SITES:
         try:
             import clipping_core as _cc
-            bases = _cc.HERANCAS.get(vertical)
+            bases = _cc.BASES_RAIZ.get(vertical)
         except Exception:
             bases = None
         if bases:

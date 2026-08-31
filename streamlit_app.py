@@ -80,7 +80,7 @@ def montar_verticais(registro_json):
     except Exception:
         return out
     for chave, cfg in reg.items():
-        bases = [b for b in (cfg.get("herda") or []) if b in ("saude", "educacao")]
+        bases = [b for b in (cfg.get("herda") or []) if b]
         if chave in out:
             out[chave]["label"] = cfg.get("label") or out[chave]["label"]
             out[chave]["icon"] = cfg.get("icon") or out[chave]["icon"]
@@ -91,7 +91,7 @@ def montar_verticais(registro_json):
             "label": cfg.get("label") or chave, "icon": cfg.get("icon") or "🗂️",
             "keywords": f"keywords_{chave}.txt", "sources": f"sources_{chave}.txt",
             "prompt": f"ai_prompt_{chave}.txt",
-            "portais": " · ".join(_PORTAIS_BASE[b] for b in bases),
+            "portais": " · ".join(_PORTAIS_BASE.get(b, b) for b in bases),
             "herda": bases, "custom": True,
         }
     return out
@@ -406,8 +406,12 @@ with st.expander("🗂️ Gerenciar seções (renomear · criar · excluir)"):
     c1, c2, c3 = st.columns([3, 3, 2])
     criar_nome = c1.text_input("Nova seção (nome)", key="nv_nome",
                                placeholder="ex.: Farmácias")
-    criar_herda = c2.multiselect("Herda a estrutura de", ["saude", "educacao"],
-                                 default=["saude"], key="nv_herda")
+    criar_herda = c2.multiselect(
+        "Consolida / herda de", [k for k in VERTICAIS if k != VERT],
+        default=["saude"], key="nv_herda",
+        help="Pode apontar para QUALQUER seção (inclusive as criadas aqui): a nova seção "
+             "consolida as listas delas e herda a estrutura (portais/DOU/CVM) das bases "
+             "de origem. Ex.: uma seção que consolida 'farma' + 'hospitais'.")
     if c3.button("➕ Criar", key="bt_criar") and criar_nome.strip() and criar_herda:
         import re as _re, unicodedata as _ud
         chave = _re.sub(r"[^a-z0-9]+", "_",

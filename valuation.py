@@ -59,20 +59,31 @@ def empresas_da_vertical(vertical):
             herda = (json.load(fh).get(vertical) or {}).get("herda") or []
     except Exception:
         herda = []
-    if vertical in ("saude", "educacao"):
-        return _ler(vertical)
-    proprio_path = os.path.join(BASE, f"empresas_valuation_{vertical}.txt")
-    proprio = _ler(vertical) if os.path.exists(proprio_path) else []
-    if proprio:
-        return proprio
-    bases = herda or ["saude", "educacao"]
-    vistos, uniao = set(), []
-    for v in bases:
-        for t in _ler(v):
-            if t not in vistos:
-                vistos.add(t)
-                uniao.append(t)
-    return uniao
+    try:
+        with io.open(os.path.join(BASE, "verticais.json"), encoding="utf-8") as fh:
+            _reg = json.load(fh)
+    except Exception:
+        _reg = {}
+
+    def _efetiva(v, vis=None):
+        vis = vis or set()
+        if v in vis:
+            return []
+        vis.add(v)
+        propria = _ler(v)
+        caminho = os.path.join(BASE, f"empresas_valuation_{v}.txt")
+        if propria and (os.path.exists(caminho) or v in DEFAULT_EMPRESAS):
+            return propria
+        acc, vistos = [], set()
+        for h in ((_reg.get(v) or {}).get("herda")
+                  or (["saude", "educacao"] if v == "saude_educacao" else [])):
+            for t in _efetiva(h, vis):
+                if t not in vistos:
+                    vistos.add(t)
+                    acc.append(t)
+        return acc
+
+    return _efetiva(vertical)
 
 
 # ------------------------------------------------------------------ fonte Yahoo
@@ -145,6 +156,17 @@ def _yahoo_um(tk):
     return d
 
 
+def _cambio_usdbrl():
+    """Cotacao USD/BRL do dia (Yahoo BRL=X). None se falhar — ai o ADR fica sem conversao
+    e a legenda avisa, em vez de converter com numero velho errado."""
+    try:
+        import yfinance as yf
+        fx = yf.Ticker("BRL=X").fast_info.last_price
+        return float(fx) if fx and 3 < float(fx) < 10 else None
+    except Exception:
+        return None
+
+
 def _yahoo(tickers, log=print):
     out = {}
     with ThreadPoolExecutor(max_workers=6) as ex:
@@ -156,6 +178,16 @@ def _yahoo(tickers, log=print):
                 out[tk]["_fonte"] = "yahoo"
             except Exception as e:
                 log(f"[valuation] yahoo falhou para {tk}: {type(e).__name__}")
+    # ADR (moeda mista): converte mktcap e ADTV para BRL com o cambio DO DIA, para a
+    # tabela ficar comparavel; preco e alvo continuam em USD (e como o mercado cota).
+    if any(d.get("moeda_mista") for d in out.values()):
+        fx = _cambio_usdbrl()
+        for d in out.values():
+            if d.get("moeda_mista") and fx:
+                for c in ("mktcap", "adtv"):
+                    if d.get(c):
+                        d[c] = d[c] * fx
+                d["fx_convertido"] = round(fx, 2)
     return out
 
 
@@ -206,7 +238,7 @@ def coletar(vertical, bbg_json="bbg_snapshot.json", cache_json="valuation_cache.
         linha = {}
         vivo = yah.get(tk, {})
         velho = cache.get(tk, {})
-        for c in CAMPOS + ["analistas", "moeda", "moeda_mista"]:
+        for c in CAMPOS + ["analistas", "moeda", "moeda_mista", "fx_convertido"]:
             if bbg.get(tk, {}).get(c) is not None:      # BBG ganha (unico com 26E/27E completos)
                 linha[c] = bbg[tk][c]
                 linha.setdefault("_fontes", {})[c] = f"bbg {bbg_quando}"
@@ -307,7 +339,7 @@ def tabela_html(dados, red="#CC092F"):
     </div>
     <p style="font-family:Arial;font-size:10px;color:#888;margin:4px 0 16px 0;">
       Mkt Cap/Rec/EBITDA/Lucro em bi; ADTV em mi (3m). Ret. = upside até o alvo + div. yield.
-      * = ADR: preço/alvo/mktcap/ADTV em USD, fundamentos em BRL.
+      * = ADR: preço/alvo em USD; mkt cap e ADTV convertidos a BRL pelo câmbio do dia.
       EV/EBITDA, DL/EBITDA, ROE e ROIC: últimos 12m. 26E/27E: consenso ({rotulo_fonte}).
       "–" = sem dado na fonte.</p>
     """

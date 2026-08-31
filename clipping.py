@@ -294,7 +294,7 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
     repetem o alarme. Se o Drive ainda nao tem o arquivo, comeca da semente versionada
     no repo (o levantamento historico completo)."""
     global RADAR_FRASES
-    _bases = clipping_core.HERANCAS.get(VERTICAL, [VERTICAL])
+    _bases = clipping_core.BASES_RAIZ.get(VERTICAL, [VERTICAL])
     if "educacao" not in _bases:
         return                      # radar DOU so faz sentido com educacao na heranca
     import dou_alerta

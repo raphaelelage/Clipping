@@ -134,6 +134,7 @@ VERTICAL = "saude"
 # vazias ou ausentes, caem na uniao das bases herdadas (mesma regra da combinada).
 HERANCAS = {"saude": ["saude"], "educacao": ["educacao"],
             "saude_educacao": ["saude", "educacao"]}
+BASES_RAIZ = dict(HERANCAS)      # secao -> bases-raiz (saude/educacao) apos recursao
 ROTULOS = {}
 
 
@@ -146,17 +147,39 @@ def carregar_verticais():
             reg = _json.load(fh)
     except Exception:
         return
+    # 1o passe: registra herancas cruas (podem apontar para QUALQUER secao, nao so as
+    # bases — ex.: "consolidada" herdando de "farma" + "hospitais")
     for chave, cfg in reg.items():
-        bases = [b for b in (cfg.get("herda") or []) if b in ("saude", "educacao")]
-        if not bases:
-            continue
-        HERANCAS[chave] = bases
+        h = [b for b in (cfg.get("herda") or []) if b]
+        if h:
+            HERANCAS[chave] = h
         ROTULOS[chave] = cfg.get("label") or chave
+
+    # 2o passe: resolve cada secao ate as BASES-RAIZ (saude/educacao) por recursao,
+    # com guarda de ciclo — a estrutura (portais, DOU, CVM...) vem sempre das raizes
+    def _raizes(chave, vis=None):
+        vis = vis or set()
+        if chave in vis:
+            return []
+        vis.add(chave)
+        if chave in ("saude", "educacao"):
+            return [chave]
+        out = []
+        for h in HERANCAS.get(chave, []):
+            for r in _raizes(h, vis):
+                if r not in out:
+                    out.append(r)
+        return out
+
+    global BASES_RAIZ
+    for chave in list(HERANCAS):
+        raiz = _raizes(chave) or ["saude", "educacao"]
+        BASES_RAIZ[chave] = raiz
         if chave not in VERTICAIS:
             vis = set()
-            govbr = [g for b in bases for g in VERTICAIS[b]["govbr"]
+            govbr = [g for b in raiz for g in VERTICAIS[b]["govbr"]
                      if not (g[0] in vis or vis.add(g[0]))]
-            VERTICAIS[chave] = {"label": ROTULOS[chave], "govbr": govbr}
+            VERTICAIS[chave] = {"label": ROTULOS.get(chave, chave), "govbr": govbr}
         else:
             VERTICAIS[chave]["label"] = ROTULOS.get(chave, VERTICAIS[chave]["label"])
 
@@ -191,12 +214,27 @@ def set_vertical(vertical):
     Fallback: arquivos antigos sem sufixo (keywords.txt/sources.txt) e depois os defaults."""
     global VERTICAL, keywords, WHITELIST
     VERTICAL = vertical if vertical in VERTICAIS else "saude"
-    bases = HERANCAS.get(VERTICAL, [VERTICAL])
+    def _lista_efetiva(tipo, chave, vis=None):
+        vis = vis or set()
+        if chave in vis:
+            return []
+        vis.add(chave)
+        propria = _load_list(f"{tipo}_{chave}.txt", [])
+        if propria:
+            return propria
+        acc = []
+        for h in HERANCAS.get(chave, []):
+            if h != chave:
+                acc += _lista_efetiva(tipo, h, vis)
+        return acc
 
     def _uniao_das_bases(tipo):
         acc = []
-        for b in bases:
-            acc += _load_list(f"{tipo}_{b}.txt", [])
+        for b in HERANCAS.get(VERTICAL, [VERTICAL]):
+            if b != VERTICAL:
+                acc += _lista_efetiva(tipo, b)
+            else:
+                acc += _load_list(f"{tipo}_{b}.txt", [])
         return _dedup(acc)
 
     if VERTICAL == COMBINADA:
