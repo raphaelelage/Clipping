@@ -199,5 +199,8 @@ def html_macro(linhas, red="#CC092F"):
 
 def coletar(log=print):
     """Bloco completo: {'indices': [...], 'macro': [...], 'quando': 'YYYY-MM-DD'}."""
-    return {"indices": indices(log=log), "macro": juros_inflacao(log=log),
-            "quando": date.today().isoformat()}
+    idx = indices(log=log)
+    ji = juros_inflacao(log=log)
+    preenchidos = sum(1 for l in ji for v in l[1:] if v is not None)
+    log(f"[macro] {len(idx)} indices | {len(ji)} regioes ({preenchidos} celulas com dado)")
+    return {"indices": idx, "macro": ji, "quando": date.today().isoformat()}
