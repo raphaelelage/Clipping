@@ -372,8 +372,35 @@ def _valuation_summary(download_file, update_file):
     for nome in ("valuation_cache.json", "bbg_snapshot.json"):
         download_file(nome, Path(nome))          # ok nao existir ainda
     dados = valuation.coletar(VERTICAL, log=lambda m: print(m, flush=True))
+
+    # indices + juros/inflacao (macro.py), com cache diario dentro do mesmo json
+    import json as _json
+    import macro
+    bloco_macro = {}
+    try:
+        cache = _json.loads(Path("valuation_cache.json").read_text(encoding="utf-8"))             if Path("valuation_cache.json").exists() else {}
+    except Exception:
+        cache = {}
+    hoje = date.today().isoformat()
+    if (cache.get("_macro") or {}).get("quando") == hoje:
+        bloco_macro = cache["_macro"]
+        print("[macro] cache de hoje — sem consulta externa", flush=True)
+    else:
+        try:
+            bloco_macro = macro.coletar(log=lambda m: print(m, flush=True))
+            cache["_macro"] = bloco_macro
+            Path("valuation_cache.json").write_text(
+                _json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            print(f"[macro] erro nao-fatal: {e}", flush=True)
+
     if dados:
-        VALUATION_HTML = valuation.tabela_html(dados, red=RED)
+        grupos = valuation.empresas_por_setor(VERTICAL)
+        VALUATION_HTML = valuation.tabela_html(dados, red=RED, grupos=grupos)
+        VALUATION_HTML += macro.html_indices(
+            [tuple(x) for x in (bloco_macro.get("indices") or [])], red=RED)
+        VALUATION_HTML += macro.html_macro(
+            [tuple(x) for x in (bloco_macro.get("macro") or [])], red=RED)
         if Path("valuation_cache.json").exists():
             update_file(Path("valuation_cache.json"), "valuation_cache.json",
                         "application/json")
