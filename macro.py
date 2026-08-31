@@ -36,15 +36,45 @@ INDICES = [
 ]
 
 
-def indices(log=print):
-    """[(nome, ultimo, var_dia_pct, var_ano_pct)] — falha de um indice nao derruba os outros."""
+def retornos_da_serie(h):
+    """(ultimo, 1d, 5d, 1m, ytd, yoy) a partir de uma serie de fechamentos diarios.
+    Janelas em PREGOES (5d=5 pregoes, 1m=21, yoy=252 — padrao de mercado); YTD contra o
+    ultimo fechamento do ano anterior. Janela maior que o historico -> None."""
+    h = h.dropna()
+    if len(h) < 2:
+        return None
+    ult = float(h.iloc[-1])
+
+    def _ret(n):
+        return 100 * (ult / float(h.iloc[-(n + 1)]) - 1) if len(h) > n else None
+    ano = str(h.index[-1].year)
+    antes = h[h.index < ano]
+    ytd = 100 * (ult / float(antes.iloc[-1]) - 1) if len(antes) else None
+    return (ult, _ret(1), _ret(5), _ret(21), ytd, _ret(252))
+
+
+def baixar_fechamentos(tickers, log=print):
+    """UM request para todos os tickers (yf.download em lote); {ticker: serie}."""
     import yfinance as yf
+    px = yf.download(tickers, period="440d", progress=False, auto_adjust=True)["Close"]
+    if hasattr(px, "columns"):
+        return {tk: px[tk] for tk in px.columns}
+    return {tickers[0]: px}
+
+
+def indices(log=print):
+    """[(nome, ultimo, r1d, r5d, r1m, ytd, yoy)] — falha de um nao derruba os outros."""
     out = []
+    try:
+        series = baixar_fechamentos([tk for _, tk, _ in INDICES], log=log)
+    except Exception as e:
+        log(f"[macro] download de indices falhou: {type(e).__name__}")
+        return out
     for nome, tk, _ in INDICES:
         try:
-            h = yf.Ticker(tk).history(period="ytd")["Close"]
-            ult, ontem, ini = float(h.iloc[-1]), float(h.iloc[-2]), float(h.iloc[0])
-            out.append((nome, ult, 100 * (ult / ontem - 1), 100 * (ult / ini - 1)))
+            r = retornos_da_serie(series[tk])
+            if r:
+                out.append((nome,) + r)
         except Exception as e:
             log(f"[macro] indice {nome} falhou: {type(e).__name__}")
     return out
@@ -90,6 +120,20 @@ def _ecb(url):
     return float(melhor["OBS_VALUE"])
 
 
+def _oecd(area, medida, ano):
+    """Projecao anual do OECD Economic Outlook (alias DF_EO = edicao corrente).
+    CPI_YTYPCT/CPIH_YTYPCT = inflacao media anual; IRS = juro de curto prazo (3m)."""
+    u = (f"https://sdmx.oecd.org/public/rest/data/OECD.ECO.MAD,DSD_EO@DF_EO,/"
+         f"{area}.{medida}.A?startPeriod={ano}&endPeriod={ano}&format=csvfile")
+    r = requests.get(u, headers={**H, "Accept": "application/vnd.sdmx.data+csv"},
+                     timeout=45)
+    rows = list(csv.DictReader(io.StringIO(r.text)))
+    for x in rows:
+        if x.get("TIME_PERIOD") == str(ano) and x.get("OBS_VALUE"):
+            return float(x["OBS_VALUE"])
+    return None
+
+
 def _fed_funds_futuro(tk):
     import yfinance as yf
     p = yf.Ticker(tk).fast_info.last_price
@@ -116,14 +160,16 @@ def juros_inflacao(log=print):
          _t(_fed_funds_futuro, "ZQ=F"),
          _t(_fed_funds_futuro, f"ZQZ{str(ano0)[2:]}.CBT"),
          _t(_fed_funds_futuro, f"ZQZ{str(ano0 + 1)[2:]}.CBT"),
-         _t(_bls_cpi_yoy), None, None),
+         _t(_bls_cpi_yoy),
+         _t(_oecd, "USA", "CPI_YTYPCT", ano0), _t(_oecd, "USA", "CPI_YTYPCT", ano0 + 1)),
         ("Zona do Euro (depo / HICP)",
          _t(_ecb, "https://data-api.ecb.europa.eu/service/data/FM/"
                   "B.U2.EUR.4F.KR.DFR.LEV?lastNObservations=12&format=csvdata"),
-         None, None,
+         _t(_oecd, "EA17", "IRS", ano0), _t(_oecd, "EA17", "IRS", ano0 + 1),
          _t(_ecb, "https://data-api.ecb.europa.eu/service/data/ICP/"
                   "M.U2.N.000000.4.ANR?lastNObservations=12&format=csvdata"),
-         None, None),
+         _t(_oecd, "EA17", "CPIH_YTYPCT", ano0),
+         _t(_oecd, "EA17", "CPIH_YTYPCT", ano0 + 1)),
     ]
     return linhas
 
@@ -149,19 +195,26 @@ def html_indices(dados, red="#CC092F"):
     def _cor(v):
         return "color:#0a7d33;" if v >= 0 else "color:#b00020;"
 
+    def _cel(v):
+        if v is None:
+            return f'<td style="{td}">–</td>'
+        return (f'<td style="{td}{_cor(v)}">{"+" if v >= 0 else ""}'
+                f'{_n(v, 1, True)}</td>')
+
     linhas = "".join(
-        f'<tr><td style="{tdl}">{nome}</td>'
-        f'<td style="{td}">{_n(ult, 0 if ult > 100 else 2)}</td>'
-        f'<td style="{td}{_cor(dia)}">{"+" if dia >= 0 else ""}{_n(dia, 1, True)}</td>'
-        f'<td style="{td}{_cor(ano)}">{"+" if ano >= 0 else ""}{_n(ano, 1, True)}</td></tr>'
-        for nome, ult, dia, ano in dados)
+        f'<tr><td style="{tdl}">{l[0]}</td>'
+        f'<td style="{td}">{_n(l[1], 0 if l[1] > 100 else 2)}</td>'
+        + "".join(_cel(v) for v in l[2:7]) + "</tr>"
+        for l in dados)
     return f"""
     <p style="font-family:Arial;font-size:13px;font-weight:bold;color:#111;margin:14px 0 4px 0;">
       Índices &amp; câmbio</p>
+    <div style="overflow-x:auto;">
     <table style="border-collapse:collapse;">
       <tr><th style="{thl}">Índice</th><th style="{th}">Último</th>
-          <th style="{th}">Dia</th><th style="{th}">Ano</th></tr>{linhas}
-    </table>"""
+          <th style="{th}">1d</th><th style="{th}">5d</th><th style="{th}">1m</th>
+          <th style="{th}">YTD</th><th style="{th}">YoY</th></tr>{linhas}
+    </table></div>"""
 
 
 def html_macro(linhas, red="#CC092F"):
@@ -192,9 +245,10 @@ def html_macro(linhas, red="#CC092F"):
           <th style="{th}">Infl. {a27}E</th></tr>{corpo}
     </table></div>
     <p style="font-family:Arial;font-size:10px;color:#888;margin:4px 0 16px 0;">
-      Brasil: Selic/IPCA (BCB) e projeções = mediana do Focus. EUA: Fed Funds implícita nos
-      futuros (CME) — projeção de mercado, não consenso de economistas; CPI (BLS).
-      Euro: taxa de depósito e HICP (BCE). "–" = sem fonte pública confiável.</p>"""
+      Brasil: Selic/IPCA (BCB); projeções = mediana do Focus. EUA: Fed Funds implícita nos
+      futuros (CME) — projeção de mercado; CPI 12m (BLS); CPI 26E/27E = OCDE (média anual).
+      Euro: depósito e HICP (BCE); 26E/27E = OCDE (juro de curto prazo 3m e HICP média
+      anual). "–" = sem fonte pública confiável.</p>"""
 
 
 def coletar(log=print):
@@ -203,4 +257,4 @@ def coletar(log=print):
     ji = juros_inflacao(log=log)
     preenchidos = sum(1 for l in ji for v in l[1:] if v is not None)
     log(f"[macro] {len(idx)} indices | {len(ji)} regioes ({preenchidos} celulas com dado)")
-    return {"indices": idx, "macro": ji, "quando": date.today().isoformat()}
+    return {"v": 2, "indices": idx, "macro": ji, "quando": date.today().isoformat()}

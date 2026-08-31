@@ -382,7 +382,8 @@ def _valuation_summary(download_file, update_file):
     except Exception:
         cache = {}
     hoje = date.today().isoformat()
-    if (cache.get("_macro") or {}).get("quando") == hoje:
+    if ((cache.get("_macro") or {}).get("quando") == hoje
+            and (cache.get("_macro") or {}).get("v") == 2):
         bloco_macro = cache["_macro"]
         print("[macro] cache de hoje — sem consulta externa", flush=True)
     else:

@@ -38,7 +38,8 @@ DEFAULT_EMPRESAS = {
     "educacao": ["COGN3.SA", "YDUQ3.SA", "SEER3.SA", "ANIM3.SA", "VTRU3.SA", "AFYA"],
 }
 
-CAMPOS = ["preco", "alvo", "total_return", "mktcap", "adtv", "pe_26e", "pe_27e", "ev_ebitda",
+CAMPOS = ["preco", "alvo", "total_return", "ret_1d", "ret_5d", "ret_1m", "ret_ytd",
+          "ret_yoy", "mktcap", "adtv", "pe_26e", "pe_27e", "ev_ebitda",
           "receita_26e", "receita_27e", "ebitda_26e", "ebitda_27e", "lucro_26e",
           "lucro_27e", "dl_ebitda", "roe", "roic"]
 
@@ -156,12 +157,16 @@ def _yahoo_um(tk):
         # preco em USD e EPS em BRL — dividir daria 1,5x para a Afya, lixo) e consenso
         # com pelo menos 4 analistas (o "0y" do Yahoo as vezes tem 2 e destoa).
         # Fora disso, usa o forwardPE do proprio Yahoo, que e coerente em moeda.
-        n1 = int(ee.loc["+1y", "numberOfAnalysts"]) if "+1y" in ee.index else 0
-        eps_confiavel = eps0 and eps0 > 0 and n0 >= 4 and not d["moeda_mista"]
-        d["pe_26e"] = (preco / eps0) if eps_confiavel else i.get("forwardPE")
-        # P/E 27E: mesmas regras; nao ha fallback coerente do Yahoo para +1y -> fica "-"
-        if eps1 and eps1 > 0 and n1 >= 4 and not d["moeda_mista"]:
+        # CONSISTENCIA com o lucro exibido (P/E = mktcap/lucro = preco/eps): se mostramos
+        # o lucro 26E/27E derivado do eps, mostramos o P/E do mesmo eps. ADR (moeda
+        # mista) e resolvido depois via mktcap em BRL / lucro em BRL. forwardPE do Yahoo
+        # entra so quando NAO ha eps nenhum (e ai nao ha lucro exibido tambem).
+        if eps0 and eps0 > 0 and not d["moeda_mista"]:
+            d["pe_26e"] = preco / eps0
+        if eps1 and eps1 > 0 and not d["moeda_mista"]:
             d["pe_27e"] = preco / eps1
+        if not d.get("pe_26e") and not eps0:
+            d["pe_26e"] = i.get("forwardPE")
         # lucro em moeda dos DEMONSTRATIVOS (mesma da receita) — coerente entre si
         if eps0 and shares:
             d["lucro_26e"] = eps0 * shares
@@ -218,6 +223,9 @@ def _yahoo(tickers, log=print):
                     if d.get(c):
                         d[c] = d[c] * fx
                 d["fx_convertido"] = round(fx, 2)
+                for pe, lucro in (("pe_26e", "lucro_26e"), ("pe_27e", "lucro_27e")):
+                    if not d.get(pe) and d.get("mktcap") and (d.get(lucro) or 0) > 0:
+                        d[pe] = d["mktcap"] / d[lucro]
     return out
 
 
@@ -256,6 +264,16 @@ def coletar(vertical, bbg_json="bbg_snapshot.json", cache_json="valuation_cache.
 
     bbg, bbg_quando = _bloomberg(os.path.join(BASE, bbg_json))
     yah = _yahoo(tickers, log=log)
+    try:
+        import macro as _macro
+        series = _macro.baixar_fechamentos(tickers, log=log)
+        for tk in tickers:
+            r = _macro.retornos_da_serie(series[tk]) if tk in series else None
+            if r and tk in yah:
+                (_, yah[tk]["ret_1d"], yah[tk]["ret_5d"], yah[tk]["ret_1m"],
+                 yah[tk]["ret_ytd"], yah[tk]["ret_yoy"]) = r
+    except Exception as e:
+        log(f"[valuation] retornos falharam: {type(e).__name__}")
     try:
         with io.open(os.path.join(BASE, cache_json), encoding="utf-8") as fh:
             cache = json.load(fh)
@@ -333,20 +351,24 @@ def tabela_html(dados, red="#CC092F", grupos=None):
 
     def _linha(tk, d):
         nome = tk.replace(".SA", "") + ("*" if d.get("moeda_mista") else "")
-        cols = [
-            _fm(d.get("preco"), "preco"), _fm(d.get("alvo"), "preco"),
-            _fm(d.get("total_return"), "pct"), _fm(d.get("mktcap"), "bi"),
-            _fm(d.get("adtv"), "mi"), _fm(d.get("pe_26e"), "x"),
-            _fm(d.get("pe_27e"), "x"), _fm(d.get("ev_ebitda"), "x"),
-            _fm(d.get("dl_ebitda"), "x"), _fm(d.get("lucro_26e"), "bi"),
-            _fm(d.get("lucro_27e"), "bi"),
-        ]
-        cs = "".join(f'<td style="{td}">{c}</td>' for c in cols)
+        def _ret(v):
+            if v is None:
+                return f'<td style="{td}">–</td>'
+            cor = "color:#0a7d33;" if v >= 0 else "color:#b00020;"
+            return f'<td style="{td}{cor}">{"+" if v >= 0 else ""}{v:.1f}%</td>'
+        cs = f'<td style="{td}">{_fm(d.get("preco"), "preco")}</td>'
+        cs += "".join(_ret(d.get(k)) for k in
+                      ("ret_1d", "ret_5d", "ret_1m", "ret_ytd", "ret_yoy"))
+        cs += "".join(f'<td style="{td}">{c}</td>' for c in [
+            _fm(d.get("mktcap"), "bi"), _fm(d.get("adtv"), "mi"),
+            _fm(d.get("pe_26e"), "x"), _fm(d.get("pe_27e"), "x"),
+            _fm(d.get("ev_ebitda"), "x"), _fm(d.get("dl_ebitda"), "x"),
+            _fm(d.get("lucro_26e"), "bi"), _fm(d.get("lucro_27e"), "bi")])
         return f'<tr><td style="{tdl}">{nome}</td>{cs}</tr>'
 
     if not grupos:
         grupos = [("Cobertura", list(dados.keys()))]
-    N_COLS = 12
+    N_COLS = 15
     corpo = ""
     for rotulo, tickers in grupos:
         presentes = [(tk, dados[tk]) for tk in tickers if tk in dados]
@@ -357,8 +379,9 @@ def tabela_html(dados, red="#CC092F", grupos=None):
         corpo += "".join(_linha(tk, d) for tk, d in presentes)
 
     h = "".join(f'<th style="{th}">{c}</th>' for c in
-                ["Preço", "Alvo", "Ret.", "Mkt Cap", "ADTV", "P/E 26E", "P/E 27E",
-                 "EV/EBITDA", "DL/EBITDA", "Lucro 26E", "Lucro 27E"])
+                ["Preço", "1d", "5d", "1m", "YTD", "YoY", "Mkt Cap", "ADTV",
+                 "P/E 26E", "P/E 27E", "EV/EBITDA 12m", "DL/EBITDA",
+                 "Lucro 26E", "Lucro 27E"])
     fontes = {f.split()[0] for d in dados.values() for f in d.get("_fontes", {}).values()}
     rotulo_fonte = " + ".join(sorted(fontes)) if fontes else "?"
 
@@ -371,8 +394,9 @@ def tabela_html(dados, red="#CC092F", grupos=None):
     </table>
     </div>
     <p style="font-family:Arial;font-size:10px;color:#888;margin:4px 0 16px 0;">
-      Mkt Cap/Lucro em bi; ADTV em mi (3m). Ret. = upside até o alvo + div. yield.
-      EV/EBITDA e DL/EBITDA: últimos 12m. 26E/27E: consenso ({rotulo_fonte}).
+      Mkt Cap/Lucro em bi; ADTV em mi (3m). Retornos de preço (1d…YoY) sem dividendos.
+      EV/EBITDA e DL/EBITDA: últimos 12m realizados (forward só via Bloomberg).
+      26E/27E: consenso ({rotulo_fonte}).
       * = ADR: preço/alvo em USD; mkt cap e ADTV convertidos a BRL pelo câmbio do dia.
       "–" = sem dado na fonte.</p>
     """
