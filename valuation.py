@@ -365,8 +365,8 @@ def tabela_html(dados, red="#CC092F", grupos=None):
         cs += "".join(f'<td style="{td}">{c}</td>' for c in [
             _fm(d.get("mktcap"), "bi"), _fm(d.get("adtv"), "mi"),
             _fm(d.get("pe_26e"), "x"), _fm(d.get("pe_27e"), "x"),
-            _fm(d.get("dl_ebitda"), "x"),
-            _fm(d.get("lucro_26e"), "bi"), _fm(d.get("lucro_27e"), "bi")])
+            _fm(d.get("lucro_26e"), "bi"), _fm(d.get("lucro_27e"), "bi"),
+            _fm(d.get("dl_ebitda"), "x")])
         return f'<tr><td style="{tdl}">{nome}</td>{cs}</tr>'
 
     if not grupos:
@@ -383,8 +383,7 @@ def tabela_html(dados, red="#CC092F", grupos=None):
 
     h = "".join(f'<th style="{th}">{c}</th>' for c in
                 ["Preço", "1d", "5d", "1m", "YTD", "YoY", "Mkt Cap", "ADTV",
-                 "P/E 26E", "P/E 27E", "DL/EBITDA",
-                 "Lucro 26E", "Lucro 27E"])
+                 "P/E 26E", "P/E 27E", "Lucro 26E", "Lucro 27E", "DL/EBITDA"])
     fontes = {f.split()[0] for d in dados.values() for f in d.get("_fontes", {}).values()}
     rotulo_fonte = " + ".join(sorted(fontes)) if fontes else "?"
 
