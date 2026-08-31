@@ -157,11 +157,18 @@ def juros_inflacao(log=print):
     Projecoes: BR = Focus (mediana); EUA juro = futuros de fed funds dez/26-dez/27
     ("mercado", nao consenso de economistas); sem fonte -> None ("–" na tabela)."""
     def _t(fn, *a):
-        try:
-            return fn(*a)
-        except Exception as e:
-            log(f"[macro] {fn.__name__}{a} falhou: {type(e).__name__}")
-            return None
+        # 2 tentativas: as APIs publicas (BCB, BLS, ECB, OCDE) piscam de vez em quando,
+        # e uma falha passageira congelaria "-" no cache do dia inteiro
+        for tentativa in (1, 2):
+            try:
+                return fn(*a)
+            except Exception as e:
+                if tentativa == 2:
+                    log(f"[macro] {fn.__name__}{a} falhou 2x: {type(e).__name__}")
+                else:
+                    import time as _time
+                    _time.sleep(2)
+        return None
     ano0 = date.today().year
     linhas = [
         ("Brasil (Selic / IPCA)",
@@ -268,4 +275,4 @@ def coletar(log=print):
     ji = juros_inflacao(log=log)
     preenchidos = sum(1 for l in ji for v in l[1:] if v is not None)
     log(f"[macro] {len(idx)} indices | {len(ji)} regioes ({preenchidos} celulas com dado)")
-    return {"v": 3, "indices": idx, "macro": ji, "quando": date.today().isoformat()}
+    return {"v": 4, "indices": idx, "macro": ji, "quando": date.today().isoformat()}
