@@ -63,20 +63,31 @@ def baixar_fechamentos(tickers, log=print):
 
 
 def indices(log=print):
-    """[(nome, ultimo, r1d, r5d, r1m, ytd, yoy)] — falha de um nao derruba os outros."""
+    """[(nome, ultimo, r1d, r5d, r1m, ytd, yoy)] — falha de um nao derruba os outros.
+    Quem faltar no download em LOTE ganha uma segunda chance INDIVIDUAL: no Actions o
+    lote ja veio sem o USD/BRL uma vez, e cambio sumir da tabela e inaceitavel."""
+    import yfinance as yf
     out = []
     try:
         series = baixar_fechamentos([tk for _, tk, _ in INDICES], log=log)
     except Exception as e:
         log(f"[macro] download de indices falhou: {type(e).__name__}")
-        return out
+        series = {}
     for nome, tk, _ in INDICES:
+        r = None
         try:
-            r = retornos_da_serie(series[tk])
-            if r:
-                out.append((nome,) + r)
-        except Exception as e:
-            log(f"[macro] indice {nome} falhou: {type(e).__name__}")
+            if tk in series:
+                r = retornos_da_serie(series[tk])
+        except Exception:
+            pass
+        if not r:
+            try:
+                r = retornos_da_serie(yf.Ticker(tk).history(period="440d")["Close"])
+                log(f"[macro] {nome}: recuperado no retry individual")
+            except Exception as e:
+                log(f"[macro] indice {nome} falhou (lote e individual): {type(e).__name__}")
+        if r:
+            out.append((nome,) + r)
     return out
 
 
@@ -257,4 +268,4 @@ def coletar(log=print):
     ji = juros_inflacao(log=log)
     preenchidos = sum(1 for l in ji for v in l[1:] if v is not None)
     log(f"[macro] {len(idx)} indices | {len(ji)} regioes ({preenchidos} celulas com dado)")
-    return {"v": 2, "indices": idx, "macro": ji, "quando": date.today().isoformat()}
+    return {"v": 3, "indices": idx, "macro": ji, "quando": date.today().isoformat()}
