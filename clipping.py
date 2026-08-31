@@ -146,6 +146,7 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
     <hr style="border:none;border-top:2px solid {RED};margin:6px 0 18px 0;">
     """
 
+    radar_html = ""
     if RADAR_FRASES:
         from html import escape as _esc
         itens = "".join(
@@ -156,7 +157,7 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
         rotulo_extra = ("" if len(RADAR_FRASES) <= 12
                         else f'<p style="margin:4px 0 0 0;">e mais {len(RADAR_FRASES)-12} '
                              f'documento(s) — ver planilha no Drive.</p>')
-        header += f"""
+        radar_html = f"""
     <table width="100%" style="border-collapse:collapse;margin:0 0 18px 0;">
       <tr><td style="background:#FDF6EC;border-left:4px solid {RED};padding:10px 12px;
                      font-family:Arial,sans-serif;font-size:13px;color:#4A3B10;">
@@ -229,7 +230,7 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
     """
 
     return f"""<html><body style="font-family:Arial,sans-serif;max-width:760px;margin:auto;padding:16px;">
-      {header}{meta}{aviso}{VALUATION_HTML}
+      {header}{meta}{aviso}{VALUATION_HTML}{radar_html}
       <table style="width:100%;border-collapse:collapse;">{''.join(items)}</table>
       {footer}
     </body></html>"""

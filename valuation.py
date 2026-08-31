@@ -34,7 +34,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_EMPRESAS = {
     "saude": ["HAPV3.SA", "RDOR3.SA", "DASA3.SA", "ONCO3.SA", "QUAL3.SA", "HYPE3.SA",
               "BLAU3.SA", "VVEO3.SA", "MATD3.SA", "RADL3.SA", "PGMN3.SA", "PNVL3.SA",
-              "FLRY3.SA"],
+              "FLRY3.SA", "SAUD3.SA"],
     "educacao": ["COGN3.SA", "YDUQ3.SA", "SEER3.SA", "ANIM3.SA", "VTRU3.SA", "AFYA"],
 }
 
