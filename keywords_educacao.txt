@@ -41,6 +41,8 @@ autorizacao de curso
 polo ead
 curso de medicina
 mais medicos
+pibid
+revalidação de diplomas
 
 # --- empresas listadas e marcas
 Cogna
