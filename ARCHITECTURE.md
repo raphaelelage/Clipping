@@ -16,6 +16,7 @@ Cada vertical tem arquivos e pasta no Drive próprios:
 | | Saúde | Educação |
 |---|---|---|
 | Palavras-chave | `keywords_saude.txt` | `keywords_educacao.txt` |
+| Âncoras (p/ keywords com `+`) | `ancoras_saude.txt` | `ancoras_educacao.txt` |
 | Fontes | `sources_saude.txt` | `sources_educacao.txt` |
 | Prompt | `ai_prompt_saude.txt` | `ai_prompt_educacao.txt` |
 | Portais gov.br | ANS · Anvisa | MEC · Capes |
@@ -23,6 +24,31 @@ Cada vertical tem arquivos e pasta no Drive próprios:
 
 Google News, Valor (RSS) e Brazil Stock Guide rodam nas **duas**, sempre com as keywords/fontes da
 vertical em questão. Sem palavras-chave, a vertical coleta só os portais gov.br.
+
+### Keywords ancoradas (`+termo`)
+Termo genérico (`aquisicao`, `ICMS`, `medida provisória`) ou nome ambíguo (`Anhanguera` = rodovia,
+`Pisa` = torre/futebol, `Raia` = natação) traz notícia de **qualquer setor** — medido na vertical
+educação (4/set/2026): 123 de 638 itens do Google News eram MP da taxa das blusinhas, máfia do ICMS
+e hospitais da Rede D'Or. Linha começando com `+` no `keywords_<vertical>.txt` vira **ancorada**:
+só conta se a notícia também citar uma palavra de `ancoras_<vertical>.txt`. Como funciona
+(`clipping_core._kw_termo` / `_gn_consulta` / `match_keywords`):
+- Google News: a busca vira `termo (âncora1 OR âncora2 …)` — o Google casa no texto inteiro.
+- Fontes **amplas** filtradas por keyword (feeds de economia `GRANDES_ECONOMIA`, Valor RSS, JOTA,
+  CADE, Brazil Stock Guide): o **título** precisa ter termo + âncora (`ancorar=True`, padrão).
+- Fontes **setoriais** (G1 Educação, Folha Saúde, entidades WP, scoop.it): `ancorar=False` — o
+  feed já é a âncora, senão perderíamos "Países ricos têm pior desempenho no Pisa" (sem âncora
+  no título). A lista de feeds amplos é `fontes_extra.FEEDS_AMPLOS`.
+- A coluna `searched_keyword` e os logs mostram o termo **sem** o `+`.
+- Combinada e seções custom: âncoras seguem a mesma herança das keywords (união das bases).
+Sem `ancoras_<vertical>.txt`, valem os `DEFAULT_ANCORAS` do `clipping_core`.
+
+**Aspas na keyword = frase exata no Google News** (opt-in, POR keyword). Solta, o Google casa
+as palavras separadas: `Ser Educacional` trazia 60 itens/semana, 51 sem a empresa; `Arco
+Educação` trazia quiz do Enem. **NUNCA torne isso automático**: frase exata não tolera acento
+faltando — `autorizacao de curso` foi de 53 itens para **0**, `novo ensino medio` de 59 para 4,
+`block trade` de 3 para 0 (medido em 8/set/2026, janela 14d). Regra prática: aspas só em nome
+próprio digitado com a grafia real (`"Ser Educacional"`, `"Grupo Salta"`, `"Dr. Consulta"`);
+termo temático/sem acento fica solto. Pode combinar com âncora: `+"Nome Ambíguo"`.
 
 ## Mapa de arquivos (4 que importam)
 | Arquivo | Responsabilidade | Mexa aqui quando… | Tam. |
@@ -119,6 +145,8 @@ perder um fato relevante de empresa coberta não é. Não baixe o limiar sem ref
 
 ## Onde mexer pra cada coisa (cheat-sheet)
 - **Adicionar/remover palavra-chave** → pelo app (aba Config) ou editando `keywords_<vertical>.txt`.
+- **Keyword trazendo notícia de outro setor / nome ambíguo** → prefixe com `+` (ancorada) e, se
+  precisar, ajuste `ancoras_<vertical>.txt`. Não crie filtro novo no código.
 - **Aceitar nova fonte do Google News** → pelo app (aba Config) ou `sources_<vertical>.txt`.
 - **Adicionar um portal gov.br a uma vertical** → `clipping_core.py`, dict `VERTICAIS`.
 - **Adicionar uma fonte nova (RSS/scraper)** → `clipping_core.py`: escreva um `_scrape_xxx()` que
@@ -214,7 +242,10 @@ sancionador — e reconhecimento/renovação só para Medicina), põe **uma fras
 no topo do e-mail** e anexa as linhas ao **`Regulacao_Cursos.xlsx` na pasta do Drive**
 (mesmo formato do levantamento 2018-2026; semente versionada em `seed_regulacao_cursos.xlsx`).
 Só alerta documento com linha inédita no Excel — rodadas seguidas não repetem o alarme.
-Erro no radar nunca derruba o clipping (try/except com log `[radar]`).
+Erro no radar nunca derruba o clipping (try/except com log `[radar]`) — por isso **olhe o log**:
+`[radar] erro nao-fatal: 'curso'` ficou 5 rodadas (2-8/set/2026) sem ninguém notar. Causa: ato só
+de instituição (credenciamento, sancionador) não tem tabela de cursos e o DataFrame nascia sem a
+coluna `curso`; `dou_alerta.coletar_novidades` agora garante as colunas antes de filtrar.
 Códigos de IES vêm de `cadastro_ies.parquet` (consolidado dos censos INEP 2018-2023).
 ATENÇÃO: "\bMEDICINA\b" com borda de palavra — sem isso BIOMEDICINA conta como Medicina.
 

@@ -1,5 +1,11 @@
 # Palavras-chave da vertical EDUCACAO (1 por linha, # = comentario).
 # Lista inicial sugerida — edite pelo app (aba Config -> Educacao).
+# "+" no inicio = termo ANCORADO: so conta se a noticia tambem citar uma palavra de
+#   ancoras_educacao.txt (educação, ensino, escola...). Use em termo generico que traria
+#   noticia de qualquer setor (aquisicao, ICMS, medida provisória) e em nome ambiguo
+#   (Anhanguera = rodovia/TV, Estacio = bairro/escola de samba, Pisa = torre/futebol).
+# Aspas na keyword = FRASE EXATA no Google News ("Ser Educacional", "Grupo Salta").
+#   CUIDADO: frase exata exige acento certo — "autorizacao de curso" com aspas = 0 itens.
 
 # --- setor / temas gerais
 educação
@@ -35,7 +41,7 @@ fundeb
 pnld
 censo escolar
 novo ensino medio
-credenciamento
++credenciamento
 recredenciamento
 autorizacao de curso
 polo ead
@@ -43,30 +49,32 @@ curso de medicina
 mais medicos
 pibid
 revalidação de diplomas
++Pisa
 
 # --- empresas listadas e marcas
 Cogna
 YDUQS
-Ser Educacional
-Ânima
+"Ser Educacional"
++Ânima
 Vasta Educação
-Arco Educação
+"Arco Educação"
 Afya
 Vitru
-Cruzeiro do Sul
-Estacio
-Anhanguera
++Cruzeiro do Sul
++Estacio
++Anhanguera
 Kroton
 Uniasselvi
 Unicesumar
 Anhembi Morumbi
-Descomplica
++Descomplica
 Pravaler
 Educbank
+"Grupo Salta"
 
-# --- temas de mercado
-block trade
-aquisicao
-ICMS
-beneficio fiscal
-medida provisória
+# --- temas de mercado (genericos: sempre ancorados)
++block trade
++aquisicao
++ICMS
++beneficio fiscal
++medida provisória

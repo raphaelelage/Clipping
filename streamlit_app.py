@@ -160,6 +160,8 @@ def gh_get_file(path):
         if r.status_code == 200:
             j = r.json()
             return base64.b64decode(j["content"]).decode("utf-8"), j["sha"]
+        if r.status_code == 404:
+            return "", ""          # arquivo ainda nao existe: sha vazio -> o save cria
     except Exception:
         pass
     return "", None
@@ -471,7 +473,19 @@ with tab_cfg:
                 "Cada save vale a partir da **próxima execução**.")
     if V["keywords"]:
         file_editor("Palavras-chave", V["keywords"],
-                    "Uma por linha — termos buscados no Google News. (# = comentário)", 260)
+                    "Uma por linha — termos buscados no Google News. (# = comentário) "
+                    "Prefixo **+** = termo ancorado: só conta se a notícia também citar uma "
+                    "âncora do setor (lista abaixo). Use em termo genérico (aquisição, ICMS, "
+                    "medida provisória) ou nome ambíguo (Anhanguera, Pisa). "
+                    "**Aspas** = frase exata no Google News (\"Ser Educacional\") — só para "
+                    "nome próprio com a grafia/acentos reais; termo sem acento com aspas "
+                    "pode zerar a busca.", 260)
+        st.divider()
+        file_editor("Âncoras do setor (valem para as keywords com +)", f"ancoras_{VERT}.txt",
+                    "Uma por linha — palavras que provam que a notícia é do setor "
+                    "(educação, ensino, escola… / saúde, hospital, medicamento…). "
+                    "No Google News a busca de uma keyword com + vira "
+                    "`termo (âncora1 OR âncora2 …)`.", 160)
         st.divider()
         file_editor("Fontes aceitas", V["sources"],
                     "Uma por linha — só entram notícias do Google News dessas fontes "

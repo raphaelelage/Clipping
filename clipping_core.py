@@ -33,6 +33,7 @@ try:
     from rapidfuzz import fuzz as _fuzz
 except Exception:
     _fuzz = None
+import avisos
 import fontes_extra
 
 try:
@@ -75,6 +76,56 @@ DEFAULT_KEYWORDS = [
     "sinistro", "alfapoetina", "medicina", "pravaler", "PIS", "COFINS", "Medida provisória",
     "Mercado Livre", "Block Trade", "Bradesco Saude", "Dr. Consulta",
 ]
+
+# Keywords ANCORADAS: linha que comeca com "+" no keywords_<vertical>.txt. Termo generico
+# (aquisicao, ICMS, medida provisoria) ou nome ambiguo (Anhanguera = rodovia, Pisa = torre)
+# traz noticia de QUALQUER setor — medido na vertical educacao (4/set/2026): 123 de 638 itens
+# do Google News eram MP da taxa das blusinhas, mafia do ICMS e hospitais da Rede D'Or.
+# Com "+", o termo so conta se a noticia tambem citar uma ANCORA do setor
+# (ancoras_<vertical>.txt): no Google News a busca vira `termo (ancora1 OR ancora2 ...)`;
+# nas fontes amplas (RSS de economia, Valor, JOTA, CADE, BSG) o titulo precisa conter
+# termo + ancora. Fonte ja setorial (G1 Educacao, entidades, scoop.it) ignora a ancora
+# (ancorar=False): o proprio feed e a ancora.
+DEFAULT_ANCORAS = {
+    "saude": ["saúde", "hospital", "plano de saúde", "planos de saúde", "medicamento",
+              "farmácia", "farmacêutica", "Anvisa", "ANS", "operadora", "clínica", "SUS"],
+    "educacao": ["educação", "ensino", "escola", "faculdade", "universidade", "aluno",
+                 "estudante", "professor", "MEC", "educacional"],
+}
+ANCORAS = []      # ancoras da vertical ativa (preenchido por set_vertical)
+
+
+def _kw_termo(kw):
+    """'+aquisicao' -> ('aquisicao', True); 'enem' -> ('enem', False).
+    Aspas na keyword ('"Ser Educacional"') marcam FRASE EXATA no Google News; para casar
+    com titulo (match_keywords) e exibir (searched_keyword), o termo fica SEM aspas."""
+    kw = str(kw).strip()
+    ancorada = kw.startswith("+")
+    if ancorada:
+        kw = kw[1:].strip()
+    return kw.strip('"').strip(), ancorada
+
+
+def _kw_frase(kw):
+    """True se a keyword pediu frase exata (aspas explicitas no arquivo)."""
+    kw = str(kw).strip().lstrip("+").strip()
+    return kw.startswith('"') and kw.endswith('"') and len(kw) > 2
+
+
+def _gn_consulta(kw):
+    """Texto da busca no Google News.
+    - Aspas explicitas na keyword = FRASE EXATA. Vale a pena em nome de empresa que solto
+      vira ruido ("Ser Educacional": 60 itens/semana soltos, 51 sem a empresa; "Arco
+      Educação" trazia quiz do Enem). NUNCA colocar aspas automaticas: frase exata nao
+      tolera acento faltando — "autorizacao de curso" foi de 53 itens para 0, "novo ensino
+      medio" de 59 para 4 (medido em 8/set/2026).
+    - Keyword ancorada (+) vira `termo (ancora1 OR ancora2 ...)`."""
+    termo, ancorada = _kw_termo(kw)
+    consulta = f'"{termo}"' if _kw_frase(kw) else termo
+    if not ancorada or not ANCORAS:
+        return consulta
+    alts = " OR ".join(f'"{a}"' if " " in a else a for a in ANCORAS)
+    return f"{consulta} ({alts})"
 keywords = _load_list("keywords.txt", DEFAULT_KEYWORDS)   # editavel pelo app (setado por set_vertical)
 
 DEFAULT_WHITELIST = [
@@ -212,8 +263,13 @@ def set_vertical(vertical):
     """Aponta a coleta para uma vertical: recarrega keywords e fontes dos arquivos dela.
     Na combinada, usa a UNIAO das listas de saude e educacao (sem arquivo proprio).
     Fallback: arquivos antigos sem sufixo (keywords.txt/sources.txt) e depois os defaults."""
-    global VERTICAL, keywords, WHITELIST
+    global VERTICAL, keywords, WHITELIST, ANCORAS
     VERTICAL = vertical if vertical in VERTICAIS else "saude"
+
+    def _ancoras_default():
+        bases = BASES_RAIZ.get(VERTICAL) or [VERTICAL]
+        return (_dedup([a for b in bases for a in DEFAULT_ANCORAS.get(b, [])])
+                or _dedup(DEFAULT_ANCORAS["saude"] + DEFAULT_ANCORAS["educacao"]))
     def _lista_efetiva(tipo, chave, vis=None):
         vis = vis or set()
         if chave in vis:
@@ -240,13 +296,16 @@ def set_vertical(vertical):
     if VERTICAL == COMBINADA:
         keywords = _uniao_das_bases("keywords") or DEFAULT_KEYWORDS
         WHITELIST = _uniao_das_bases("sources") or DEFAULT_WHITELIST
+        ANCORAS = _uniao_das_bases("ancoras") or _ancoras_default()
         return VERTICAL
     if VERTICAL not in ("saude", "educacao"):
         # secao criada no app: listas proprias mandam; vazias/ausentes -> heranca
         kw_prop = _load_list(f"keywords_{VERTICAL}.txt", [])
         src_prop = _load_list(f"sources_{VERTICAL}.txt", [])
+        anc_prop = _load_list(f"ancoras_{VERTICAL}.txt", [])
         keywords = _dedup(kw_prop) or _uniao_das_bases("keywords") or DEFAULT_KEYWORDS
         WHITELIST = _dedup(src_prop) or _uniao_das_bases("sources") or DEFAULT_WHITELIST
+        ANCORAS = _dedup(anc_prop) or _uniao_das_bases("ancoras") or _ancoras_default()
         return VERTICAL
     f = arquivos_vertical(VERTICAL)
     base_kw = DEFAULT_KEYWORDS if VERTICAL == "saude" else []
@@ -255,6 +314,7 @@ def set_vertical(vertical):
                           if VERTICAL == "saude" else base_kw)
     WHITELIST = _load_list(f["sources"], _load_list("sources.txt", base_src)
                            if VERTICAL == "saude" else base_src)
+    ANCORAS = _load_list(f"ancoras_{VERTICAL}.txt", DEFAULT_ANCORAS[VERTICAL])
     return VERTICAL
 
 VALOR_FEEDS = [
@@ -282,11 +342,21 @@ def _norm(s: str) -> str:
     s = unicodedata.normalize("NFKD", str(s))
     return "".join(c for c in s if not unicodedata.combining(c)).lower()
 
-def match_keywords(title: str):
+def _casa(termo, t_norm):
+    return re.search(r"\b" + re.escape(_norm(termo)) + r"(es|s)?\b", t_norm) is not None
+
+def match_keywords(title: str, ancorar: bool = True):
+    """Primeira keyword que casa com o titulo (palavra inteira, plural tolerado); devolve o
+    termo SEM o '+'. Keyword ancorada so casa se o titulo tambem citar uma ancora do setor;
+    ancorar=False desliga a exigencia (fonte ja setorial: G1 Educacao, entidades, scoop.it)."""
     t = _norm(title)
     for kw in keywords:
-        if re.search(r"\b" + re.escape(_norm(kw)) + r"(es|s)?\b", t):
-            return kw
+        termo, ancorada = _kw_termo(kw)
+        if not termo or not _casa(termo, t):
+            continue
+        if ancorada and ancorar and ANCORAS and not any(_casa(a, t) for a in ANCORAS):
+            continue
+        return termo
     return None
 
 def to_dt(s):
@@ -416,15 +486,16 @@ def _google_news(when, kws=None, incluir_bsg=True):
     def _fetch(kw):
         try:
             if usar_lib:
-                return gn.search(kw, when=when).get("entries", [])
-            return _gn_fetch(kw, when)
+                return gn.search(_gn_consulta(kw), when=when).get("entries", [])
+            return _gn_fetch(_gn_consulta(kw), when)
         except Exception:
             return None
 
     def _add(kw, entries):
+        termo = _kw_termo(kw)[0]          # coluna searched_keyword sem o "+"
         for it in entries:
             d, h, _ = parse_pub(it.get("published"))
-            rows.append((it.title, it.source["title"], d, h, kw, it.link, it.source["href"]))
+            rows.append((it.title, it.source["title"], d, h, termo, it.link, it.source["href"]))
 
     # passe 1
     for kw in kws:
@@ -724,8 +795,8 @@ def _scrape_govbr_auto(site, source_name, from_date, known_paths=(), budget=75):
         print(f"[{source_name}] coletado via sitemap.xml ({len(got)} noticias) — "
               f"a listagem mudou de endereco", flush=True)
         return got
-    print(f"[{source_name}] AVISO: secao de noticias nao encontrada por nenhum metodo "
-          f"(API raiz / menu / sitemap / caminhos conhecidos) — VERIFICAR O PORTAL", flush=True)
+    avisos.aviso(f"Portal {source_name}: secao de noticias nao encontrada por nenhum metodo "
+                 f"(API raiz / menu / sitemap / caminhos conhecidos) — verificar o portal")
     return []
 
 def _scrape_valor_rss(cutoff):
@@ -961,9 +1032,8 @@ def collect(period: str = "1d", progress=None, vertical: str | None = None,
         _p(f"Google News: {len(gn_pronto)} itens vindos dos robos divididos")
         df_gn = gn_pronto
     elif not keywords:
-        print(f"[{VERTICAL}] AVISO: nenhuma palavra-chave configurada "
-              f"({arquivos_vertical(VERTICAL)['keywords']}) — Google News nao sera consultado.",
-              flush=True)
+        avisos.aviso(f"Vertical {VERTICAL}: nenhuma palavra-chave configurada "
+                     f"({arquivos_vertical(VERTICAL)['keywords']}) — Google News nao foi consultado")
         df_gn = pd.DataFrame([], columns=COLS)
     else:
         _p("Google News + Brazil Stock Guide…")
@@ -1000,7 +1070,8 @@ def collect(period: str = "1d", progress=None, vertical: str | None = None,
             try:
                 resultados[nome] = fut.result() or []
             except Exception as e:
-                print(f"[{nome}] erro: {e}", flush=True)
+                avisos.aviso(f"Fonte '{nome}' falhou nesta rodada ({type(e).__name__}: {e}) "
+                             f"— nenhuma noticia dela entrou")
                 resultados[nome] = []
     print("[fontes] " + " | ".join(f"{n}={len(resultados.get(n, []))}"
                                    for n, _ in tarefas), flush=True)

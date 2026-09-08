@@ -85,7 +85,9 @@ def indices(log=print):
                 r = retornos_da_serie(yf.Ticker(tk).history(period="440d")["Close"])
                 log(f"[macro] {nome}: recuperado no retry individual")
             except Exception as e:
-                log(f"[macro] indice {nome} falhou (lote e individual): {type(e).__name__}")
+                import avisos
+                avisos.aviso(f"Indice {nome} ({tk}) sem dado no Yahoo (lote e individual: "
+                             f"{type(e).__name__}) — fica fora da tabela de indices")
         if r:
             out.append((nome,) + r)
     return out
@@ -164,7 +166,9 @@ def juros_inflacao(log=print):
                 return fn(*a)
             except Exception as e:
                 if tentativa == 2:
-                    log(f"[macro] {fn.__name__}{a} falhou 2x: {type(e).__name__}")
+                    import avisos
+                    avisos.aviso(f"Juros/inflacao: consulta {fn.__name__}{a} falhou 2x "
+                                 f"({type(e).__name__}) — a celula sai como '–' hoje")
                 else:
                     import time as _time
                     _time.sleep(2)

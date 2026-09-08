@@ -1,5 +1,11 @@
 # Palavras-chave da vertical SAUDE (so saude). 1 por linha, # = comentario.
 # Editavel pelo app (aba Config -> Saude).
+# "+" no inicio = termo ANCORADO: so conta se a noticia tambem citar uma palavra de
+#   ancoras_saude.txt (saúde, hospital, medicamento...). Use em termo generico que traria
+#   noticia de qualquer setor (ICMS, PIS, medida provisória) e em nome ambiguo
+#   (Raia = natacao, EMS = sigla, Elfa/NDI/Kora = nomes curtos).
+# Aspas na keyword = FRASE EXATA no Google News ("Dr. Consulta", "CM Hospitalar").
+#   CUIDADO: frase exata exige acento certo — keyword sem acento com aspas pode zerar.
 saúde
 saúde suplementar
 agencia nacional de saude
@@ -10,12 +16,12 @@ athena saude
 amil
 fenasaude
 abramge
-elfa
-caged
++elfa
++caged
 Rede D'Or
 Rede DOr
 Hapvida
-NDI
++NDI
 Fleury
 Diagnosticos da America
 Dasa
@@ -23,17 +29,19 @@ Panvel
 Pague Menos
 Pardini
 Odontoprev
-Kora
++Kora
 CM Hospitalar
 Viveo
-Mater Dei
+"Mater Dei"
 Qualicorp
 Sulamerica
 Hypera
-Blau
-Raia
++Blau
++Raia
 Oncoclinicas
 Dimed
+"Dr. Consulta"
+"CM Hospitalar"
 medicamentos
 farmaceutica
 farmacia
@@ -42,12 +50,12 @@ genericos
 canetas emagrecedoras
 emagrecedor
 GLP-1
-EMS
++EMS
 prevent senior
 mais medicos
-icms
-beneficio fiscal
-IRPJ
++icms
++beneficio fiscal
++IRPJ
 hospital
 hospitais
 operadoras
@@ -57,16 +65,15 @@ autismo
 oncologia
 cancer
 sinistralidade
-sinistro
++sinistro
 alfapoetina
 medicina
-PIS
-COFINS
-Medida provisória
-Mercado Livre
-Block Trade
++PIS
++COFINS
++Medida provisória
++Mercado Livre
++Block Trade
 Bradesco Saude
-Dr. Consulta
 Biolab
 Eurofarma
 União Química

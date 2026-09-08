@@ -33,6 +33,7 @@ from pathlib import Path
 
 import pandas as pd
 
+import avisos
 import clipping_core
 
 clipping_core.set_vertical(VERTICAL)
@@ -167,12 +168,21 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
     </table>
     """
 
-    if AVISO_COLETA:
+    # Faixa de avisos: TODA falha engolida na rodada (avisos.py) aparece aqui, em cima de
+    # tudo. Coleta incompleta (robo do Google News perdido) vem primeiro.
+    itens_aviso = ([AVISO_COLETA] if AVISO_COLETA else []) + \
+                  [a for a in avisos.LISTA if a != AVISO_COLETA]
+    if itens_aviso:
+        from html import escape as _esc_av
+        lis = "".join(f'<li style="margin:4px 0;">{_esc_av(a)}</li>' for a in itens_aviso)
+        titulo_av = ("Atencao — este clipping pode estar incompleto." if AVISO_COLETA
+                     else "Atencao — algo falhou nesta rodada e o clipping seguiu sem essa parte.")
         header += f"""
     <table width="100%" style="border-collapse:collapse;margin:0 0 18px 0;">
       <tr><td style="background:#FFF3F3;border-left:4px solid {RED};padding:10px 12px;
                      font-family:Arial,sans-serif;font-size:13px;color:#8A1020;">
-        <b>&#9888; Atencao — este clipping pode estar incompleto.</b><br>{AVISO_COLETA}
+        <b>&#9888; {titulo_av}</b>
+        <ul style="margin:6px 0 0 18px;padding:0;">{lis}</ul>
       </td></tr>
     </table>
     """
@@ -315,7 +325,8 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
                 if aba not in ("Atos", "Medicina"):
                     abas_extra[aba] = xl.parse(aba)
         except Exception as e:
-            print(f"[radar] arquivo do Drive ilegivel ({e}) — recomecando da semente", flush=True)
+            avisos.aviso(f"Radar DOU: {RADAR_DRIVE_NOME} do Drive ilegivel ({type(e).__name__}) "
+                         f"— recomecando da semente do repo")
     if existentes is None and Path(RADAR_SEED).exists():
         xl = pd.ExcelFile(RADAR_SEED)
         existentes = xl.parse("Atos")
@@ -325,6 +336,11 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
         print("[radar] Drive sem o arquivo — comecando da semente do repo", flush=True)
     if existentes is None:
         existentes = novas.iloc[0:0]
+    # Excel editado a mao (coluna renomeada/apagada) nao pode derrubar o radar: garante as
+    # colunas do formato; as extras que o usuario criou continuam la.
+    for c in novas.columns:
+        if c not in existentes.columns:
+            existentes[c] = ""
 
     def _chave(d):
         # Celula VAZIA vira NaN na volta do Excel e viraria a string "nan", enquanto do
@@ -393,7 +409,8 @@ def _valuation_summary(download_file, update_file):
             Path("valuation_cache.json").write_text(
                 _json.dumps(cache, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
-            print(f"[macro] erro nao-fatal: {e}", flush=True)
+            avisos.aviso(f"Indices/juros (macro) nao coletados: {type(e).__name__}: {e} "
+                         f"— tabelas de indices e inflacao ficam de fora do e-mail")
 
     if dados:
         grupos = valuation.empresas_por_setor(VERTICAL)
@@ -440,7 +457,8 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
                 fields="id").execute()["id"]
             print(f"[ok] Drive: pasta '{DRIVE_PASTA}' criada")
         except Exception as e:
-            print(f"[aviso] nao consegui criar a pasta '{DRIVE_PASTA}' ({e}) — usando a raiz.")
+            avisos.aviso(f"Drive: nao consegui criar a pasta '{DRIVE_PASTA}' "
+                         f"({type(e).__name__}) — usando a raiz")
             folder_id = root_id
     folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
     print(f"[ok] Drive ({DRIVE_PASTA}): {folder_url}")
@@ -483,9 +501,9 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
                 print(f"[ok] Drive: '{name}' criado em '{VLABEL}'")
                 return fid
             except Exception as e:
-                print(f"[aviso] nao consegui criar '{name}' no Drive: {e}\n"
-                      f"        -> crie um arquivo vazio com esse nome em {folder_url} "
-                      f"(uma unica vez) e rode de novo.")
+                avisos.aviso(f"Drive: nao consegui criar '{name}' ({type(e).__name__}) — "
+                             f"crie um arquivo vazio com esse nome em {folder_url} "
+                             f"(uma unica vez) e rode de novo")
         return None
 
     def update_file(local_path: Path, drive_name: str, mimetype: str) -> str:
@@ -511,15 +529,19 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
     ai_url = update_file(txt_path, "ai_input.txt", "text/plain")
     xlsx_url = update_file(xlsx_path, "news_scrapper.xlsx", XLSX_MIME)
 
+    # Falha aqui NAO derruba o clipping, mas tambem NAO pode ficar so no log: vira aviso
+    # no topo do e-mail (avisos.py). O radar ficou 5 rodadas morto sem ninguem ver.
     try:
         _radar_e_excel(download_file, update_file, XLSX_MIME)
     except Exception as e:
-        print(f"[radar] erro nao-fatal (clipping segue normal): {e}", flush=True)
+        avisos.aviso(f"Radar DOU nao rodou: {type(e).__name__}: {e} — os atos do MEC "
+                     f"desta rodada NAO foram checados nem gravados no Excel")
 
     try:
         _valuation_summary(download_file, update_file)
     except Exception as e:
-        print(f"[valuation] erro nao-fatal (clipping segue normal): {e}", flush=True)
+        avisos.aviso(f"Summary de valuation nao montado: {type(e).__name__}: {e} "
+                     f"— tabelas de valuation/indices/juros ficam de fora do e-mail")
     if ai_url != folder_url and xlsx_url != folder_url:
         print("[ok] Drive: ai_input.txt e news_scrapper.xlsx atualizados")
     else:
@@ -551,9 +573,10 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
                 print(f"[ok] Drive: backlog de '{origem_merge}' mesclado "
                       f"({len(df_o)} + {len(df_a)} -> {len(juntos)} linhas)")
             except Exception as e:
-                print(f"[aviso] falha ao mesclar backlog de '{origem_merge}': {e}")
+                avisos.aviso(f"Drive: falha ao mesclar backlog de '{origem_merge}' "
+                             f"({type(e).__name__}: {e})")
         else:
-            print(f"[aviso] backlog.xlsx nao encontrado na pasta '{origem_merge}'")
+            avisos.aviso(f"Drive: backlog.xlsx nao encontrado na pasta '{origem_merge}'")
 
     if os.environ.get("BACKLOG_RESET", "").strip() in ("1", "true", "sim"):
         # zera o historico desta vertical (usar quando o backlog veio de outra vertical)
@@ -561,7 +584,9 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
         tem_backlog = False
     try:
         df_backlog = pd.read_excel(backlog_local) if tem_backlog else pd.DataFrame()
-    except Exception:
+    except Exception as e:
+        avisos.aviso(f"Drive: backlog.xlsx ilegivel ({type(e).__name__}) — o backlog desta "
+                     f"rodada recomeca do zero (o arquivo antigo sera sobrescrito)")
         df_backlog = pd.DataFrame(columns=["added_at"] + list(df.columns))
 
     if "link" in df_backlog.columns and not df_backlog.empty:
@@ -589,7 +614,8 @@ def send_email(df: pd.DataFrame, xlsx_path: Path, drive_url: str, novas_backlog:
     pwd = os.environ["EMAIL_SENHA"].replace(" ", "").strip()
 
     msg = EmailMessage()
-    prefixo = "[INCOMPLETO] " if AVISO_COLETA else ""
+    prefixo = ("[INCOMPLETO] " if AVISO_COLETA
+               else ("[AVISO] " if avisos.LISTA else ""))
     msg["Subject"] = (f"{prefixo}Clipping {VLABEL} — "
                       f"{date.today().strftime('%d/%m/%Y')} ({WHEN})")
     msg["From"] = user
@@ -629,6 +655,20 @@ def main() -> None:
 
     drive_url, novas_backlog = sync_to_drive(df, xlsx_path, txt_path)
     send_email(df, xlsx_path, drive_url, novas_backlog)
+
+    # Placar final no log e no resumo do job do Actions (aba Summary): zero aviso = rodada
+    # limpa. Qualquer linha aqui tambem foi para o topo do e-mail.
+    print(f"[avisos] {len(avisos.LISTA)} nesta rodada"
+          + (": " + " | ".join(avisos.LISTA) if avisos.LISTA else ""), flush=True)
+    resumo = os.environ.get("GITHUB_STEP_SUMMARY")
+    if resumo:
+        try:
+            with open(resumo, "a", encoding="utf-8") as fh:
+                fh.write(f"### Clipping {VLABEL} ({WHEN}) — {len(df)} noticias, "
+                         f"{len(avisos.LISTA)} aviso(s)\n")
+                fh.write("".join(f"- ⚠️ {a}\n" for a in avisos.LISTA) or "- ✅ sem avisos\n")
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

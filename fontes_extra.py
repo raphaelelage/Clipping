@@ -146,6 +146,14 @@ CVM_EMPRESAS = {
     "educacao": ["COGNA", "YDUQS", "SER EDUCACIONAL", "ANIMA", "VASTA", "AFYA", "VITRU",
                  "CRUZEIRO DO SUL", "ARCO"],
 }
+# Feeds AMPLOS (economia geral, juridico, CADE): keyword marcada com "+" (ancorada) so casa
+# se o titulo tambem citar uma ancora do setor. Os demais feeds sao setoriais (G1 Educacao,
+# Folha Saude, INEP...) e dispensam a ancora — ver match_keywords em clipping_core.
+FEEDS_AMPLOS = {u for _, u, *_ in GRANDES_ECONOMIA} | {
+    "https://www.jota.info/feed", "https://www.gov.br/cade/rss.xml",
+    "https://www.consumidormoderno.com.br/feed/",
+}
+
 # vertical combinada = uniao das duas listas (sem repetir), montada automaticamente
 def _uniao(d, chave):
     vis, out = set(), []
@@ -198,6 +206,13 @@ def _fmt(dt, tz):
     return loc.strftime("%a, %d %b %Y"), loc.strftime("%H:%M:%S")
 
 
+def _erro(ctx, nome, e):
+    """Registra fonte que FALHOU (excecao / HTTP != 200). Zero item nao e erro. O coletar()
+    junta tudo num aviso so no fim — falha engolida nunca fica so no log (ver avisos.py)."""
+    det = e if isinstance(e, str) else type(e).__name__
+    ctx.setdefault("erros", []).append(f"{nome} ({det})")
+
+
 def _wp(nome, base, filtrar, desde, ctx):
     """WordPress REST: usa o parametro 'after' (ISO) — so traz o que e novo."""
     url = (f"{base}/wp-json/wp/v2/posts?per_page=30"
@@ -206,6 +221,7 @@ def _wp(nome, base, filtrar, desde, ctx):
     try:
         r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
         if r.status_code != 200 or "json" not in r.headers.get("Content-Type", ""):
+            _erro(ctx, nome, f"HTTP {r.status_code}")
             return rows
         for p in r.json():
             titulo = re.sub(r"<[^>]+>", "", (p.get("title") or {}).get("rendered", "")).strip()
@@ -215,7 +231,7 @@ def _wp(nome, base, filtrar, desde, ctx):
             link = p.get("link", "")
             if not titulo or not link:
                 continue
-            kw = ctx["match"](titulo) if filtrar else nome
+            kw = ctx["match"](titulo, ancorar=False) if filtrar else nome
             if not kw:
                 continue
             try:
@@ -224,8 +240,8 @@ def _wp(nome, base, filtrar, desde, ctx):
                 dt = datetime.now(ctx["tz"])
             d, h = _fmt(dt, ctx["tz"])
             rows.append((titulo, nome, d, h, kw, link, base))
-    except Exception:
-        pass
+    except Exception as e:
+        _erro(ctx, nome, e)
     return rows
 
 
@@ -233,6 +249,9 @@ def _rss(nome, url, filtrar, cutoff, ctx, exige=None):
     rows = []
     try:
         r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        if r.status_code != 200:
+            _erro(ctx, nome, f"HTTP {r.status_code}")
+            return rows
         for e in feedparser.parse(r.content).entries:
             titulo = (e.get("title") or "").strip()
             link = e.get("link", "")
@@ -243,13 +262,13 @@ def _rss(nome, url, filtrar, cutoff, ctx, exige=None):
             dt = ctx["to_dt"](e.get("published", e.get("updated", "")))
             if dt and dt < cutoff:
                 continue
-            kw = ctx["match"](titulo) if filtrar else nome
+            kw = ctx["match"](titulo, ancorar=(url in FEEDS_AMPLOS)) if filtrar else nome
             if not kw:
                 continue
             d, h = (_fmt(dt, ctx["tz"]) if dt else ("", ""))
             rows.append((titulo, nome, d, h, kw, link, url))
-    except Exception:
-        pass
+    except Exception as e:
+        _erro(ctx, nome, e)
     return rows
 
 
@@ -425,8 +444,8 @@ def _sec(empresas, from_date, ctx):
                 rows.append((nome + " \u2014 SEC " + f + " (NASDAQ)", "SEC",
                              d0.strftime("%a, %d %b %Y"), "", "SEC: " + f, link,
                              "https://www.sec.gov"))
-        except Exception:
-            pass
+        except Exception as e:
+            _erro(ctx, f"SEC {nome}", e)
     return rows
 
 
@@ -462,8 +481,8 @@ def _cvm(empresas, from_date, ctx):
             rows.append((titulo, "CVM", d0.strftime("%a, %d %b %Y"), "",
                          f"CVM: {c[idx['Categoria']]}", c[idx["Link_Download"]],
                          "https://dados.cvm.gov.br"))
-    except Exception:
-        pass
+    except Exception as e:
+        _erro(ctx, "CVM (RAD e zip do IPE)", e)
     return rows
 
 
@@ -499,9 +518,13 @@ def _scoopit(nome, base_url, cutoff, ctx, max_pag=8):
         try:
             r = requests.get(f"{base_url}?nosug=1&page={pag}", headers=HEADERS, timeout=25)
             if r.status_code != 200:
+                if pag == 1:
+                    _erro(ctx, nome, f"HTTP {r.status_code}")
                 break
             soup = BeautifulSoup(r.text, "lxml")
-        except Exception:
+        except Exception as e:
+            if pag == 1:
+                _erro(ctx, nome, e)
             break
 
         # maquina de estados na ordem do documento: cada div.from_curationDate abre um
@@ -541,7 +564,7 @@ def _scoopit(nome, base_url, cutoff, ctx, max_pag=8):
                 continue
             vistos.add(link)
             titulo = c.get("titulo", "").strip()
-            kw = ctx["match"](titulo + " " + c.get("trecho", ""))
+            kw = ctx["match"](titulo + " " + c.get("trecho", ""), ancorar=False)
             if not kw:
                 continue                        # mesmos filtros de keyword do clipping
             dominio = urlparse(link).netloc.replace("www.", "")
@@ -601,7 +624,8 @@ def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print, norm
         for f in as_completed(futs):
             try:
                 got = f.result() or []
-            except Exception:
+            except Exception as e:
+                _erro(ctx, futs[f], e)
                 got = []
             if got:
                 por_fonte[futs[f].split(":")[0]] = por_fonte.get(futs[f].split(":")[0], 0) + len(got)
@@ -626,4 +650,14 @@ def coletar(vertical, cutoff, from_date, match_fn, to_dt_fn, tz, log=print, norm
         falhas = ctx.get("dou_falhas") or []
         extra = f" | DOU indisponivel em {len(falhas)} termo(s)" if falhas else ""
         log(f"[fontes_extra/{v}] {len(tarefas)} fontes -> {len(rows)} itens ({resumo}){extra}")
+    # Falha engolida vira aviso no e-mail (avisos.py) — nunca so no log.
+    import avisos
+    erros = ctx.get("erros") or []
+    if erros:
+        avisos.aviso(f"Fontes complementares que falharam nesta rodada ({len(erros)}): "
+                     + ", ".join(sorted(set(erros))))
+    falhas = ctx.get("dou_falhas") or []
+    if falhas:
+        avisos.aviso(f"DOU (in.gov.br) sem resposta em {len(falhas)} termo(s) mesmo apos "
+                     f"retry: {', '.join(falhas[:8])}{'…' if len(falhas) > 8 else ''}")
     return rows

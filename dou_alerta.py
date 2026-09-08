@@ -84,17 +84,24 @@ def coletar_novidades(dias=3, log=print):
     """Atos alarmantes dos ultimos `dias` dias uteis (hoje incluso).
     Devolve (frases, df_linhas): frases = [{"frase","link","medicina"}] uma por DOCUMENTO;
     df_linhas = linhas por curso no formato do Excel historico."""
-    atos = []
+    atos, inacessiveis = [], []
     for d in _dias_uteis_recentes(dias):
         arr = dh.atos_do_dia(d, "do1")
         if arr is None:
+            # feriado nao tem edicao — normal. Todas inacessiveis = in.gov.br fora do ar,
+            # e isso NAO pode passar em silencio (vira aviso no e-mail).
             log(f"[radar] {d}: edicao inacessivel (sera reavaliada amanha)")
+            inacessiveis.append(d.strftime("%d/%m"))
             continue
         for a in arr:
             if str(a.get("hierarchyStr", "")).startswith("Ministério da Educação"):
                 a["_dia"] = d.isoformat()
                 a["_secao"] = "do1"
                 atos.append(a)
+    if len(inacessiveis) >= dias:
+        import avisos
+        avisos.aviso(f"Radar DOU: nenhuma edicao do DOU acessivel ({', '.join(inacessiveis)}) "
+                     f"— in.gov.br fora do ar? Os atos desses dias serao reavaliados amanha")
     if not atos:
         return [], pd.DataFrame()
 
@@ -102,6 +109,13 @@ def coletar_novidades(dias=3, log=print):
     df = pd.DataFrame(linhas)
     if df.empty:
         return [], df
+    # Ato so de instituicao (credenciamento, sancionador...) nao tem tabela de cursos e o
+    # DataFrame nasce SEM a coluna 'curso' -> KeyError que matou o radar em silencio por 5
+    # rodadas (2 a 8/set/2026), num periodo com 3 atos alarmantes. Garante as colunas.
+    for c in ("tipo_ato", "curso", "ies", "municipio", "uf", "vagas_num", "cod_ies",
+              "processo_emec", "ato", "link", "data_publicacao"):
+        if c not in df.columns:
+            df[c] = None
     alarme = df["tipo_ato"].isin(ALARME_SEMPRE) | (
         df["tipo_ato"].isin(ALARME_SO_MEDICINA) & df["curso"].map(_eh_medicina))
     df = df[alarme].copy()

@@ -1,0 +1,16 @@
+# Ancoras da vertical SAUDE: palavras que provam que a noticia e do setor.
+# Uma keyword marcada com "+" em keywords_saude.txt so conta se a noticia tambem
+# citar uma destas (no Google News: busca "termo (ancora1 OR ancora2 ...)").
+# Editavel pelo app (aba Config -> Saude). 1 por linha, # = comentario.
+saúde
+hospital
+plano de saúde
+planos de saúde
+medicamento
+farmácia
+farmacêutica
+Anvisa
+ANS
+operadora
+clínica
+SUS

@@ -311,6 +311,11 @@ def coletar(vertical, bbg_json="bbg_snapshot.json", cache_json="valuation_cache.
     ok = sum(1 for v in final.values() if v.get("preco"))
     log(f"[valuation] {ok}/{len(tickers)} empresas com dados "
         f"(bbg={'sim, ' + bbg_quando if bbg_quando else 'nao'})")
+    faltam = [t for t in tickers if not (final.get(t) or {}).get("preco")]
+    if faltam:
+        import avisos
+        avisos.aviso(f"Valuation: {len(faltam)} empresa(s) sem dado nem no Yahoo nem no cache "
+                     f"({', '.join(faltam)}) — linha sai com '–'")
     return final
 
 

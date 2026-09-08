@@ -1,0 +1,14 @@
+# Ancoras da vertical EDUCACAO: palavras que provam que a noticia e do setor.
+# Uma keyword marcada com "+" em keywords_educacao.txt so conta se a noticia tambem
+# citar uma destas (no Google News: busca "termo (ancora1 OR ancora2 ...)").
+# Editavel pelo app (aba Config -> Educacao). 1 por linha, # = comentario.
+educação
+ensino
+escola
+faculdade
+universidade
+aluno
+estudante
+professor
+MEC
+educacional
