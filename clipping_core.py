@@ -191,12 +191,16 @@ ROTULOS = {}
 
 def carregar_verticais():
     global HERANCAS, ROTULOS
+    caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), "verticais.json")
     try:
         import json as _json
-        with io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                  "verticais.json"), encoding="utf-8") as fh:
+        with io.open(caminho, encoding="utf-8") as fh:
             reg = _json.load(fh)
     except Exception:
+        # ausente = normal (sem secoes custom); presente mas ilegivel = corrompido, avisa
+        if os.path.exists(caminho):
+            avisos.aviso("verticais.json existe mas nao pode ser lido — secoes custom "
+                         "ignoradas nesta rodada")
         return
     # 1o passe: registra herancas cruas (podem apontar para QUALQUER secao, nao so as
     # bases — ex.: "consolidada" herdando de "farma" + "hospitais")
@@ -264,6 +268,9 @@ def set_vertical(vertical):
     Na combinada, usa a UNIAO das listas de saude e educacao (sem arquivo proprio).
     Fallback: arquivos antigos sem sufixo (keywords.txt/sources.txt) e depois os defaults."""
     global VERTICAL, keywords, WHITELIST, ANCORAS
+    if vertical and vertical not in VERTICAIS:
+        avisos.aviso(f"Vertical '{vertical}' desconhecida (typo no dispatch ou secao "
+                     f"excluida?) — rodando como 'saude'")
     VERTICAL = vertical if vertical in VERTICAIS else "saude"
 
     def _ancoras_default():
@@ -447,6 +454,8 @@ def _gn_fetch(query, when, lang="pt", country="BR"):
     r = requests.get(url, timeout=_GN_TIMEOUT)
     if "https://news.google.com/rss/unsupported" in r.url:
         raise RuntimeError("feed indisponivel")
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code}")   # bloqueio != busca sem resultado
     d = feedparser.parse(r.text)
     if len(d["entries"]) == 0:
         d = feedparser.parse(url)          # resgate herdado da lib (user-agent diferente)
@@ -506,14 +515,22 @@ def _google_news(when, kws=None, incluir_bsg=True):
             empties.append(kw)   # vazio ou erro -> tenta de novo no passe 2
         time.sleep(0.5)          # pausa p/ nao tomar throttle do Google (IP do GitHub)
     # passe 2 — re-tenta so as que voltaram vazias (recupera throttle pontual)
-    recovered = 0
+    recovered, ainda_vazias = 0, []
     for kw in empties:
         time.sleep(1.0)
         e = _fetch(kw)
         if e:
             _add(kw, e); recovered += 1
+        else:
+            ainda_vazias.append(_kw_termo(kw)[0])
     print(f"[google_news] {len(kws)-len(empties)}/{len(kws)} no passe 1, "
           f"+{recovered} recuperadas no retry, {len(rows)} itens brutos", flush=True)
+    # ~10% de keywords sem resultado e o normal historico (13/122); muito acima disso e
+    # throttle parcial do Google — que o shard NAO detecta (so fica vermelho se TUDO zerar)
+    if len(ainda_vazias) > max(3, 0.2 * len(kws)):
+        avisos.aviso(f"Google News: {len(ainda_vazias)}/{len(kws)} keywords sem resultado "
+                     f"apos retry (possivel throttle): {', '.join(ainda_vazias[:10])}"
+                     + ("…" if len(ainda_vazias) > 10 else ""))
     df = pd.DataFrame(rows, columns=COLS)
     wl = _whitelist_norm()
     antes = len(df)
@@ -800,11 +817,17 @@ def _scrape_govbr_auto(site, source_name, from_date, known_paths=(), budget=75):
     return []
 
 def _scrape_valor_rss(cutoff):
-    rows, seen = [], set()
+    rows, seen, falhas = [], set(), 0
     for url in VALOR_FEEDS:
         try:
             r = requests.get(url, headers=HEADERS, timeout=20)
+            if r.status_code != 200:
+                falhas += 1
+                continue
             feed = feedparser.parse(r.content)
+            if not feed.entries:
+                falhas += 1        # feed com itens sem match de keyword NAO conta (legitimo)
+                continue
             for e in feed.entries:
                 link = e.get("link", "")
                 if not link or link in seen:
@@ -820,7 +843,10 @@ def _scrape_valor_rss(cutoff):
                     rows.append((title, "Valor Econômico (RSS)", d, h, kw, link,
                                  "https://valor.globo.com"))
         except Exception:
-            pass
+            falhas += 1
+    if falhas == len(VALOR_FEEDS):
+        avisos.aviso(f"Valor RSS: os {len(VALOR_FEEDS)} feeds falharam/vieram vazios "
+                     f"nesta rodada — nenhuma noticia do Valor entrou por essa via")
     return rows
 
 def _bsg_title(url, slug):

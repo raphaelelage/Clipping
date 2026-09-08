@@ -252,7 +252,11 @@ def _rss(nome, url, filtrar, cutoff, ctx, exige=None):
         if r.status_code != 200:
             _erro(ctx, nome, f"HTTP {r.status_code}")
             return rows
-        for e in feedparser.parse(r.content).entries:
+        fp = feedparser.parse(r.content)
+        if fp.bozo and not fp.entries:   # 200 com HTML de challenge/erro no lugar do XML
+            _erro(ctx, nome, "feed ilegivel (200 sem XML valido)")
+            return rows
+        for e in fp.entries:
             titulo = (e.get("title") or "").strip()
             link = e.get("link", "")
             if not titulo or not link or ARQUIVO_RX.search(link):
@@ -308,6 +312,11 @@ def _dou(termo, from_date, ctx, orgaos=()):
             ctx.setdefault("dou_falhas", []).append(termo)
             return rows
         dados = json.loads(m.group(1))
+        if isinstance(dados, dict) and "jsonArray" not in dados:
+            # primeiro <script json> da pagina virou OUTRO JSON (layout mudou) — nao e
+            # "zero atos": registra falha para o retry/aviso ('jsonArray': [] e legitimo)
+            ctx.setdefault("dou_falhas", []).append(termo)
+            return rows
         arr = dados.get("jsonArray") if isinstance(dados, dict) else dados
         for it in (arr or []):
             titulo = (it.get("title") or "").strip()
@@ -381,12 +390,15 @@ def _cvm_rad(empresas, from_date, ctx):
         dados = d.get("dados") or ""
     except Exception:
         return None
-    rows = []
+    if not dados:
+        return None          # RAD sempre tem docs na semana; vazio = formato/endpoint mudou
+    rows, parseavel = [], False
     rx = _rx_empresas(empresas)
     for bruto in dados.split("&*"):
         c = bruto.split("$&")
         if len(c) < 11:
             continue
+        parseavel = True
         nome, tipo, status = c[1], c[2], c[7]
         if status.strip().lower() != "ativo":          # descarta documento cancelado
             continue
@@ -409,6 +421,8 @@ def _cvm_rad(empresas, from_date, ctx):
             titulo += ": " + (desc or assunto)
         rows.append((titulo[:200], "CVM", d0.strftime("%a, %d %b %Y") if d0 else "", "",
                      "CVM: " + tipo, link, "https://www.rad.cvm.gov.br"))
+    if not parseavel:
+        return None          # nenhum segmento com 11+ campos = delimitadores mudaram -> zip
     return rows
 
 
@@ -426,6 +440,7 @@ def _sec(empresas, from_date, ctx):
             r = requests.get("https://data.sec.gov/submissions/CIK" + cik + ".json",
                              headers=headers, timeout=20)
             if r.status_code != 200:
+                _erro(ctx, f"SEC {nome}", f"HTTP {r.status_code}")
                 continue
             rec = (r.json().get("filings") or {}).get("recent") or {}
             for f, dt, doc, acc in zip(rec.get("form", []), rec.get("filingDate", []),
@@ -455,6 +470,7 @@ def _cvm(empresas, from_date, ctx):
     try:
         r = requests.get(CVM_URL.format(ano=from_date.year), headers=HEADERS, timeout=40)
         if r.status_code != 200:
+            _erro(ctx, "CVM (zip IPE)", f"HTTP {r.status_code}")
             return rows
         z = zipfile.ZipFile(io.BytesIO(r.content))
         linhas = z.read(z.namelist()[0]).decode("latin-1").splitlines()

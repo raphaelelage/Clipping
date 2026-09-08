@@ -217,6 +217,16 @@ def _yahoo(tickers, log=print):
     # tabela ficar comparavel; preco e alvo continuam em USD (e como o mercado cota).
     if any(d.get("moeda_mista") for d in out.values()):
         fx = _cambio_usdbrl()
+        if fx is None:
+            import avisos
+            avisos.aviso("Valuation: cambio USD/BRL indisponivel — mktcap/ADTV de ADR sem "
+                         "conversao nesta rodada (celula vem do cache convertido ou sai '–')")
+            for d in out.values():
+                if d.get("moeda_mista"):
+                    # nunca exibir USD cru como se fosse BRL: sem cambio, a celula viva sai
+                    # e o merge cai no cache (que foi convertido em rodada anterior)
+                    d.pop("mktcap", None)
+                    d.pop("adtv", None)
         for d in out.values():
             if d.get("moeda_mista") and fx:
                 for c in ("mktcap", "adtv"):
@@ -267,6 +277,15 @@ def coletar(vertical, bbg_json="bbg_snapshot.json", cache_json="valuation_cache.
 
     bbg, bbg_quando = _bloomberg(os.path.join(BASE, bbg_json))
     yah = _yahoo(tickers, log=log)
+    vivos = sum(1 for t in tickers if yah.get(t))
+    if vivos == 0:
+        import avisos
+        avisos.aviso("Valuation: Yahoo indisponivel para TODAS as empresas — tabela "
+                     "servida do cache (dados de rodada anterior)")
+    elif vivos < len(tickers):
+        import avisos
+        avisos.aviso(f"Valuation: {len(tickers) - vivos} empresa(s) sem dado vivo do Yahoo "
+                     f"(vem do cache): {', '.join(t for t in tickers if not yah.get(t))}")
     try:
         import macro as _macro
         series = _macro.baixar_fechamentos(tickers, log=log)

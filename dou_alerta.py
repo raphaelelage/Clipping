@@ -113,7 +113,8 @@ def coletar_novidades(dias=3, log=print):
     # DataFrame nasce SEM a coluna 'curso' -> KeyError que matou o radar em silencio por 5
     # rodadas (2 a 8/set/2026), num periodo com 3 atos alarmantes. Garante as colunas.
     for c in ("tipo_ato", "curso", "ies", "municipio", "uf", "vagas_num", "cod_ies",
-              "processo_emec", "ato", "link", "data_publicacao"):
+              "processo_emec", "ato", "link", "data_publicacao", "resumo_texto",
+              "mantenedora", "texto_inicio"):
         if c not in df.columns:
             df[c] = None
     alarme = df["tipo_ato"].isin(ALARME_SEMPRE) | (

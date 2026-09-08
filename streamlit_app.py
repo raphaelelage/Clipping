@@ -437,6 +437,17 @@ with st.expander("🗂️ Gerenciar seções (renomear · criar · excluir)"):
     if V.get("custom"):
         st.divider()
         if st.button(f"🗑️ Excluir a seção {V['label']}", key="bt_excluir"):
+            # secao com agendamento ativo no cron-job.org viraria disparo orfao (rodaria
+            # como 'saude' toda manha) — bloqueia ate o usuario excluir os agendamentos
+            _jobs_v, _code = cron_list(VERT)
+            if _jobs_v is None:
+                st.error(f"Não consegui verificar os agendamentos desta seção "
+                         f"(HTTP {_code}) — tente de novo em ~1 min.")
+                st.stop()
+            if _jobs_v:
+                st.error(f"Esta seção tem {len(_jobs_v)} agendamento(s) ativo(s) — "
+                         f"exclua-os primeiro na aba 🕗 Agendamento.")
+                st.stop()
             _reg.pop(VERT, None)
             r = gh_put_file("verticais.json",
                             _json.dumps(_reg, ensure_ascii=False, indent=2),

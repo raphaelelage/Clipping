@@ -88,8 +88,17 @@ def _juntar_shards():
     if esperadas <= 0:
         return None
     achadas = sorted(glob.glob("gn_shards/**/gn_shard_*.csv", recursive=True))
-    partes = [pd.read_csv(a) for a in achadas]
-    nums = sorted(int(re.search(r"gn_shard_(\d+)", a).group(1)) for a in achadas)
+    # CSV truncado/corrompido no artifact ou nome fora do padrao NAO pode derrubar a rodada:
+    # vira fatia faltante e cai no _refazer_fatia logo abaixo.
+    partes, nums = [], []
+    for a in achadas:
+        try:
+            n = int(re.search(r"gn_shard_(\d+)", a).group(1))
+            partes.append(pd.read_csv(a))
+            nums.append(n)
+        except Exception as e:
+            print(f"[retry] {a} ilegivel ({type(e).__name__}) — tratando como fatia faltante",
+                  flush=True)
     faltando = [n for n in range(1, esperadas + 1) if n not in nums]
 
     perdidas = []
@@ -608,8 +617,9 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
 
 def send_email(df: pd.DataFrame, xlsx_path: Path, drive_url: str, novas_backlog: int) -> None:
     if not EMAIL_TO:
-        print("[info] sem destinatarios (EMAIL_TO_OVERRIDE / CLIP_RECIPIENTS vazio) — e-mail nao enviado.")
-        return
+        avisos.aviso("Sem destinatarios (EMAIL_TO_OVERRIDE / CLIP_RECIPIENTS vazio) — "
+                     "e-mail NAO enviado; so Drive e artifacts atualizados")
+        return False
     user = os.environ["EMAIL_REMETENTE"].strip()
     pwd = os.environ["EMAIL_SENHA"].replace(" ", "").strip()
 
@@ -637,6 +647,7 @@ def send_email(df: pd.DataFrame, xlsx_path: Path, drive_url: str, novas_backlog:
         s.login(user, pwd)
         s.send_message(msg)
     print(f"[ok] e-mail enviado para {', '.join(EMAIL_TO)}")
+    return True
 
 
 def main() -> None:
@@ -653,8 +664,17 @@ def main() -> None:
     txt_path.write_text(build_ai_text(df), encoding="utf-8")
     print(f"[ok] input AI salvo em {txt_path}")
 
-    drive_url, novas_backlog = sync_to_drive(df, xlsx_path, txt_path)
-    send_email(df, xlsx_path, drive_url, novas_backlog)
+    # Drive fora do ar NAO cancela a entrega: o e-mail vai mesmo assim (com aviso), porque
+    # a coleta ja esta pronta e o XLSX segue anexado. Era a maior fonte de "dia sem clipping".
+    try:
+        drive_url, novas_backlog = sync_to_drive(df, xlsx_path, txt_path)
+    except Exception as e:
+        avisos.aviso(f"Drive indisponivel ({type(e).__name__}: {e}) — sem link de copia, "
+                     f"sem backlog e sem radar/valuation nesta rodada; use o XLSX anexo")
+        drive_url = ("https://drive.google.com/drive/folders/"
+                     + os.environ.get("DRIVE_FOLDER_ID", "").strip())
+        novas_backlog = 0
+    enviado = send_email(df, xlsx_path, drive_url, novas_backlog)
 
     # Placar final no log e no resumo do job do Actions (aba Summary): zero aviso = rodada
     # limpa. Qualquer linha aqui tambem foi para o topo do e-mail.
@@ -669,6 +689,11 @@ def main() -> None:
                 fh.write("".join(f"- ⚠️ {a}\n" for a in avisos.LISTA) or "- ✅ sem avisos\n")
         except Exception:
             pass
+    # No Actions, rodada agendada sem e-mail e anomalia: run fica VERMELHO (visivel),
+    # depois de escrever o resumo acima.
+    if not enviado and os.environ.get("GITHUB_ACTIONS"):
+        raise SystemExit("[ERRO] e-mail nao enviado (sem destinatarios) — "
+                         "configure vars.CLIP_RECIPIENTS")
 
 
 if __name__ == "__main__":

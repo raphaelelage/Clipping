@@ -75,7 +75,13 @@ jobs:
         run: |
           R="${{ github.repository }}"
           MEU_ID="${{ github.run_id }}"
-          MEU_CRIADO=$(gh api "repos/$R/actions/runs/$MEU_ID" --jq .created_at)
+          # sem fallback, um 500 da API aqui derrubava o job inteiro (set -e do shell)
+          MEU_CRIADO=$(gh api "repos/$R/actions/runs/$MEU_ID" --jq .created_at 2>/dev/null || echo "")
+          if [ -z "$MEU_CRIADO" ]; then
+            echo "::warning::anti-dup: nao consegui ler created_at — seguindo sem a trava"
+            echo "duplicado=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           DESDE=$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)
           N=$(gh api "repos/$R/actions/workflows/clipping.yml/runs?created=>$DESDE&per_page=15"                 --jq "[.workflow_runs[]
                        | select(.id != $MEU_ID)

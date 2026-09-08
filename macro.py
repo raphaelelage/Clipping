@@ -81,13 +81,19 @@ def indices(log=print):
         except Exception:
             pass
         if not r:
+            # yfinance costuma devolver DataFrame VAZIO (sem excecao) quando o Yahoo
+            # bloqueia — por isso o aviso cobre tambem o caso sem erro
+            err = None
             try:
                 r = retornos_da_serie(yf.Ticker(tk).history(period="440d")["Close"])
-                log(f"[macro] {nome}: recuperado no retry individual")
             except Exception as e:
+                err = type(e).__name__
+            if r:
+                log(f"[macro] {nome}: recuperado no retry individual")
+            else:
                 import avisos
-                avisos.aviso(f"Indice {nome} ({tk}) sem dado no Yahoo (lote e individual: "
-                             f"{type(e).__name__}) — fica fora da tabela de indices")
+                avisos.aviso(f"Indice {nome} ({tk}) sem dado no Yahoo "
+                             f"({err or 'serie vazia'}) — fica fora da tabela de indices")
         if r:
             out.append((nome,) + r)
     return out
@@ -279,4 +285,8 @@ def coletar(log=print):
     ji = juros_inflacao(log=log)
     preenchidos = sum(1 for l in ji for v in l[1:] if v is not None)
     log(f"[macro] {len(idx)} indices | {len(ji)} regioes ({preenchidos} celulas com dado)")
-    return {"v": 4, "indices": idx, "macro": ji, "quando": date.today().isoformat()}
+    # Bloco totalmente vazio (Yahoo + APIs fora ao mesmo tempo) NAO pode virar cache do
+    # dia: 'quando' invalido faz a proxima rodada recoletar em vez de servir tabela oca
+    completo = bool(idx) and preenchidos > 0
+    return {"v": 4, "indices": idx, "macro": ji,
+            "quando": date.today().isoformat() if completo else "incompleto"}
