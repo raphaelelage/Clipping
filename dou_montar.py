@@ -95,7 +95,8 @@ def montar(parquet, saida, oficial_parquet=None, log=print):
             df[c] = ""
     corpo = df[COLUNAS].copy()
 
-    med = corpo[corpo["curso"].str.contains("MEDICINA", case=False, na=False)
+    # \bMEDICINA\b: sem borda de palavra, BIOMEDICINA entra junto (944 linhas na 1a entrega)
+    med = corpo[corpo["curso"].str.contains(r"\bMEDICINA\b", case=False, na=False, regex=True)
                 & ~corpo["curso"].str.contains("VETERIN", case=False, na=False)]
     log(f"[montar] Atos={len(corpo)} | Medicina={len(med)}")
 
