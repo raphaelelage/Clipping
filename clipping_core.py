@@ -489,6 +489,11 @@ def _google_news(when, kws=None, incluir_bsg=True):
     gn = GoogleNews(lang="pt", country="BR")
     kws = list(keywords if kws is None else kws)
     rows, empties = [], []
+    # CORTE LOCAL DE DATA, alem do when: da consulta. O Google DERRUBA o when: em silencio
+    # quando a consulta e longa (keyword ancorada com muitas ORs): '+icms' com os 22
+    # ancoras da combinada devolveu 100 itens de 2021-2026 numa janela de 1d (9/set/2026,
+    # e-mail saiu com ~1250 noticias velhas). Este corte vale para TODA busca.
+    corte = datetime.now(TZ) - parse_period(when)
 
     usar_lib = os.environ.get("USE_PYGOOGLENEWS") == "1"
 
@@ -503,6 +508,9 @@ def _google_news(when, kws=None, incluir_bsg=True):
     def _add(kw, entries):
         termo = _kw_termo(kw)[0]          # coluna searched_keyword sem o "+"
         for it in entries:
+            dt = to_dt(it.get("published"))
+            if dt and dt < corte:
+                continue                  # fora da janela (when: ignorado pelo Google)
             d, h, _ = parse_pub(it.get("published"))
             rows.append((it.title, it.source["title"], d, h, termo, it.link, it.source["href"]))
 
