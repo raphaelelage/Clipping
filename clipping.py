@@ -317,7 +317,10 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
     if "educacao" not in _bases:
         return                      # radar DOU so faz sentido com educacao na heranca
     import dou_alerta
-    frases, cru = dou_alerta.coletar_novidades(dias=3, log=lambda m: print(m, flush=True))
+    # RADAR_DIAS (input radar_dias do workflow): janela de backfill apos pane do radar —
+    # o dedup do Excel garante que re-varrer dias ja cobertos nao duplica nem re-alerta
+    dias = int(os.environ.get("RADAR_DIAS", "").strip() or 3)
+    frases, cru = dou_alerta.coletar_novidades(dias=dias, log=lambda m: print(m, flush=True))
     if not frases:
         print("[radar] nenhum ato alarmante nos ultimos dias uteis", flush=True)
         return

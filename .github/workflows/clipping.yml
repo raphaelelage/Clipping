@@ -27,6 +27,10 @@ on:
         description: "Manutenção: 1 = zerar o histórico (backlog) desta vertical (deixe vazio)"
         required: false
         default: ""
+      radar_dias:
+        description: "Manutenção: dias úteis que o radar DOU varre p/ trás (vazio = 3; use p/ backfill após pane)"
+        required: false
+        default: ""
 
 # Sem 'schedule:' de propósito — o agendamento é por gatilho externo
 # (cron-job.org -> workflow_dispatch via API), que dispara na hora, sem a fila do cron do GitHub.
@@ -196,6 +200,7 @@ jobs:
           DRIVE_REPAIR_FROM: ${{ github.event.inputs.repair_from }}
           BACKLOG_RESET: ${{ github.event.inputs.backlog_reset }}
           BACKLOG_MERGE_FROM: ${{ github.event.inputs.merge_from }}
+          RADAR_DIAS: ${{ github.event.inputs.radar_dias }}
           WHEN_OVERRIDE: ${{ github.event.inputs.when }}
           EMAIL_TO_OVERRIDE: ${{ github.event.inputs.recipients || vars.CLIP_RECIPIENTS }}
           GN_SHARDS: ${{ needs.escolher.outputs.shards }}
