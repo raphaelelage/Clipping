@@ -284,3 +284,12 @@ herança (mesma regra da combinada). O input `vertical` do workflow aceita qualq
 O cron-job.org às vezes reenvia o gatilho (retry) — chegavam 2 runs com segundos de
 diferença e 2 e-mails. O job `escolher` se anula se existir run mais antigo (<5 min,
 desempate por id). Precisa de `permissions: actions: read`.
+
+## Funil de regulacao (funil.py)
+Deriva da aba Atos o ESTADO ATUAL de cada curso (aba Funil, 1 linha/curso): trilho
+autorizacao -> reconhecimento -> renovacao (fase = ato do trilho mais RECENTE, nao o "maior"
+— universidades tem autonomia e podem estrear direto no reconhecimento); fase 0
+(protocolado/sobrestado ADC 81) so existe para Medicina (planilhas SERES); vagas/cautelar/
+sancionador/via judicial sao colunas, nao fases. ref_judicial: "nao consta na fonte" e "Nao
+se aplica" significam SEM referencia (sem esse filtro, via_judicial marcava 100%). Medicina
+com MEDICINA (BIOMEDICINA ja contaminou). Nunca edita Atos; so reescreve a aba Funil.
