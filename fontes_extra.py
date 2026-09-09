@@ -213,17 +213,43 @@ def _erro(ctx, nome, e):
     ctx.setdefault("erros", []).append(f"{nome} ({det})")
 
 
+def _wp_json(url):
+    """GET do wp-json com fallback pelo espelho r.jina.ai. As entidades (ANAHP, Abifina,
+    ABIIS, Interfarma) bloqueiam o IP de datacenter do GitHub Actions (403/404/202 de WAF)
+    mas o espelho devolve o MESMO JSON integro (medido 9/set/2026). Direto primeiro:
+    do PC do usuario tudo responde 200 e o espelho nem e chamado."""
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        if r.status_code == 200 and "json" in r.headers.get("Content-Type", ""):
+            return r.json(), None
+        motivo = f"HTTP {r.status_code}"
+    except Exception as e:
+        motivo = type(e).__name__
+    try:
+        r = requests.get("https://r.jina.ai/" + url, timeout=30)
+        txt = r.text
+        i = txt.find("[")
+        dados = json.loads(txt[i:]) if i >= 0 else json.loads(txt)
+        if isinstance(dados, list):
+            return dados, "espelho"
+    except Exception:
+        pass
+    return None, motivo
+
+
 def _wp(nome, base, filtrar, desde, ctx):
     """WordPress REST: usa o parametro 'after' (ISO) — so traz o que e novo."""
     url = (f"{base}/wp-json/wp/v2/posts?per_page=30"
            f"&after={desde.isoformat()}T00:00:00")
     rows = []
     try:
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        if r.status_code != 200 or "json" not in r.headers.get("Content-Type", ""):
-            _erro(ctx, nome, f"HTTP {r.status_code}")
+        posts, via = _wp_json(url)
+        if posts is None:
+            _erro(ctx, nome, via)
             return rows
-        for p in r.json():
+        if via == "espelho":
+            print(f"[fontes_extra] {nome}: direto bloqueado — veio pelo espelho", flush=True)
+        for p in posts:
             titulo = re.sub(r"<[^>]+>", "", (p.get("title") or {}).get("rendered", "")).strip()
             titulo = (titulo.replace("&#8211;", "–").replace("&#038;", "&")
                       .replace("&#8220;", "“").replace("&#8221;", "”")
@@ -250,6 +276,14 @@ def _rss(nome, url, filtrar, cutoff, ctx, exige=None):
     try:
         r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
         if r.status_code != 200:
+            # Substack bloqueia IP de datacenter (403 permanente no Actions; nenhum espelho
+            # repassa XML integro — jina renderiza, proxies publicos falham; medido
+            # 9/set/2026). Do PC (IP residencial/self-hosted) responde 200. Falha esperada
+            # no Actions vira log; em qualquer outro ambiente segue como erro visivel.
+            if "substack.com" in url and os.environ.get("GITHUB_ACTIONS"):
+                print(f"[fontes_extra] {nome}: bloqueada no IP do Actions (esperado; "
+                      f"volta quando a rodada sair do PC)", flush=True)
+                return rows
             _erro(ctx, nome, f"HTTP {r.status_code}")
             return rows
         fp = feedparser.parse(r.content)

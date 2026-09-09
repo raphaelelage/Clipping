@@ -199,6 +199,11 @@ endpoint que o próprio site da CVM usa (sem captcha), descarta documento com st
 e devolve `None` se falhar — aí `_cvm_com_reserva()` cai automaticamente no zip. Como o endpoint
 não é documentado, **a reserva é obrigatória**: nunca remova o fallback.
 
+**WAF vs IP do Actions**: ANAHP/Abifina/ABIIS/Interfarma bloqueiam o IP de datacenter do
+GitHub (403/404/202) mas respondem 200 do PC — o `_wp_json` tenta direto e cai no espelho
+`r.jina.ai`, que repassa o MESMO JSON (medido 9/set/2026). O Substack (Valor & Saúde) também
+bloqueia e NENHUM espelho repassa XML íntegro (jina renderiza; allorigins/corsproxy falham) —
+no Actions essa falha é log esperado, não aviso; do runner self-hosted a fonte volta sozinha.
 Cada fonte diz se aplica filtro de keyword: entidades do setor entram inteiras (`filtrar=False`);
 fontes amplas (JOTA, CADE, DOU) filtram por palavra-chave. Links de arquivo (`.pdf`, `.jpg`) são
 descartados e os RSS do gov.br exigem `/noticias/` no link — eles misturam documento com notícia.
