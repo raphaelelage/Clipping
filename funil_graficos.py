@@ -76,12 +76,29 @@ def gerar(caminho, log=print):
                    "\\bMEDICINA\\b sem VETERIN", t4[["ano", "Medicina", "Demais cursos"]],
                    "line", "cursos autorizados"))
 
+    # ANOS COMPLETOS nos graficos de Medicina: sem isto a serie MORRE em 2021 e parece
+    # dado faltando — quando o fato e a MORATORIA (zero autorizacao nova de Medicina de
+    # 2022 a 2026: ADC 81 exige chamamento e o edital de 2023 foi revogado em fev/2026).
+    # Com o zero explicito, o "precipicio" fica visivel no grafico.
+    anos_todos = sorted(int(x) for x in aut["_ano"].dropna().unique())
+
+    def _completa(df, col_ano="ano"):
+        base = pd.DataFrame({col_ano: anos_todos})
+        out = base.merge(df, on=col_ano, how="left")
+        for c in out.columns:
+            if c != col_ano:
+                out[c] = out[c].fillna(0)
+        return out
+
     t5 = (aut[aut["_med"]].groupby("_ano")["_vagas"].sum().rename("vagas")
           .reset_index().rename(columns={"_ano": "ano"}).dropna())
     t5["ano"] = t5["ano"].astype(int)
+    t5 = _completa(t5)
     blocos.append(("G5. Vagas de MEDICINA autorizadas por ano | fonte: aba Atos, "
                    "tipo_decisao='autorizacao', soma de numero_vagas (so onde o ato "
-                   "informa vagas)", t5, "bar", "vagas"))
+                   "informa vagas). ZERO em 2022-2026 e REAL: moratoria (ADC 81 exige "
+                   "chamamento publico; edital 2023 revogado pela Portaria MEC 129/2026)",
+                   t5, "bar", "vagas"))
 
     t6 = med.assign(_pend=med["fase_atual"].astype(str).str.startswith("0."))
     t6 = (t6.groupby(["uf", "_pend"]).size().unstack(fill_value=0)
@@ -104,9 +121,15 @@ def gerar(caminho, log=print):
           .rename(columns={True: "Via judicial", False: "Via ordinaria"})
           .reset_index().rename(columns={"_ano": "ano"}).dropna(subset=["ano"]))
     t8["ano"] = t8["ano"].astype(int)
+    for col in ("Via ordinaria", "Via judicial"):     # colunas fixas: se um ano nao tem
+        if col not in t8.columns:                     # aquela via, a serie ainda aparece
+            t8[col] = 0
+    t8 = _completa(t8[["ano", "Via ordinaria", "Via judicial"]])
     blocos.append(("G8. Autorizacoes de MEDICINA por via e ano | fonte: aba Atos, "
-                   "tipo_decisao='autorizacao', via judicial = ref_judicial "
-                   "preenchida no ato", t8, "bar_stack", "cursos"))
+                   "tipo_decisao='autorizacao', via judicial = ref_judicial preenchida "
+                   "no ato. ZERO em 2022-2026 e REAL (moratoria) — os atos de Medicina "
+                   "desses anos sao reconhecimento/renovacao de cursos ja existentes",
+                   t8, "bar_stack", "cursos"))
 
     aut["_fila"] = aut["_ano"] - aut["_ano_pedido"]
     t9 = (aut[aut["_fila"].between(0, 15)]
@@ -152,6 +175,9 @@ def gerar(caminho, log=print):
         ch.title = titulo.split(" | ")[0]
         ch.y_axis.title = eixo_y
         ch.height, ch.width = 8.5, 16
+        # sem "variar cores por ponto": com 1 serie so, o Excel/WPS pinta cada barra de
+        # uma cor e joga as CATEGORIAS na legenda (parecia que os anos eram as series)
+        ch.varyColors = False
         dados = Reference(wsd, min_col=2, max_col=ncols, min_row=h0, max_row=h1)
         cats = Reference(wsd, min_col=1, min_row=h0 + 1, max_row=h1)
         ch.add_data(dados, titles_from_data=True)
