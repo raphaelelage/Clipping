@@ -293,3 +293,10 @@ autorizacao -> reconhecimento -> renovacao (fase = ato do trilho mais RECENTE, n
 sancionador/via judicial sao colunas, nao fases. ref_judicial: "nao consta na fonte" e "Nao
 se aplica" significam SEM referencia (sem esse filtro, via_judicial marcava 100%). Medicina
 com MEDICINA (BIOMEDICINA ja contaminou). Nunca edita Atos; so reescreve a aba Funil.
+
+### status_regulatorio (Funil, 10/set/2026)
+Coluna derivada, deterministica: pendente sobrestado -> "Travado (ADC 81)"; pendente com via
+judicial -> "Vivo (Portaria 531/2023)"; pendente ordinario -> "Sem trilho (edital revogado,
+Portaria MEC 129/2026)"; decidido com cod_curso nas Portarias SERES 72-76/2026 (cautelares do
+Enamed, parseadas do DOU em cautelares_enamed_2026.json) -> "Restrito - Enamed (...)".
+Nada e inferido por IA: so campos existentes + base oficial com URL da fonte no json.
