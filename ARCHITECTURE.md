@@ -316,3 +316,12 @@ janela fixa. Dia com edicao inacessivel NAO avanca o estado (sera revarrido); mi
 uteis, teto 30 (acima disso avisa e pede radar_dias). O e-mail mostra sempre o periodo
 coberto ("edicoes de X a Y verificadas"). Regrava/sobe o arquivo so quando ha ato novo,
 Funil ausente ou estado avancado — rodadas duplas no mesmo dia nao re-sobem nada.
+
+### Resumos: download em threads, PARSING em subprocesso (10/set/2026)
+O exit 134 ("corrupted size vs. prev_size", core dumped) que derrubou a rodada vinha do
+parser NATIVO (trafilatura/lxml) chamado por 12 THREADS ao mesmo tempo sobre HTML malformado.
+try/except NAO segura abort de biblioteca C. Agora: download continua em threads (so rede) e
+o parsing roda SEQUENCIAL num ProcessPoolExecutor de 1 worker — worker que morre perde SO
+aquele resumo, o pool e recriado e a rodada segue (vira aviso no e-mail). Se o subprocesso
+nao subir no ambiente (sonda no inicio), cai para parsing sequencial no proprio processo —
+nunca fica sem saida. Teto de 90s alem do budget de download.

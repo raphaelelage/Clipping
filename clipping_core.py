@@ -1043,7 +1043,15 @@ def _paragrafos(url, html, n=3):
 def _extrair_resumos(df, workers=12, timeout=8, budget=200, log=print):
     """Baixa cada noticia e guarda os primeiros paragrafos na coluna 'resumo'.
     E o que da contexto ao input do AI — so o titulo costuma nao dizer nada
-    (ex.: 'DECISAO de 7 de agosto de 2026')."""
+    (ex.: 'DECISAO de 7 de agosto de 2026').
+
+    O DOWNLOAD roda em threads (so rede); o PARSING roda num SUBPROCESSO de um
+    worker, pagina a pagina. Motivo: o trafilatura/lxml e codigo NATIVO e uma
+    pagina malformada ja corrompeu o heap e ABORTOU a rodada inteira ('corrupted
+    size vs. prev_size', exit 134 — 10/09/2026, e provavelmente o exit 134 de
+    09/09 tambem). try/except nao segura abort de biblioteca C; processo
+    descartavel segura: morre o worker, perde-se SO o resumo daquela pagina,
+    o pool e recriado e a fila continua."""
     df["resumo"] = ""
     links = [l for l in df["link"].astype(str).tolist() if l.startswith("http")]
     if not links:
@@ -1057,15 +1065,72 @@ def _extrair_resumos(df, workers=12, timeout=8, budget=200, log=print):
             r = requests.get(u, headers=HEADERS, timeout=timeout)
             if r.status_code != 200:
                 return u, ""
-            return u, _paragrafos(u, r.text)
+            return u, r.text or ""
         except Exception:
             return u, ""
 
-    mapa = {}
+    paginas = []
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        for u, txt in ex.map(baixar, links):
-            if txt:
-                mapa[u] = txt
+        for u, html in ex.map(baixar, links):
+            if html:
+                paginas.append((u, html))
+
+    mapa, mortas = {}, 0
+    fim_parse = fim + 90            # teto do parsing: o que sobrar fica sem resumo
+    pool = None
+    try:
+        from concurrent.futures import ProcessPoolExecutor, TimeoutError as _FutTimeout
+        from concurrent.futures.process import BrokenProcessPool
+        pool = ProcessPoolExecutor(max_workers=1)
+        pool.submit(_paragrafos, "", "<html></html>").result(timeout=30)   # sonda
+    except Exception:
+        # ambiente sem subprocesso utilizavel (spawn sem modulo importavel, etc.):
+        # cai para parsing SEQUENCIAL no proprio processo — pior isolamento, mas
+        # ainda sem a concorrencia de threads que e a causa provavel da corrupcao
+        if pool is not None:
+            try:
+                pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+        pool = None
+    if pool is not None:
+        try:
+            for u, html in paginas:
+                if time.monotonic() > fim_parse:
+                    break
+                try:
+                    txt = pool.submit(_paragrafos, u, html).result(timeout=20)
+                    if txt:
+                        mapa[u] = txt
+                except (BrokenProcessPool, _FutTimeout):
+                    mortas += 1
+                    try:
+                        pool.shutdown(wait=False, cancel_futures=True)
+                        pool = ProcessPoolExecutor(max_workers=1)
+                    except Exception:
+                        pool = None
+                        break
+                except Exception:
+                    pass
+        finally:
+            if pool is not None:
+                try:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    pass
+    if pool is None:                      # fallback sequencial (cobre o que faltou)
+        for u, html in paginas:
+            if u in mapa or time.monotonic() > fim_parse:
+                continue
+            try:
+                txt = _paragrafos(u, html)
+                if txt:
+                    mapa[u] = txt
+            except Exception:
+                pass
+    if mortas:
+        avisos.aviso(f"Resumos: o parser de texto morreu/travou em {mortas} pagina(s) "
+                     f"malformada(s) — pagina(s) sem resumo, rodada seguiu normal")
     df["resumo"] = df["link"].astype(str).map(lambda l: mapa.get(l, ""))
     if log:
         log(f"[resumos] {len(mapa)}/{len(links)} noticias com texto extraido")
