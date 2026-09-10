@@ -42,7 +42,9 @@ WP_SITES = {
         ("Interfarma", "https://www.interfarma.org.br", False),
         ("SindHosp", "https://sindhosp.org.br", False),
         ("ABIMED", "https://abimed.org.br", False),
-        ("Abifina", "https://abifina.org.br", False),
+        # Abifina REMOVIDA (dono, 10/09/2026): Cloudflare com CAPTCHA para IP de
+        # datacenter bloqueia direto E espelho — nao ha rota gratuita. Para religar,
+        # basta devolver a linha: ("Abifina", "https://abifina.org.br", False),
         ("ABIIS", "https://abiis.org.br", False),
         ("Cofen", "https://www.cofen.gov.br", False),
     ],
@@ -214,7 +216,7 @@ def _erro(ctx, nome, e):
 
 
 def _wp_json(url):
-    """GET do wp-json com fallback pelo espelho r.jina.ai. As entidades (ANAHP, Abifina,
+    """GET do wp-json com fallback pelo espelho r.jina.ai. As entidades (ANAHP,
     ABIIS, Interfarma) bloqueiam o IP de datacenter do GitHub Actions (403/404/202 de WAF)
     mas o espelho devolve o MESMO JSON integro (medido 9/set/2026). Direto primeiro:
     do PC do usuario tudo responde 200 e o espelho nem e chamado."""
@@ -229,8 +231,8 @@ def _wp_json(url):
         r = requests.get("https://r.jina.ai/" + url, timeout=30)
         txt = r.text
         if re.search(r"Just a moment|security verification|requiring CAPTCHA", txt, re.I):
-            # Cloudflare em modo CHALLENGE (Abifina, 10/09/2026): bloqueia direto E
-            # espelho — nao e falha transitoria, e bloqueio estrutural de datacenter
+            # Cloudflare em modo CHALLENGE: bloqueia direto E espelho — nao e falha
+            # transitoria, e bloqueio estrutural contra IP de datacenter
             return None, "WAF challenge"
         i = txt.find("[")
         dados = json.loads(txt[i:]) if i >= 0 else json.loads(txt)
@@ -251,7 +253,7 @@ def _wp(nome, base, filtrar, desde, ctx):
         if posts is None:
             if via == "WAF challenge":
                 # bloqueio estrutural (CAPTCHA p/ datacenter): log esperado, nao aviso —
-                # senao a Abifina vira ruido diario na faixa do e-mail
+                # senao a fonte bloqueada vira ruido diario na faixa do e-mail
                 print(f"[fontes_extra] {nome}: WAF com CAPTCHA bloqueia direto e espelho "
                       f"(esperado no Actions)", flush=True)
             else:

@@ -177,7 +177,7 @@ Dois templates de listagem são suportados: `.listagem-noticias-com-foto li` (AN
 Rodam **todas em paralelo** (~4s no total, para não pesar no Actions). Cinco grupos:
 | Grupo | Como | Exemplos |
 |---|---|---|
-| WP | `<site>/wp-json/wp/v2/posts?after=<ISO>` | ANAHP, Interfarma, SindHosp, ABIMED, Abifina, ABIIS, Cofen · Semesp, ANUP, Todos Pela Educação, Educa Insights |
+| WP | `<site>/wp-json/wp/v2/posts?after=<ISO>` | ANAHP, Interfarma, SindHosp, ABIMED, ABIIS, Cofen · Semesp, ANUP, Todos Pela Educação, Educa Insights |
 | RSS setorial | feed próprio | Medicina S/A, Setor Saúde, Fiocruz, JOTA, CADE, Consumidor Moderno, INEP |
 | RSS grandes | feed oficial do veículo, **com** filtro de keyword | G1, O Globo, Folha, Estadão, UOL, Agência Brasil, Jornal da USP (`GRANDES_ECONOMIA` + feeds de saúde/educação) |
 | DOU | `in.gov.br` busca por **frase exata**, seções DO1 + DO1E (extra) | portarias do MEC, decisões da ANS, registros da Anvisa |
@@ -199,11 +199,11 @@ endpoint que o próprio site da CVM usa (sem captcha), descarta documento com st
 e devolve `None` se falhar — aí `_cvm_com_reserva()` cai automaticamente no zip. Como o endpoint
 não é documentado, **a reserva é obrigatória**: nunca remova o fallback.
 
-**WAF vs IP do Actions**: ANAHP/Abifina/ABIIS/Interfarma bloqueiam o IP de datacenter do
+**WAF vs IP do Actions**: ANAHP/ABIIS/Interfarma bloqueiam o IP de datacenter do
 GitHub (403/404/202) mas respondem 200 do PC — o `_wp_json` tenta direto e cai no espelho
 `r.jina.ai`, que repassa o MESMO JSON (medido 9/set/2026). O Substack (Valor & Saúde) também
 bloqueia e NENHUM espelho repassa XML íntegro (jina renderiza; allorigins/corsproxy falham) —
-no Actions essa falha é log esperado, não aviso; do runner self-hosted a fonte volta sozinha.
+no Actions essa falha é log esperado, não aviso; a **Abifina foi REMOVIDA** (10/09/2026) porque o Cloudflare dela exige CAPTCHA de IP de datacenter e bloqueia direto E espelho — para religar, devolver a linha em `WP_SITES`; do runner self-hosted a fonte volta sozinha.
 Cada fonte diz se aplica filtro de keyword: entidades do setor entram inteiras (`filtrar=False`);
 fontes amplas (JOTA, CADE, DOU) filtram por palavra-chave. Links de arquivo (`.pdf`, `.jpg`) são
 descartados e os RSS do gov.br exigem `/noticias/` no link — eles misturam documento com notícia.
