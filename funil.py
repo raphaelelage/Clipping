@@ -8,16 +8,30 @@ Modelo (ver ARCHITECTURE.md):
   - fase atual = ato do TRILHO com data mais recente (empate: fase maior). Universidades/
     centros universitarios criam curso sem autorizacao (autonomia): o primeiro ato pode
     ser direto o reconhecimento — por isso a fase e "a mais recente", nao "a sequencia".
+  - `via`: Judicial (ref judicial em algum ato) > Chamamento Mais Medicos (tipo de ato)
+    > Ordinaria. `regime_seres` guarda a portaria de regime dos pedidos pendentes.
+  - `curso_padrao`: nome padronizado ("MEDICINA (Bacharelado)" -> "Medicina") p/ grafico.
+
+CRUZAMENTO INEP (Censo da Educacao Superior, cursos_inep.parquet): celulas que o DOU nao
+informa (vagas, cod_curso, cod_ies, curso, uf, municipio) sao completadas pelo Censo QUANDO
+o cruzamento e inequivoco — por cod_curso, ou por (cod_ies + nome do curso) quando o par e
+UNICO no Censo. Nada e inventado: toda celula preenchida assim sai PINTADA DE AMARELO no
+Excel (regra do dono, 10/09/2026) e a coluna fonte_inep lista quais campos vieram do Censo.
 
 Fonte da verdade e o log Atos: este modulo NUNCA edita Atos, so (re)escreve a aba Funil.
 Uso: python funil.py <arquivo.xlsx>   (ou funil.gerar(caminho) pelo robo)
 """
+import os
+import re
 import sys
 import unicodedata
 
 import pandas as pd
 
-# tipo_decisao -> (fase_num, rotulo). Trilho principal do CURSO.
+BASE = os.path.dirname(os.path.abspath(__file__))
+INEP_PARQUET = os.path.join(BASE, "cursos_inep.parquet")
+AMARELO = "FFF6C453"          # celula preenchida via INEP (nao consta no ato do DOU)
+
 FASE_TRILHO = {
     "autorizacao": (1, "1. Autorizado"),
     "reconhecimento": (2, "2. Reconhecido"),
@@ -28,9 +42,12 @@ FASE_PENDENTE = {
     "pendente: em tramitacao": (0, "0. Protocolado (em tramitacao)"),
     "pendente: sobrestado (MC ADC 81)": (0, "0. Sobrestado (ADC 81)"),
 }
-# transversais viram colunas; atos de IES (credenciamento etc.) nao tem curso e ficam fora
-TRANSVERSAIS = {"aditamento_aumento_vagas", "reducao_vagas", "medida_cautelar",
-                "sancionador_supervisao", "sobrestamento"}
+
+# ordem das colunas da aba Funil — pensada para virar grafico (codigos primeiro)
+COLS_FUNIL = ["cod_ies", "ies", "cod_curso", "curso_padrao", "curso", "uf", "municipio",
+              "medicina", "fase_atual", "data_fase", "via", "regime_seres", "vagas",
+              "cautelar", "sancionador", "qtd_atos", "ato_da_fase", "mantenedora",
+              "processo_recente", "fonte_inep"]
 
 
 def _norm(s):
@@ -40,10 +57,11 @@ def _norm(s):
 
 def _limpa(s):
     v = str(s).strip()
-    return "" if v.lower() in ("nan", "none", "<na>", "-", "–") else v
+    return "" if v.lower() in ("nan", "none", "<na>", "-", "–", "nao consta na fonte",
+                               "não consta na fonte", "nao se aplica", "não se aplica") \
+        else v
 
 
-# preenchimentos do levantamento que significam "sem referencia judicial de verdade"
 _SEM_REF = {"NAO CONSTA NA FONTE", "NAO SE APLICA", ""}
 
 
@@ -51,9 +69,67 @@ def _tem_ref_judicial(serie):
     return serie.map(lambda v: _norm(v) not in _SEM_REF).any()
 
 
+_PARENS_RX = re.compile(r"\s*\([^)]*\)\s*$")
+_MINUS = {"de", "da", "do", "das", "dos", "e", "em", "a", "o", "para", "com"}
+
+
+def curso_padrao(nome):
+    """"MEDICINA (Bacharelado)" -> "Medicina". Parentetico final cai; title-case com
+    conectivos minusculos. Vazio/"nao consta" -> ""."""
+    n = _limpa(nome)
+    n = _PARENS_RX.sub("", n)
+    n = re.sub(r"\s+", " ", n).strip(" -–")
+    if not n:
+        return ""
+    out = []
+    for i, w in enumerate(n.split()):
+        wl = w.lower()
+        out.append(wl if (i > 0 and wl in _MINUS) else wl.capitalize())
+    return " ".join(out)
+
+
+def _int_ou_vazio(v):
+    try:
+        f = float(str(v).replace(",", "."))
+        return str(int(f)) if f == f else ""          # NaN != NaN
+    except Exception:
+        return ""
+
+
+def _carregar_inep(log=print):
+    """cursos_inep.parquet -> (por_codigo, por_ies_nome). por_ies_nome so guarda pares
+    (cod_ies, nome) UNICOS no Censo — ambiguidade nunca vira preenchimento."""
+    if not os.path.exists(INEP_PARQUET):
+        log("[funil] cursos_inep.parquet ausente — cruzamento INEP pulado")
+        return {}, {}, {}
+    inep = pd.read_parquet(INEP_PARQUET)
+    inep["cod_curso"] = inep["cod_curso"].map(_int_ou_vazio)
+    inep["cod_ies"] = inep["cod_ies"].map(_int_ou_vazio)
+    por_codigo = {r.cod_curso: r for r in inep.itertuples() if r.cod_curso}
+    # nome PADRONIZADO dos dois lados: o DOU escreve "DIREITO (BACHARELADO)",
+    # o INEP "Direito" — sem normalizar, o par (IES, nome) nunca casava
+    chave = inep["cod_ies"] + "|" + inep["curso"].map(lambda n: _norm(curso_padrao(n)))
+    unicos = chave.value_counts()
+    unicos = set(unicos[unicos == 1].index)
+    por_ies_nome = {k: r for k, r in zip(chave, inep.itertuples())
+                    if k in unicos and r.cod_ies}
+    # desempate para IES multi-campus: (IES, nome, municipio) unico no Censo
+    chave3 = chave + "|" + inep["municipio"].map(_norm)
+    unicos3 = chave3.value_counts()
+    unicos3 = set(unicos3[unicos3 == 1].index)
+    por_ies_nome_mun = {k: r for k, r in zip(chave3, inep.itertuples())
+                        if k in unicos3 and r.cod_ies}
+    log(f"[funil] INEP: {len(por_codigo)} cursos por codigo, "
+        f"{len(por_ies_nome)} pares (IES, nome) e "
+        f"{len(por_ies_nome_mun)} trios (IES, nome, municipio) inequivocos")
+    return por_codigo, por_ies_nome, por_ies_nome_mun
+
+
 def gerar(caminho, log=print):
     xl = pd.ExcelFile(caminho)
     atos = xl.parse("Atos")
+    seres = xl.parse("Medicina_SERES") if "Medicina_SERES" in xl.sheet_names \
+        else pd.DataFrame()
     for c in atos.columns:
         if atos[c].dtype == object or str(atos[c].dtype) in ("str", "string"):
             atos[c] = atos[c].map(_limpa)
@@ -61,76 +137,136 @@ def gerar(caminho, log=print):
     atos.loc[atos["_data"].isna(), "_data"] = pd.to_datetime(
         atos.loc[atos["_data"].isna(), "data_pedido"], errors="coerce")
 
-    # chave do curso: cod_curso oficial; sem codigo (linhas novas do radar) cai em
-    # IES+curso+municipio normalizados — melhor aproximacao disponivel
-    atos["_chave"] = atos["cod_curso"].map(_limpa)
+    # regime dos pedidos pendentes (SERES): pendente ainda NAO tem cod_curso —
+    # a amarra e o processo e-MEC (ref_emec no SERES = processo na linha do funil)
+    regime_por_proc = {}
+    if len(seres):
+        for ref, reg in zip(seres.get("ref_emec", "").map(_limpa),
+                            seres.get("regime_juridico", "")):
+            if ref and _limpa(reg):
+                regime_por_proc[_norm(ref)] = _limpa(reg)
+
+    atos["_cod"] = atos["cod_curso"].map(_int_ou_vazio)
+    atos["_chave"] = atos["_cod"]
     vazio = atos["_chave"] == ""
     atos.loc[vazio, "_chave"] = ("S/COD|" + atos.loc[vazio, "ies"].map(_norm) + "|"
                                  + atos.loc[vazio, "curso"].map(_norm) + "|"
                                  + atos.loc[vazio, "municipio"].map(_norm))
-    atos = atos[atos["curso"] != ""]          # ato so de IES nao entra no funil de cursos
+    # ato so de IES (sem curso E sem codigo) nao entra no funil de cursos; ato com
+    # cod_curso mas sem nome fica — o INEP preenche o nome depois
+    atos = atos[(atos["curso"] != "") | (atos["_cod"] != "")]
 
     linhas = []
     for chave, g in atos.groupby("_chave", sort=False):
         g = g.sort_values("_data")
         ult = g.iloc[-1]
-
         trilho = g[g["tipo_decisao"].isin(FASE_TRILHO)]
         pend = g[g["tipo_decisao"].isin(FASE_PENDENTE)]
         if len(trilho):
-            # mais recente; empate na data -> fase maior
             t = trilho.assign(_f=[FASE_TRILHO[x][0] for x in trilho["tipo_decisao"]])
             top = t.sort_values(["_data", "_f"]).iloc[-1]
-            fase = FASE_TRILHO[top["tipo_decisao"]][1]
-            data_fase, ato_fase = top["_data"], top["ato"]
+            fase, data_fase, ato_fase = (FASE_TRILHO[top["tipo_decisao"]][1],
+                                         top["_data"], top["ato"])
         elif len(pend):
             top = pend.iloc[-1]
-            fase = FASE_PENDENTE[top["tipo_decisao"]][1]
-            data_fase, ato_fase = top["_data"], top["ato"]
+            fase, data_fase, ato_fase = (FASE_PENDENTE[top["tipo_decisao"]][1],
+                                         top["_data"], top["ato"])
         else:
             fase, data_fase, ato_fase = ("(sem ato do trilho no periodo)",
                                          ult["_data"], ult["ato"])
 
-        vagas = g[g["numero_vagas"].map(lambda v: _limpa(v) not in ("", "0"))]
+        cod = "" if chave.startswith("S/COD|") else chave
+        judicial = _tem_ref_judicial(g["ref_judicial"])
+        chamamento = (g["tipo_decisao"] == "chamamento_mais_medicos").any() or \
+                     g["ato"].map(lambda a: "MAIS MEDICOS" in _norm(a)).any()
+        via = ("Judicial" if judicial
+               else "Chamamento Mais Medicos" if chamamento else "Ordinaria")
+        vagas_serie = g["numero_vagas"].map(_int_ou_vazio)
+        vagas = next((v for v in reversed(list(vagas_serie)) if v), "")
         cautelar = g[g["tipo_decisao"] == "medida_cautelar"]
         sanc = g[g["tipo_decisao"] == "sancionador_supervisao"]
-        import re as _re
-        curso_nome = _norm(ult["curso"])
-        # \bMEDICINA\b: sem borda de palavra, BIOMEDICINA conta como Medicina (ja mordeu)
-        eh_med = bool(_re.search(r"\bMEDICINA\b", curso_nome)) and "VETERIN" not in curso_nome
+        nome_raw = ult["curso"]
+        cnorm = _norm(nome_raw)
         linhas.append({
-            "cod_curso": "" if chave.startswith("S/COD|") else chave,
-            "curso": ult["curso"], "ies": ult["ies"], "cod_ies": ult["cod_ies"],
-            "uf": ult["uf"], "municipio": ult["municipio"],
-            "mantenedora": ult["mantenedora"],
-            "medicina": "Sim" if eh_med else "",
+            "cod_ies": _int_ou_vazio(ult["cod_ies"]), "ies": ult["ies"],
+            "cod_curso": cod, "curso_padrao": curso_padrao(nome_raw),
+            "curso": nome_raw, "uf": ult["uf"], "municipio": ult["municipio"],
+            "medicina": "Sim" if (re.search(r"\bMEDICINA\b", cnorm)
+                                  and "VETERIN" not in cnorm) else "",
             "fase_atual": fase,
             "data_fase": data_fase.date() if pd.notna(data_fase) else None,
-            "ato_da_fase": ato_fase,
-            "vagas_vigentes": (vagas.iloc[-1]["numero_vagas"] if len(vagas) else ""),
+            "via": via,
+            "regime_seres": next((regime_por_proc[p] for p in
+                                  g["processo"].map(lambda x: _norm(_limpa(x)))
+                                  if p and p in regime_por_proc), ""),
+            "vagas": vagas,
             "cautelar": (cautelar.iloc[-1]["_data"].strftime("%d/%m/%Y")
                          if len(cautelar) and pd.notna(cautelar.iloc[-1]["_data"]) else ""),
             "sancionador": (sanc.iloc[-1]["_data"].strftime("%d/%m/%Y")
                             if len(sanc) and pd.notna(sanc.iloc[-1]["_data"]) else ""),
-            "via_judicial": "Sim" if _tem_ref_judicial(g["ref_judicial"]) else "",
-            "qtd_atos": len(g),
-            "processo_recente": ult["processo"],
+            "qtd_atos": len(g), "ato_da_fase": ato_fase,
+            "mantenedora": ult["mantenedora"], "processo_recente": ult["processo"],
+            "fonte_inep": "",
         })
+    funil = pd.DataFrame(linhas)
 
-    funil = pd.DataFrame(linhas).sort_values(
+    # ---------------- cruzamento INEP (celulas amarelas; nada inventado) ------------
+    por_codigo, por_ies_nome, por_ies_nome_mun = _carregar_inep(log)
+    pintar = []                    # (indice_da_linha, coluna) preenchidos via INEP
+    if por_codigo or por_ies_nome:
+        for i in funil.index:
+            r = funil.loc[i]
+            hit = por_codigo.get(r["cod_curso"]) if r["cod_curso"] else None
+            if hit is None and r["cod_ies"] and _norm(r["curso_padrao"]):
+                k = r["cod_ies"] + "|" + _norm(r["curso_padrao"])
+                hit = por_ies_nome.get(k)
+                if hit is None and _norm(r["municipio"]):
+                    hit = por_ies_nome_mun.get(k + "|" + _norm(r["municipio"]))
+            if hit is None:
+                continue
+            preenchidos = []
+            def _põe(col, valor):
+                v = _limpa(valor)
+                if v and not _limpa(r[col]):
+                    funil.at[i, col] = v
+                    pintar.append((i, col))
+                    preenchidos.append(col)
+            _põe("cod_curso", hit.cod_curso)
+            _põe("cod_ies", hit.cod_ies)
+            _põe("curso", hit.curso)
+            _põe("uf", hit.uf)
+            _põe("municipio", hit.municipio)
+            _põe("vagas", _int_ou_vazio(hit.vagas))
+            if not _limpa(r["curso_padrao"]) and _limpa(hit.curso):
+                funil.at[i, "curso_padrao"] = curso_padrao(hit.curso)
+                pintar.append((i, "curso_padrao"))
+                preenchidos.append("curso_padrao")
+            if preenchidos:
+                funil.at[i, "fonte_inep"] = "INEP: " + ", ".join(preenchidos)
+        log(f"[funil] INEP preencheu {len(pintar)} celulas em "
+            f"{funil['fonte_inep'].ne('').sum()} cursos")
+
+    funil = funil[COLS_FUNIL].sort_values(
         ["medicina", "fase_atual", "data_fase"], ascending=[False, True, False])
 
-    # reescreve SO a aba Funil, preservando as demais
+    # ---------------- grava: so a aba Funil muda; amarelo nas celulas do INEP -------
     abas = {n: xl.parse(n) for n in xl.sheet_names if n != "Funil"}
+    from openpyxl.styles import PatternFill
+    fill = PatternFill(start_color=AMARELO, end_color=AMARELO, fill_type="solid")
+    pos = {i: k + 2 for k, i in enumerate(funil.index)}      # linha no Excel (1 = cabecalho)
+    col_x = {c: j + 1 for j, c in enumerate(COLS_FUNIL)}
     with pd.ExcelWriter(caminho, engine="openpyxl",
                         date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY") as xw:
         for n, df in abas.items():
             df.to_excel(xw, sheet_name=n, index=False)
         funil.to_excel(xw, sheet_name="Funil", index=False)
+        ws = xw.book["Funil"]
+        for i, col in pintar:
+            ws.cell(row=pos[i], column=col_x[col]).fill = fill
         for aba in list(abas) + ["Funil"]:
-            ws = xw.book[aba]
-            ws.freeze_panes = "A2"
-            ws.auto_filter.ref = ws.dimensions
+            w = xw.book[aba]
+            w.freeze_panes = "A2"
+            w.auto_filter.ref = w.dimensions
     log(f"[funil] {len(funil)} cursos | " + " | ".join(
         f"{k}={v}" for k, v in funil["fase_atual"].value_counts().items()))
     return funil
