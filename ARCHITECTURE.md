@@ -308,3 +308,11 @@ Abas derivadas (Funil/Graficos/Graf_Dados) NAO entram em abas_extra: reescreve-l
 dataframe mataria os graficos nativos e a nota de cabecalho. Falha no funil vira aviso no
 e-mail e o upload segue so com Atos/Medicina. Rodada manual local: "Atualizar Funil DOU.bat"
 na pasta do projeto.
+
+### Radar com ESTADO (10/set/2026)
+A ultima checagem do DOU fica gravada na aba Notas do Regulacao_Cursos.xlsx do Drive
+(Assunto "radar_ultima_checagem") e e o PONTO DE PARTIDA da proxima varredura — nao ha mais
+janela fixa. Dia com edicao inacessivel NAO avanca o estado (sera revarrido); minimo 3 dias
+uteis, teto 30 (acima disso avisa e pede radar_dias). O e-mail mostra sempre o periodo
+coberto ("edicoes de X a Y verificadas"). Regrava/sobe o arquivo so quando ha ato novo,
+Funil ausente ou estado avancado — rodadas duplas no mesmo dia nao re-sobem nada.

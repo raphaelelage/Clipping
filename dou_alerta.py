@@ -89,9 +89,10 @@ def coletar_novidades(dias=3, log=print):
         arr = dh.atos_do_dia(d, "do1")
         if arr is None:
             # feriado nao tem edicao — normal. Todas inacessiveis = in.gov.br fora do ar,
-            # e isso NAO pode passar em silencio (vira aviso no e-mail).
+            # e isso NAO pode passar em silencio (vira aviso no e-mail). A lista de dias
+            # falhos volta ao chamador: o state da ultima checagem NAO avanca sobre eles.
             log(f"[radar] {d}: edicao inacessivel (sera reavaliada amanha)")
-            inacessiveis.append(d.strftime("%d/%m"))
+            inacessiveis.append(d)
             continue
         for a in arr:
             if str(a.get("hierarchyStr", "")).startswith("Ministério da Educação"):
@@ -100,15 +101,16 @@ def coletar_novidades(dias=3, log=print):
                 atos.append(a)
     if len(inacessiveis) >= dias:
         import avisos
-        avisos.aviso(f"Radar DOU: nenhuma edicao do DOU acessivel ({', '.join(inacessiveis)}) "
-                     f"— in.gov.br fora do ar? Os atos desses dias serao reavaliados amanha")
+        avisos.aviso("Radar DOU: nenhuma edicao do DOU acessivel ("
+                     + ", ".join(d.strftime("%d/%m") for d in inacessiveis)
+                     + ") — in.gov.br fora do ar? Os atos desses dias serao reavaliados")
     if not atos:
-        return [], pd.DataFrame()
+        return [], pd.DataFrame(), inacessiveis
 
     linhas = dx.extrair(atos, workers=6, log=lambda m: None)
     df = pd.DataFrame(linhas)
     if df.empty:
-        return [], df
+        return [], df, inacessiveis
     # Ato so de instituicao (credenciamento, sancionador...) nao tem tabela de cursos e o
     # DataFrame nasce SEM a coluna 'curso' -> KeyError que matou o radar em silencio por 5
     # rodadas (2 a 8/set/2026), num periodo com 3 atos alarmantes. Garante as colunas.
@@ -121,7 +123,7 @@ def coletar_novidades(dias=3, log=print):
         df["tipo_ato"].isin(ALARME_SO_MEDICINA) & df["curso"].map(_eh_medicina))
     df = df[alarme].copy()
     if df.empty:
-        return [], df
+        return [], df, inacessiveis
 
     # codigos e sede pelo cadastro consolidado (sem depender de download de censo)
     m_cod, m_mant, m_sede = _cadastro()
@@ -174,7 +176,7 @@ def coletar_novidades(dias=3, log=print):
                        "tipo": tipo})
     frases.sort(key=lambda f: (not f["medicina"], f["tipo"]))
     log(f"[radar] {len(df)} linha(s) alarmante(s) em {df['link'].nunique()} documento(s)")
-    return frases, df
+    return frases, df, inacessiveis
 
 
 def para_formato_excel(df):

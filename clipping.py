@@ -52,6 +52,9 @@ AVISO_COLETA = ""
 # Radar DOU: frases prontas para o topo do e-mail, preenchidas durante o sync do Drive
 # (so nas verticais educacao/saude_educacao). Cada item: {"frase","link","medicina","tipo"}.
 RADAR_FRASES: list = []
+# Linha de transparencia do radar no e-mail (dono, 10/09/2026): qual periodo do DOU foi
+# verificado nesta rodada e de onde a varredura retomou (a ultima checagem gravada).
+RADAR_COBERTURA_TXT = ""
 
 # Tabela de valuation da cobertura (valuation.py), montada durante o sync do Drive
 # e injetada no e-mail logo apos o botao de download. Vazia = sem summary (lista de
@@ -176,6 +179,10 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
       </td></tr>
     </table>
     """
+    if RADAR_COBERTURA_TXT:
+        # sempre visivel, com ou sem alerta: o leitor confere o periodo coberto
+        radar_html += (f'<p style="font-family:Arial,sans-serif;font-size:11px;'
+                       f'color:#999;margin:0 0 16px 0;">{RADAR_COBERTURA_TXT}</p>')
 
     # Faixa de avisos: TODA falha engolida na rodada (avisos.py) aparece aqui, em cima de
     # tudo. Coleta incompleta (robo do Google News perdido) vem primeiro.
@@ -306,29 +313,26 @@ RADAR_SEED = "seed_regulacao_cursos.xlsx"     # levantamento 2018-2026 versionad
 
 
 def _radar_e_excel(download_file, update_file, xlsx_mime):
-    """Radar DOU: detecta atos novos de regulacao de curso, alimenta o Excel do Drive e
-    deixa as frases prontas para o topo do e-mail.
+    """Radar DOU com ESTADO (dono, 10/09/2026): a data da ultima checagem fica gravada
+    na aba Notas do proprio Excel do Drive e e o PONTO DE PARTIDA da proxima varredura —
+    nada de janela fixa. Pane, feriado ou dia sem rodada sao recuperados sozinhos na
+    rodada seguinte; dia com edicao inacessivel NAO avanca o estado (sera re-varrido).
 
     So alerta documento com linha INEDITA no Excel — rodadas seguidas no mesmo dia nao
     repetem o alarme. Se o Drive ainda nao tem o arquivo, comeca da semente versionada
     no repo (o levantamento historico completo)."""
-    global RADAR_FRASES
+    global RADAR_FRASES, RADAR_COBERTURA_TXT
     _bases = clipping_core.BASES_RAIZ.get(VERTICAL, [VERTICAL])
     if "educacao" not in _bases:
         return                      # radar DOU so faz sentido com educacao na heranca
     import dou_alerta
-    # RADAR_DIAS (input radar_dias do workflow): janela de backfill apos pane do radar —
-    # o dedup do Excel garante que re-varrer dias ja cobertos nao duplica nem re-alerta
-    dias = int(os.environ.get("RADAR_DIAS", "").strip() or 3)
-    frases, cru = dou_alerta.coletar_novidades(dias=dias, log=lambda m: print(m, flush=True))
-    if not frases:
-        print("[radar] nenhum ato alarmante nos ultimos dias uteis", flush=True)
-        return
-    novas = dou_alerta.para_formato_excel(cru)
+    from datetime import timedelta
 
+    # ---------- 1) arquivo do Drive (ou semente) PRIMEIRO: o estado mora nele ----------
     local = Path(RADAR_DRIVE_NOME)
     abas_extra = {}
     existentes = None
+    tem_funil = False
     # Funil/Graficos/Graf_Dados sao DERIVADOS (regenerados abaixo por funil.py):
     # nao entram em abas_extra — re-salva-los como dataframe mataria os graficos
     # nativos e a nota de cabecalho do Funil.
@@ -337,6 +341,7 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
         try:
             xl = pd.ExcelFile(local)
             existentes = xl.parse("Atos")
+            tem_funil = "Funil" in xl.sheet_names
             for aba in xl.sheet_names:
                 if aba not in DERIVADAS:
                     abas_extra[aba] = xl.parse(aba)
@@ -351,34 +356,110 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
                 abas_extra[aba] = xl.parse(aba)
         print("[radar] Drive sem o arquivo — comecando da semente do repo", flush=True)
     if existentes is None:
-        existentes = novas.iloc[0:0]
-    # Excel editado a mao (coluna renomeada/apagada) nao pode derrubar o radar: garante as
-    # colunas do formato; as extras que o usuario criou continuam la.
-    for c in novas.columns:
-        if c not in existentes.columns:
-            existentes[c] = ""
+        existentes = pd.DataFrame()
 
-    def _chave(d):
-        # Celula VAZIA vira NaN na volta do Excel e viraria a string "nan", enquanto do
-        # lado recem-coletado ela e "". A chave nunca batia e a linha se declarava inedita
-        # TODA rodada (medido: 1 alerta falso por dia). Normaliza os dois lados.
-        def _col(nome):
-            return (d[nome].fillna("").astype(str).str.strip()
-                    .replace({"nan": "", "None": "", "<NA>": ""}))
-        return _col("link") + "|" + _col("processo") + "|" + _col("curso")
-    ineditas = novas[~_chave(novas).isin(set(_chave(existentes)))]
-    links_ineditos = set(ineditas["link"].astype(str))
-    RADAR_FRASES = [f for f in frases if str(f["link"]) in links_ineditos]
-    if ineditas.empty:
-        print("[radar] tudo ja registrado no Excel do Drive — sem alerta novo", flush=True)
+    # ---------- 2) ultima checagem (aba Notas) -> quantos dias uteis varrer ----------
+    ASSUNTO_STATE = "radar_ultima_checagem"
+    ultima = None
+    notas = abas_extra.get("Notas")
+    if notas is not None and "Assunto" in getattr(notas, "columns", []):
+        achado = notas[notas["Assunto"].astype(str).str.strip() == ASSUNTO_STATE]
+        if len(achado):
+            m = re.search(r"(\d{4}-\d{2}-\d{2})", str(achado.iloc[-1].get("Descricao", "")))
+            if m:
+                try:
+                    ultima = date.fromisoformat(m.group(1))
+                except ValueError:
+                    ultima = None
+    hoje = date.today()
+    env = os.environ.get("RADAR_DIAS", "").strip()
+    if env:
+        dias = int(env)             # backfill manual (input radar_dias) segue mandando
+    elif ultima:
+        # dias uteis de `ultima` (INCLUSIVE — pega edicao extra/retificacao do proprio
+        # dia; o dedup do Excel impede duplicata) ate hoje
+        uteis, d = 0, min(ultima, hoje)
+        while d <= hoje:
+            if d.weekday() < 5:
+                uteis += 1
+            d += timedelta(days=1)
+        dias = max(3, uteis)        # nunca menos que a janela classica de 3 dias uteis
+        if dias > 30:
+            avisos.aviso(f"Radar DOU: {dias} dias uteis desde a ultima checagem ({ultima}) "
+                         f"— varrendo so os 30 mais recentes; rode o workflow com "
+                         f"radar_dias={dias} para cobrir o resto")
+            dias = 30
+    else:
+        dias = 3                    # sem estado ainda (1a rodada): janela classica
+    frases, cru, falhos = dou_alerta.coletar_novidades(dias=dias,
+                                                       log=lambda m: print(m, flush=True))
+    varridos = dou_alerta._dias_uteis_recentes(dias)
+    RADAR_COBERTURA_TXT = (
+        f"Radar DOU: edi&ccedil;&otilde;es de {varridos[-1].strftime('%d/%m')} a "
+        f"{varridos[0].strftime('%d/%m')} verificadas"
+        + (f" (retomado da checagem de {ultima.strftime('%d/%m')})" if ultima else "")
+        + ("; dia(s) inacess&iacute;vel(is) ser&atilde;o revarridos" if falhos else "") + ".")
+
+    # ---------- 3) ineditas + frases do e-mail (dedup identico ao de sempre) ----------
+    novas = dou_alerta.para_formato_excel(cru) if cru is not None and len(cru) else None
+    if novas is not None:
+        # Excel editado a mao (coluna renomeada/apagada) nao pode derrubar o radar:
+        # garante as colunas do formato; as extras que o usuario criou continuam la.
+        for c in novas.columns:
+            if c not in existentes.columns:
+                existentes[c] = ""
+
+        def _chave(d):
+            # Celula VAZIA vira NaN na volta do Excel e viraria a string "nan", enquanto
+            # do lado recem-coletado ela e "". A chave nunca batia e a linha se declarava
+            # inedita TODA rodada (1 alerta falso por dia). Normaliza os dois lados.
+            def _col(nome):
+                return (d[nome].fillna("").astype(str).str.strip()
+                        .replace({"nan": "", "None": "", "<NA>": ""}))
+            return _col("link") + "|" + _col("processo") + "|" + _col("curso")
+        ineditas = novas[~_chave(novas).isin(set(_chave(existentes)))]
+        links_ineditos = set(ineditas["link"].astype(str))
+        RADAR_FRASES = [f for f in frases if str(f["link"]) in links_ineditos]
+    else:
+        ineditas = existentes.iloc[0:0]
+        print("[radar] nenhum ato alarmante na janela varrida", flush=True)
+
+    # ---------- 4) novo estado: NUNCA avanca por cima de dia que falhou ---------------
+    state_novo = hoje
+    if falhos:
+        state_novo = min(falhos) - timedelta(days=1)
+        while state_novo.weekday() >= 5:
+            state_novo -= timedelta(days=1)
+    state_mudou = (ultima is None) or (state_novo != ultima)
+
+    # ---------- 5) grava so quando ha motivo (ato novo / Funil ausente / estado) ------
+    if ineditas.empty and tem_funil and not state_mudou:
+        print("[radar] nada novo, Funil em dia e estado atual — sem regravacao", flush=True)
         return
+    if ineditas.empty:
+        print("[radar] sem ato inedito — regravando por: "
+              + ("Funil ausente; " if not tem_funil else "")
+              + ("estado avancou" if state_mudou else ""), flush=True)
+    linha_state = {"Assunto": ASSUNTO_STATE,
+                   "Descricao": (f"{state_novo.isoformat()} — ultima varredura concluida "
+                                 f"do DOU (atualizado pelo robo; NAO apagar: e o ponto "
+                                 f"de partida da proxima consulta)")}
+    if notas is None or "Assunto" not in getattr(notas, "columns", []):
+        notas = pd.DataFrame([linha_state])
+    else:
+        notas = notas[notas["Assunto"].astype(str).str.strip() != ASSUNTO_STATE]
+        notas = pd.concat([notas, pd.DataFrame([linha_state])], ignore_index=True)
+    abas_extra["Notas"] = notas
 
-    todas = pd.concat([existentes, ineditas], ignore_index=True)
+    todas = (pd.concat([existentes, ineditas], ignore_index=True)
+             if len(ineditas) else existentes)
     for c in ("data_pedido", "data_decisao"):
-        todas[c] = pd.to_datetime(todas[c], errors="coerce").dt.date
-    med = todas[todas["curso"].astype(str).str.contains(r"\bMEDICINA\b", case=False,
-                                                        regex=True)
-                & ~todas["curso"].astype(str).str.contains("VETERIN", case=False)]
+        if c in todas.columns:
+            todas[c] = pd.to_datetime(todas[c], errors="coerce").dt.date
+    med = (todas[todas["curso"].astype(str).str.contains(r"\bMEDICINA\b", case=False,
+                                                         regex=True)
+                 & ~todas["curso"].astype(str).str.contains("VETERIN", case=False)]
+           if "curso" in todas.columns else todas.iloc[0:0])
     with pd.ExcelWriter(local, engine="openpyxl",
                         date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY") as xw:
         todas.to_excel(xw, sheet_name="Atos", index=False)
@@ -403,7 +484,8 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
                      f"subiu com os atos novos, mas a aba Funil/Graficos ficou desatualizada")
     update_file(local, RADAR_DRIVE_NOME, xlsx_mime)
     print(f"[ok] radar: {len(ineditas)} linha(s) nova(s) no {RADAR_DRIVE_NOME} "
-          f"({len(RADAR_FRASES)} documento(s) no alerta do e-mail)", flush=True)
+          f"({len(RADAR_FRASES)} documento(s) no alerta do e-mail) | "
+          f"ultima checagem gravada: {state_novo.isoformat()}", flush=True)
 
 
 def _valuation_summary(download_file, update_file):
