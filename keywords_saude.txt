@@ -70,6 +70,11 @@ alfapoetina
 medicina
 +PIS
 +COFINS
+"IPC-S"
+"IGP-DI"
+"IGP-M"
+IPCA
+"IPCA-15"
 +Medida provisória
 +Mercado Livre
 +Block Trade

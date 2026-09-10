@@ -476,6 +476,36 @@ def _whitelist_norm():
     return {_fonte_norm(w) for w in WHITELIST}
 
 
+def _whitelist_compacta():
+    """Entradas da whitelist sem espacos/pontos ('O Globo' -> 'oglobo'), para casar
+    fonte que o Google News manda como DOMINIO."""
+    return {re.sub(r"[^a-z0-9]", "", _fonte_norm(w)) for w in WHITELIST}
+
+
+def _fonte_aceita(source, wl_norm, wl_compacta):
+    """O Google News ALTERNA a grafia da fonte: a mesma materia do O Globo veio como
+    'O GLOBO' numa busca e como 'oglobo.globo.com' noutra (medido 10/09/2026 — a
+    versao-dominio era descartada em silencio pela whitelist). Alem da comparacao
+    normalizada, fonte em formato de dominio casa pelo 1o rotulo do host contra a
+    whitelist compactada: oglobo.globo.com->oglobo, g1.globo.com->g1,
+    agenciabrasil.ebc.com.br->agenciabrasil."""
+    n = _fonte_norm(source)
+    if n in wl_norm:
+        return True
+    if "." in n and " " not in n:
+        rotulos = [r for r in n.split(".") if r]
+        if rotulos and rotulos[0] in ("www", "www1", "www2", "portal") and len(rotulos) > 1:
+            rotulos = rotulos[1:]
+        if rotulos:
+            r0 = re.sub(r"[^a-z0-9]", "", rotulos[0])
+            # 1 rotulo (oglobo) e 2 rotulos juntos (gov+br=govbr; medicina+sa=medicinasa)
+            if r0 in wl_compacta:
+                return True
+            if len(rotulos) > 1 and r0 + re.sub(r"[^a-z0-9]", "", rotulos[1]) in wl_compacta:
+                return True
+    return False
+
+
 def fatia_keywords(shard, shards):
     """Fatia INTERCALADA (1 de cada N), nao blocos contiguos: assim toda fatia recebe uma
     mistura de keywords produtivas e raras e as fatias terminam em tempos parecidos."""
@@ -540,9 +570,9 @@ def _google_news(when, kws=None, incluir_bsg=True):
                      f"apos retry (possivel throttle): {', '.join(ainda_vazias[:10])}"
                      + ("…" if len(ainda_vazias) > 10 else ""))
     df = pd.DataFrame(rows, columns=COLS)
-    wl = _whitelist_norm()
+    wl, wlc = _whitelist_norm(), _whitelist_compacta()
     antes = len(df)
-    df = df[df["source"].map(_fonte_norm).isin(wl)].reset_index(drop=True)
+    df = df[df["source"].map(lambda s: _fonte_aceita(s, wl, wlc))].reset_index(drop=True)
     print(f"[google_news] whitelist: {len(df)}/{antes} itens de fontes aceitas", flush=True)
 
     # Brazil Stock Guide via Google News (EN + PT) — tambem sequencial

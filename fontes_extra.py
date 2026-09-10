@@ -228,6 +228,10 @@ def _wp_json(url):
     try:
         r = requests.get("https://r.jina.ai/" + url, timeout=30)
         txt = r.text
+        if re.search(r"Just a moment|security verification|requiring CAPTCHA", txt, re.I):
+            # Cloudflare em modo CHALLENGE (Abifina, 10/09/2026): bloqueia direto E
+            # espelho — nao e falha transitoria, e bloqueio estrutural de datacenter
+            return None, "WAF challenge"
         i = txt.find("[")
         dados = json.loads(txt[i:]) if i >= 0 else json.loads(txt)
         if isinstance(dados, list):
@@ -245,7 +249,13 @@ def _wp(nome, base, filtrar, desde, ctx):
     try:
         posts, via = _wp_json(url)
         if posts is None:
-            _erro(ctx, nome, via)
+            if via == "WAF challenge":
+                # bloqueio estrutural (CAPTCHA p/ datacenter): log esperado, nao aviso —
+                # senao a Abifina vira ruido diario na faixa do e-mail
+                print(f"[fontes_extra] {nome}: WAF com CAPTCHA bloqueia direto e espelho "
+                      f"(esperado no Actions)", flush=True)
+            else:
+                _erro(ctx, nome, via)
             return rows
         if via == "espelho":
             print(f"[fontes_extra] {nome}: direto bloqueado — veio pelo espelho", flush=True)

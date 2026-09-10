@@ -72,6 +72,14 @@ Pravaler
 Educbank
 "Grupo Salta"
 
+# --- indices de inflacao (reajuste de mensalidades; pedido do dono 10/09/2026:
+#     IPC-S e IGP-DI citam educacao/saude no corpo e devem entrar)
+"IPC-S"
+"IGP-DI"
+"IGP-M"
+IPCA
+"IPCA-15"
+
 # --- temas de mercado (genericos: sempre ancorados)
 +block trade
 +aquisicao
