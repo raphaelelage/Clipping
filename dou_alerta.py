@@ -95,19 +95,26 @@ def coletar_novidades(dias=3, log=print):
     df_linhas = linhas por curso no formato do Excel historico."""
     atos, inacessiveis = [], []
     for d in _dias_uteis_recentes(dias):
-        arr = dh.atos_do_dia(d, "do1")
-        if arr is None:
-            # feriado nao tem edicao — normal. Todas inacessiveis = in.gov.br fora do ar,
-            # e isso NAO pode passar em silencio (vira aviso no e-mail). A lista de dias
-            # falhos volta ao chamador: o state da ultima checagem NAO avanca sobre eles.
-            log(f"[radar] {d}: edicao inacessivel (sera reavaliada amanha)")
+        falhou = False
+        # do1_extra tambem (dono, 10/09/2026): edicao EXTRA as vezes traz ato do MEC e
+        # ficava fora do radar (limitacao herdada da 1a carga). Dia sem extra = lista
+        # vazia (normal); None em QUALQUER secao = falha -> o dia sera revarrido.
+        for secao in ("do1", "do1_extra"):
+            arr = dh.atos_do_dia(d, secao)
+            if arr is None:
+                # feriado nao tem edicao — normal. Todas inacessiveis = in.gov.br fora
+                # do ar, e isso NAO pode passar em silencio (vira aviso no e-mail). A
+                # lista de dias falhos volta ao chamador: o state NAO avanca sobre eles.
+                log(f"[radar] {d} ({secao}): edicao inacessivel (sera reavaliada)")
+                falhou = True
+                continue
+            for a in arr:
+                if str(a.get("hierarchyStr", "")).startswith("Ministério da Educação"):
+                    a["_dia"] = d.isoformat()
+                    a["_secao"] = secao
+                    atos.append(a)
+        if falhou:
             inacessiveis.append(d)
-            continue
-        for a in arr:
-            if str(a.get("hierarchyStr", "")).startswith("Ministério da Educação"):
-                a["_dia"] = d.isoformat()
-                a["_secao"] = "do1"
-                atos.append(a)
     if len(inacessiveis) >= dias:
         import avisos
         avisos.aviso("Radar DOU: nenhuma edicao do DOU acessivel ("
