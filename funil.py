@@ -30,6 +30,7 @@ import pandas as pd
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 INEP_PARQUET = os.path.join(BASE, "cursos_inep.parquet")
+EMEC_PARQUET = os.path.join(BASE, "situacao_cursos_emec.parquet")
 CAUTELARES_JSON = os.path.join(BASE, "cautelares_enamed_2026.json")
 AMARELO = "FFF6C453"          # celula preenchida via INEP (nao consta no ato do DOU)
 
@@ -63,7 +64,8 @@ FASE_PENDENTE = {
 
 # ordem das colunas da aba Funil — pensada para virar grafico (codigos primeiro)
 COLS_FUNIL = ["cod_ies", "ies", "cod_curso", "curso_padrao", "curso", "uf", "municipio",
-              "municipio_check", "medicina", "fase_atual", "data_fase", "via",
+              "municipio_check", "medicina", "fase_atual", "situacao_emec",
+              "data_fase", "via",
               "status_regulatorio", "ref_regulatoria", "regime_seres", "vagas",
               "vagas_fonte", "cautelar", "sancionador", "qtd_atos", "ato_da_fase",
               "mantenedora", "processo_recente", "fonte_inep"]
@@ -113,6 +115,21 @@ def _padronizar_municipios(funil, log=print):
     log(f"[funil] municipios: {corrigidos} grafias padronizadas pelo IBGE; "
         f"{n_nok} nao encontrados na UF (mantidos como vieram)")
     return funil
+
+
+def _carregar_emec(log=print):
+    """cod_curso -> situacao no Cadastro e-MEC (Em atividade / Em extincao / Extinto).
+    Fonte: CSV publico "Cursos de Graduacao do Brasil" (dados abertos do MEC). E a UNICA
+    fonte que diz se o curso ainda existe: o DOU publica a extincao sem nomear o curso
+    (so processo + IES) e o Censo INEP so enxerga curso em atividade."""
+    if not os.path.exists(EMEC_PARQUET):
+        log("[funil] situacao_cursos_emec.parquet ausente — situacao e-MEC pulada")
+        return {}
+    e = pd.read_parquet(EMEC_PARQUET)
+    out = {str(int(c)): s for c, s in zip(e["cod_curso"], e["situacao_emec"])
+           if pd.notna(c) and str(s).strip()}
+    log(f"[funil] e-MEC: situacao de {len(out)} cursos carregada")
+    return out
 
 
 def _carregar_cautelares(log=print):
@@ -290,7 +307,7 @@ def gerar(caminho, log=print):
             "curso": nome_raw, "uf": ult["uf"], "municipio": ult["municipio"],
             "medicina": "Sim" if (re.search(r"\bMEDICINA\b", cnorm)
                                   and "VETERIN" not in cnorm) else "",
-            "fase_atual": fase,
+            "fase_atual": fase, "situacao_emec": "",
             "data_fase": data_fase.date() if pd.notna(data_fase) else None,
             "via": via, "status_regulatorio": status, "ref_regulatoria": ref_reg,
             "municipio_check": "", "vagas_fonte": vagas_fonte,
@@ -346,6 +363,20 @@ def gerar(caminho, log=print):
         log(f"[funil] INEP preencheu {len(pintar)} celulas em "
             f"{funil['fonte_inep'].ne('').sum()} cursos")
 
+    # ------------- situacao do curso pelo Cadastro e-MEC (amarelo: fonte externa) ----
+    emec = _carregar_emec(log)
+    n_emec = 0
+    if emec:
+        for i in funil.index:
+            cod = funil.at[i, "cod_curso"]
+            sit = emec.get(cod) if cod else None
+            if sit:
+                funil.at[i, "situacao_emec"] = sit
+                pintar.append((i, "situacao_emec"))
+                n_emec += 1
+        vc = funil["situacao_emec"].value_counts().to_dict()
+        log(f"[funil] e-MEC preencheu situacao em {n_emec} cursos: {vc}")
+
     # cautelares do Enamed: cruzamento OFICIAL por cod_curso (Portarias SERES 72-76/2026)
     cautelares = _carregar_cautelares(log)
     if cautelares:
@@ -375,7 +406,10 @@ def gerar(caminho, log=print):
         "cod_curso, ou IES+nome unico); coluna fonte_inep detalha por linha. "
         f"(2) Municipios padronizados pela base oficial do IBGE e conferidos contra a UF "
         f"({n_ibge} 'ok' na coluna municipio_check). "
-        "(3) status_regulatorio/ref_regulatoria: ADC 81 (STF), Portaria MEC 129/2026 "
+        f"(3) situacao_emec: Cadastro e-MEC / dados abertos do MEC, arquivo \"Cursos de "
+        f"Graduacao do Brasil\" ({n_emec} cursos) — diz se o curso esta Em atividade, Em "
+        "extincao ou Extinto (o DOU publica a extincao sem nomear o curso). "
+        "(4) status_regulatorio/ref_regulatoria: ADC 81 (STF), Portaria MEC 129/2026 "
         "(revogacao do Edital de Chamamento 1/2023) e Portarias SERES 72-76/2026 (Enamed). "
         "ATENCAO vagas: veja a coluna vagas_fonte — vagas do INEP sao o TOTAL ofertado do "
         "curso EXISTENTE (nunca o numero de um pedido pendente nem o acrescimo de um "

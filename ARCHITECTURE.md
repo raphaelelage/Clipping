@@ -363,3 +363,13 @@ legitimas sumiram (mesmo curso em municipios distintos). Chave corrigida em dou_
 linhas devolvidas pela correcao v3 (suplemento com teto por trio link+curso+ies — nunca
 adiciona alem do deficit; processo numerico vira texto sem .0 na chave).
 Marca na aba Notas: correcao_v3_aplicada (roda 1x no robo, idempotente).
+
+### Situacao do curso pelo Cadastro e-MEC (10/set/2026)
+situacao_cursos_emec.parquet (627 KB, 86.239 cursos) sai do CSV publico "Cursos de Graduacao
+do Brasil" (dados abertos do MEC, 225 MB — baixado a mao pelo dono porque o portal exige
+CAPTCHA; o CSV cru NAO entra no repo). E a UNICA fonte que diz se o curso ainda existe:
+o DOU publica a extincao sem nomear o curso (so processo + IES) e o Censo INEP so enxerga
+curso em atividade. Coluna situacao_emec no Funil (Em atividade / Em extincao / Extinto),
+pintada de AMARELO e declarada na nota de cabecalho, como todo dado de fonte externa.
+Casamento por cod_curso: 20.666 dos 21.929 cursos com codigo (94%).
+Para atualizar: baixar o CSV de novo (1-2x/ano) e regerar o parquet.
