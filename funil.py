@@ -50,6 +50,10 @@ FASE_TRILHO = {
     "autorizacao": (1, "1. Autorizado"),
     "reconhecimento": (2, "2. Reconhecido"),
     "renovacao_reconhecimento": (3, "3. Renovacao de reconhecimento"),
+    # INDEFERIDO nao e etapa do trilho, e SAIDA: o pedido foi negado. Fica como fase
+    # para o curso nao cair no balde "(sem ato do trilho)" e sumir da leitura — se
+    # depois vier autorizacao, ela e mais recente e assume (a fase e sempre o ULTIMO ato).
+    "indeferimento": (8, "F. Indeferido (pedido negado)"),
     "desativacao": (9, "F. Desativado"),
 }
 FASE_PENDENTE = {

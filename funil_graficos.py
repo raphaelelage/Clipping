@@ -131,6 +131,25 @@ def gerar(caminho, log=print):
                    "desses anos sao reconhecimento/renovacao de cursos ja existentes",
                    t8, "bar_stack", "cursos"))
 
+    # G10: APROVADO x NEGADO (dono, 10/09/2026) — so existe depois da correcao do
+    # classificador; antes o indeferimento vinha rotulado como autorizacao e a taxa de
+    # rejeicao era invisivel (em 2024 houve MAIS negativas que aprovacoes em Medicina)
+    dec = atos[atos["tipo_decisao"].astype(str).isin(["autorizacao", "indeferimento"])].copy()
+    dec["_ano"] = _ano(dec["data_decisao"])
+    dec["_med"] = dec["curso"].map(_eh_med)
+    t10 = (dec[dec["_med"]].groupby(["_ano", "tipo_decisao"]).size().unstack(fill_value=0)
+           .rename(columns={"autorizacao": "Autorizado", "indeferimento": "Indeferido"})
+           .reset_index().rename(columns={"_ano": "ano"}).dropna(subset=["ano"]))
+    if len(t10):
+        t10["ano"] = t10["ano"].astype(int)
+        for col in ("Autorizado", "Indeferido"):
+            if col not in t10.columns:
+                t10[col] = 0
+        t10 = _completa(t10[["ano", "Autorizado", "Indeferido"]])
+        blocos.append(("G10. MEDICINA: pedidos AUTORIZADOS x INDEFERIDOS por ano | fonte: "
+                       "aba Atos, tipo_decisao autorizacao vs indeferimento, curso Medicina",
+                       t10, "bar", "atos"))
+
     aut["_fila"] = aut["_ano"] - aut["_ano_pedido"]
     t9 = (aut[aut["_fila"].between(0, 15)]
           .groupby(["_ano", "_med"])["_fila"].median().unstack()
@@ -165,7 +184,8 @@ def gerar(caminho, log=print):
         ancoras.append((titulo, tipo, eixo_y, head, head + len(df), df.shape[1]))
         linha = head + len(df) + 3
 
-    pos = ["A1", "J1", "A20", "J20", "A39", "J39", "A58", "J58", "A77"]
+    pos = ["A1", "J1", "A20", "J20", "A39", "J39", "A58", "J58", "A77", "J77",
+           "A96", "J96"]
     for k, (titulo, tipo, eixo_y, h0, h1, ncols) in enumerate(ancoras):
         ch = LineChart() if tipo == "line" else BarChart()
         if tipo == "bar_stack":

@@ -333,3 +333,20 @@ do corte de janela: 87 itens/rodada (72 so da Fiocruz, 70 deles VELHOS). `_data_
 tenta em 3 camadas: *_parsed do feedparser -> RFC822/ISO -> portugues (`_data_pt`: traduz
 dia/mes e entende dd/mm/aaaa - HH:MM). Item que mesmo assim nao tiver data e DESCARTADO
 (idade desconhecida nunca entra) e a contagem sai no log. Medido depois: 0 sem data.
+
+### Correcao da base do DOU (10/set/2026) — 3 bugs de extracao
+Descobertos ao investigar "por que so ate 2021?" no grafico G8. A base dizia ZERO autorizacao
+de Medicina em 2022-2026; o certo sao 147 (66 so em 2024, do Edital 1/2018 concluindo).
+1. INDEFERIMENTO contado como AUTORIZACAO: "Indeferir o pedido de AUTORIZACAO do curso"
+   casava com a regra de autorizacao — REJEICAO virava aprovacao (1.073 atos).
+2. "Fica autorizado/reconhecido o curso" nao casava com autoriza(cao|r|m)?: o ato era
+   classificado pelos considerandos (2.582 autorizacoes eram, na verdade, renovacoes).
+3. Portaria de curso UNICO poe curso/vagas/IES/mantenedora/municipio na PROSA do Art. 1,
+   e o extrator so lia TABELAS — esses atos entravam vazios.
+Correcao: `classificar` le o VERBO no inicio do Art. 1 (_DISPOSITIVOS) e so sobrescreve
+quando o verbo e inequivoco — fora disso vale a regra classica (zero regressao, validado
+por amostragem do texto real). `detalhes_da_prosa` extrai os campos do Art. 1.
+Retroativo SEM refazer coleta: `reprocessar_dou.py` (usa o texto ja salvo no parquet) e
+`corrigir_base_dou.py` (aplica na planilha, so em celula vazia e so em ato de 1 linha).
+Novo tipo `indeferimento`: entra em ALARME_SEMPRE (rejeicao e material) e vira a fase
+"F. Indeferido" no Funil + o grafico G10 (autorizados x indeferidos por ano).

@@ -34,11 +34,15 @@ ALARME_SEMPRE = {
     "autorizacao", "aditamento_aumento_vagas", "reducao_vagas", "credenciamento",
     "descredenciamento", "medida_cautelar", "sancionador_supervisao", "desativacao",
     "sobrestamento", "chamamento_mais_medicos",
+    # INDEFERIMENTO (tipo novo, 10/09/2026): pedido NEGADO e tao material quanto o
+    # deferido — antes vinha classificado como "autorizacao" e alertava como aprovacao
+    "indeferimento",
 }
 ALARME_SO_MEDICINA = {"reconhecimento", "renovacao_reconhecimento"}
 
 _VERBO = {
     "autorizacao": "autoriza",
+    "indeferimento": "INDEFERE o pedido de",
     "aditamento_aumento_vagas": "aumenta as vagas de",
     "reducao_vagas": "reduz as vagas de",
     "reconhecimento": "reconhece",

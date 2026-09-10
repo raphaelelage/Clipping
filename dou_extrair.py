@@ -67,12 +67,121 @@ RX_JUDICIAL = re.compile(
 RX_PORTARIA_NUM = re.compile(r"PORTARIA[^\d]{0,40}N[ºo°]?\s*([\d.]+)\s*,?\s*DE\s+(.{5,40}?\d{4})", re.I)
 
 
+_RX_ART1 = re.compile(r"Art\.?\s*1\s*[ºo°]?\s*[-–.]?\s*(.{0,600})", re.S | re.I)
+
+# VERBO DO DISPOSITIVO: o que o Art. 1 MANDA fazer, lido no COMECO dele. So isto e
+# confiavel o bastante para sobrepor a regra antiga — keyword solta no meio do ato
+# classifica errado ("Indeferir o pedido de AUTORIZACAO do curso" virava autorizacao;
+# medido em 10/09/2026 na P.148/2024, Medicina do Maua de Brasilia).
+# Fora destes padroes, NADA muda: vale a classificacao de sempre (zero regressao).
+_DISPOSITIVOS = [
+    ("indeferimento",            r"(?:fica\w*\s+indeferid|indeferir|indefiro|"
+                                 r"nega\w*\s+provimento)"),
+    ("renovacao_reconhecimento", r"fica\w*\s+renovad\w*\s+o?s?\s*reconheciment|"
+                                 r"renovar\s+o\s+reconheciment"),
+    ("reconhecimento",           r"fica\w*\s+reconhecid|reconhecer\s+o\s+curso"),
+    ("autorizacao",              r"fica\w*\s+autorizad|autorizar\s+o\s+"),
+    ("descredenciamento",        r"fica\w*\s+descredenciad"),
+    ("recredenciamento",         r"fica\w*\s+recredenciad"),
+    ("credenciamento",           r"fica\w*\s+credenciad"),
+]
+_DISPOSITIVOS_RX = [(t, re.compile(r"^\W{0,4}" + rx)) for t, rx in _DISPOSITIVOS]
+
+
+def _dispositivo(texto):
+    """Trecho do Art. 1 — a parte que DECIDE (os 'considerandos' anteriores citam
+    normas e decisoes passadas e envenenam a classificacao)."""
+    m = _RX_ART1.search(texto or "")
+    return m.group(1) if m else ""
+
+
 def classificar(titulo, texto):
-    t = _norm(titulo) + " " + _norm(texto[:2500])
+    disp = _norm(_dispositivo(texto)).strip()
+    if disp:
+        for tipo, rx in _DISPOSITIVOS_RX:      # verbo claro no inicio do Art. 1: manda
+            if rx.match(disp):
+                return tipo
+    t = _norm(titulo) + " " + _norm((texto or "")[:2500])     # regra classica, intacta
     for tipo, rx in _TIPOS_RX:
         if rx.search(t):
             return tipo
     return "outro"
+
+
+# ------------------------------------------------- texto corrido -> campos do curso
+# Portarias da SERES de curso UNICO trazem tudo na prosa do Art. 1, nao em tabela:
+# "Fica autorizado o curso superior de graduacao em Medicina (Codigo e-MEC no 1638420),
+#  bacharelado, com 50 (cinquenta) vagas totais anuais ... a ser ofertado pela Escola de
+#  Ciencias da Saude Anhanguera de Ponta Pora (cod. 28833), mantida pela Anhanguera
+#  Educacional Participacoes S/A (cod. 16452) ... no municipio de Ponta Pora, no estado
+#  do Mato Grosso do Sul."
+# Sem este parser esses atos entravam com curso/IES/vagas VAZIOS — 4.433 no levantamento,
+# incluindo TODAS as autorizacoes de Medicina de 2022-2026 (bug medido em 10/09/2026).
+_RX_P_CURSO = re.compile(
+    r"curso(?:\s+superior)?(?:\s+de\s+gradua[çc][ãa]o)?\s+(?:em|de)\s+"
+    r"([A-Za-zÀ-ÿ][^(,;.]{2,70}?)\s*(?=[(,;.]|\s+bacharel|\s+licenciat|\s+tecnol)", re.I)
+_RX_P_CODCURSO = re.compile(
+    r"\(\s*(?:c[óo]digo\s+)?(?:e-?MEC\s*)?n?[ºo°]?\s*(\d{4,8})\s*\)", re.I)
+_RX_P_VAGAS = re.compile(r"com\s+([\d.]{1,7})\s*(?:\([^)]{2,40}\)\s*)?vagas", re.I)
+_RX_P_IES = re.compile(
+    r"(?:ofertad[oa]|ministrad[oa]|pleitead[oa]|requerid[oa])\s+(?:pel[ao]|junto\s+[àa])\s+"
+    r"([^,(;]{4,95}?)\s*(?=[,(;]|\s+c[óo]d)", re.I)
+_RX_P_MANT = re.compile(r"mantid[oa]\s+pel[ao]\s+([^,(;]{4,95}?)\s*(?=[,(;]|\s+c[óo]d)", re.I)
+_RX_P_COD_APOS = re.compile(r"\s*[,(]?\s*c[óo]d(?:igo)?\.?\s*(?:e-?MEC)?\s*"
+                            r"n?[ºo°]?\s*:?\s*(\d{3,7})", re.I)
+_RX_P_MUN = re.compile(r"munic[íi]pio\s+d[eo]\s+([^,;.]{2,45})", re.I)
+_RX_P_UF = re.compile(r"estado\s+d[eo]s?\s+([^,;.]{2,40})", re.I)
+_UF_SIGLA = {
+    "acre": "AC", "alagoas": "AL", "amapa": "AP", "amazonas": "AM", "bahia": "BA",
+    "ceara": "CE", "distrito federal": "DF", "espirito santo": "ES", "goias": "GO",
+    "maranhao": "MA", "mato grosso": "MT", "mato grosso do sul": "MS",
+    "minas gerais": "MG", "para": "PA", "paraiba": "PB", "parana": "PR",
+    "pernambuco": "PE", "piaui": "PI", "rio de janeiro": "RJ",
+    "rio grande do norte": "RN", "rio grande do sul": "RS", "rondonia": "RO",
+    "roraima": "RR", "santa catarina": "SC", "sao paulo": "SP", "sergipe": "SE",
+    "tocantins": "TO",
+}
+
+
+def _cod_depois(texto, fim):
+    """Codigo e-MEC logo apos o nome (aceita '(cod. 123)' e ', codigo 123')."""
+    m = _RX_P_COD_APOS.match(texto[fim:fim + 45])
+    return m.group(1) if m else ""
+
+
+def detalhes_da_prosa(texto):
+    """Campos do curso a partir do Art. 1 em texto corrido. So devolve o que ACHOU —
+    campo nao encontrado fica vazio (nada e inventado)."""
+    disp = _dispositivo(texto)
+    out = {}
+    m = _RX_P_CURSO.search(disp)
+    if m:
+        out["curso"] = re.sub(r"\s+", " ", m.group(1)).strip(" -–")
+        cod = _RX_P_CODCURSO.search(disp[m.end():m.end() + 60])
+        if cod:
+            out["cod_curso"] = cod.group(1)
+    m = _RX_P_VAGAS.search(disp)
+    if m:
+        out["vagas"] = m.group(1).replace(".", "")
+    m = _RX_P_IES.search(disp)
+    if m:
+        out["ies"] = re.sub(r"\s+", " ", m.group(1)).strip(" -–")
+        c = _cod_depois(disp, m.end())
+        if c:
+            out["cod_ies"] = c
+    m = _RX_P_MANT.search(disp)
+    if m:
+        out["mantenedora"] = re.sub(r"\s+", " ", m.group(1)).strip(" -–")
+        c = _cod_depois(disp, m.end())
+        if c:
+            out["cod_mantenedora"] = c
+    m = _RX_P_MUN.search(disp)
+    if m:
+        out["municipio"] = re.sub(r"\s+", " ", m.group(1)).strip()
+    m = _RX_P_UF.search(disp)
+    if m:
+        out["uf"] = _UF_SIGLA.get(_norm(m.group(1)).strip(), "")
+    return {k: v for k, v in out.items() if v}
 
 
 def relevante(a, texto=""):
@@ -205,14 +314,18 @@ def extrair(atos, workers=6, log=print):
                                    "vagas_num": _so_numero_vagas(c.get("vagas")),
                                    "fonte_detalhe": "tabela do ato"})
             else:
-                # texto corrido: extrai o que der do proprio paragrafo
+                # texto corrido: le curso/vagas/IES/mantenedora/municipio do Art. 1
                 proc = RX_PROCESSO.search(texto)
                 cod = RX_COD_IES.search(texto)
-                linhas.append({**base,
-                               "processo_emec": proc.group(0) if proc else "",
-                               "cod_ies": cod.group(1) if cod else "",
-                               "resumo_texto": texto[:400],
-                               "fonte_detalhe": "texto corrido"})
+                det = detalhes_da_prosa(texto)
+                linha = {**base,
+                         "processo_emec": proc.group(0) if proc else "",
+                         "cod_ies": cod.group(1) if cod else "",
+                         "resumo_texto": texto[:400],
+                         "fonte_detalhe": ("prosa do Art. 1" if det else "texto corrido")}
+                linha.update(det)               # o que a prosa achou manda
+                linha["vagas_num"] = _so_numero_vagas(linha.get("vagas"))
+                linhas.append(linha)
     log(f"[extrair] FIM: {len(linhas)} linhas | {sem_texto} atos sem texto integral "
         f"(usado o resumo da listagem)")
     return pd.DataFrame(linhas)
