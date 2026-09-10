@@ -325,3 +325,11 @@ o parsing roda SEQUENCIAL num ProcessPoolExecutor de 1 worker — worker que mor
 aquele resumo, o pool e recriado e a rodada segue (vira aviso no e-mail). Se o subprocesso
 nao subir no ambiente (sonda no inicio), cai para parsing sequencial no proprio processo —
 nunca fica sem saida. Teto de 90s alem do budget de download.
+
+### Janela: RSS com data em PORTUGUES (10/set/2026)
+Feeds brasileiros publicam "Qui, 10 Set 2026 14:16:31 -0300" (UOL) e "Qui, 10/09/2026 - 12:05"
+(Fiocruz). NEM o feedparser NEM o parse RFC822 entendem -> o item ficava SEM data e ESCAPAVA
+do corte de janela: 87 itens/rodada (72 so da Fiocruz, 70 deles VELHOS). `_data_entrada` agora
+tenta em 3 camadas: *_parsed do feedparser -> RFC822/ISO -> portugues (`_data_pt`: traduz
+dia/mes e entende dd/mm/aaaa - HH:MM). Item que mesmo assim nao tiver data e DESCARTADO
+(idade desconhecida nunca entra) e a contagem sai no log. Medido depois: 0 sem data.

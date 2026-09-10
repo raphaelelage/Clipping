@@ -21,7 +21,7 @@ import json
 import time
 import re
 import zipfile
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -283,10 +283,76 @@ def _wp(nome, base, filtrar, desde, ctx):
     return rows
 
 
+# Feeds brasileiros publicam a data em PORTUGUES e NEM o feedparser NEM o parse RFC822
+# entendem: "Qui, 10 Set 2026 14:16:31 -0300" (UOL) e "Qui, 10/09/2026 - 12:05" (Fiocruz)
+# ficavam SEM data — 87 itens/rodada escapando do corte de janela (medido 10/09/2026).
+_PT_DIA = {"seg": "Mon", "ter": "Tue", "qua": "Wed", "qui": "Thu", "sex": "Fri",
+           "sab": "Sat", "dom": "Sun"}
+_PT_MES = {"jan": "Jan", "fev": "Feb", "mar": "Mar", "abr": "Apr", "mai": "May",
+           "jun": "Jun", "jul": "Jul", "ago": "Aug", "set": "Sep", "out": "Oct",
+           "nov": "Nov", "dez": "Dec"}
+_RX_BR = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})(?:\s*[-,]?\s*(\d{1,2}):(\d{2}))?")
+
+
+def _data_pt(txt, tz):
+    """Data em portugues -> datetime aware. Nunca levanta."""
+    import unicodedata as _ud
+    s = str(txt or "").strip()
+    if not s:
+        return None
+    m = _RX_BR.search(s)                       # dd/mm/aaaa [- HH:MM]
+    if m:
+        try:
+            d, mo, a = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            h, mi = int(m.group(4) or 0), int(m.group(5) or 0)
+            return datetime(a, mo, d, h, mi, tzinfo=tz)
+        except Exception:
+            return None
+    # RFC822 com nomes em portugues: traduz dia/mes e reaproveita o parser padrao
+    plano = "".join(c for c in _ud.normalize("NFKD", s) if not _ud.combining(c))
+    def _troca(mapa, texto):
+        for pt, en in mapa.items():
+            texto = re.sub(rf"\b{pt}\w*\b", en, texto, count=1, flags=re.I)
+        return texto
+    return None if plano == s and not any(k in plano.lower() for k in _PT_DIA) else \
+        _troca(_PT_MES, _troca(_PT_DIA, plano))
+
+
+def _data_entrada(e, ctx):
+    """Data de UMA entrada de feed, em 3 camadas: *_parsed do feedparser -> texto
+    RFC822/ISO -> texto em PORTUGUES. So devolve None quando a entrada realmente nao
+    traz data (ai o item e descartado: idade desconhecida nao entra na janela)."""
+    for campo in ("published_parsed", "updated_parsed"):
+        st = e.get(campo)
+        if st:
+            try:
+                return datetime(*st[:6], tzinfo=timezone.utc)
+            except Exception:
+                pass
+    bruto = e.get("published") or e.get("updated") or ""
+    dt = ctx["to_dt"](bruto)
+    if dt:
+        return dt
+    convertido = _data_pt(bruto, ctx["tz"])
+    if isinstance(convertido, datetime):
+        return convertido
+    return ctx["to_dt"](convertido) if convertido else None
+
+
 def _rss(nome, url, filtrar, cutoff, ctx, exige=None):
-    rows = []
+    rows, sem_data = [], []
     try:
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        # 2 tentativas: feed grande cai no meio do download de vez em quando
+        # (ChunkedEncodingError na Medicina S/A, 10/09/2026) — 1 retry resolve
+        r = None
+        for tentativa in (1, 2):
+            try:
+                r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+                break
+            except Exception:
+                if tentativa == 2:
+                    raise
+                time.sleep(2)
         if r.status_code != 200:
             # Substack bloqueia IP de datacenter (403 permanente no Actions; nenhum espelho
             # repassa XML integro — jina renderiza, proxies publicos falham; medido
@@ -309,8 +375,14 @@ def _rss(nome, url, filtrar, cutoff, ctx, exige=None):
                 continue
             if exige and exige not in link:      # gov.br mistura documento com noticia
                 continue
-            dt = ctx["to_dt"](e.get("published", e.get("updated", "")))
-            if dt and dt < cutoff:
+            dt = _data_entrada(e, ctx)
+            # SEM data = idade desconhecida: NAO entra. Sem isto, feed com data em
+            # portugues ("Qui, 10 Set 2026", Fiocruz/UOL) escapava do corte de janela
+            # e podia trazer materia velha — o mesmo tipo de vazamento do 09/09.
+            if dt is None:
+                sem_data.append(titulo[:70])
+                continue
+            if dt < cutoff:
                 continue
             kw = ctx["match"](titulo, ancorar=(url in FEEDS_AMPLOS)) if filtrar else nome
             if not kw:
@@ -319,6 +391,9 @@ def _rss(nome, url, filtrar, cutoff, ctx, exige=None):
             rows.append((titulo, nome, d, h, kw, link, url))
     except Exception as e:
         _erro(ctx, nome, e)
+    if sem_data:
+        print(f"[fontes_extra] {nome}: {len(sem_data)} item(ns) sem data legivel "
+              f"descartado(s) (fora da garantia de janela)", flush=True)
     return rows
 
 
