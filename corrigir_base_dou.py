@@ -34,12 +34,39 @@ def _vazio(v):
                                       "não consta na fonte", "0")
 
 
+MARCA = "correcao_v2_aplicada"      # gravada na aba Notas: a correcao roda UMA vez
+
+
+def ja_aplicada(notas):
+    """True se a planilha ja passou pela correcao (marca na aba Notas)."""
+    if notas is None or "Assunto" not in getattr(notas, "columns", []):
+        return False
+    return (notas["Assunto"].astype(str).str.strip() == MARCA).any()
+
+
+def linha_marca():
+    from datetime import date
+    return {"Assunto": MARCA,
+            "Descricao": (f"{date.today().isoformat()} — base reclassificada pelo verbo do "
+                          f"Art. 1 e campos lidos da prosa (indeferimento deixou de ser "
+                          f"contado como autorizacao). NAO apagar: evita reprocessar.")}
+
+
+def aplicar_em_df(atos, log=print):
+    """Mesma correcao, sobre o DataFrame da aba Atos ja carregado (usada pelo robo)."""
+    return _corrigir_df(pd.read_parquet(PARQUET_V2), atos, log)
+
+
 def corrigir(caminho, aplicar=False, log=print):
     v2 = pd.read_parquet(PARQUET_V2)
     xl = pd.ExcelFile(caminho)
     atos = xl.parse("Atos")
     log(f"[corrigir] Atos: {len(atos)} linhas | parquet v2: {len(v2)} linhas")
+    atos = _corrigir_df(v2, atos, log)
+    return _gravar(caminho, xl, atos, log) if aplicar else atos
 
+
+def _corrigir_df(v2, atos, log=print):
     tipo_por_link = dict(zip(v2["link"].astype(str), v2["tipo_ato"].astype(str)))
     uma_linha_v2 = v2["link"].astype(str).value_counts()
     uma_linha_v2 = set(uma_linha_v2[uma_linha_v2 == 1].index)
@@ -91,13 +118,19 @@ def corrigir(caminho, aplicar=False, log=print):
     log("\n[corrigir] MEDICINA por ano x tipo (DEPOIS):")
     log(pd.crosstab(ano, med["tipo_decisao"]).to_string())
 
-    if not aplicar:
-        log("\n(diagnostico apenas — use --aplicar para gravar)")
-        return atos
-    outras = {n: xl.parse(n) for n in xl.sheet_names
-              if n not in ("Atos", "Medicina", "Funil", "Graficos", "Graf_Dados")}
+    return atos
+
+
+def _gravar(caminho, xl, atos, log=print):
+    c = atos["curso"].astype(str).str.upper()
     med_nova = atos[c.str.contains(r"\bMEDICINA\b", regex=True, na=False)
                     & ~c.str.contains("VETERIN", na=False)]
+    outras = {n: xl.parse(n) for n in xl.sheet_names
+              if n not in ("Atos", "Medicina", "Funil", "Graficos", "Graf_Dados")}
+    notas = outras.get("Notas")
+    if notas is not None and not ja_aplicada(notas):
+        outras["Notas"] = pd.concat([notas, pd.DataFrame([linha_marca()])],
+                                    ignore_index=True)
     with pd.ExcelWriter(caminho, engine="openpyxl", date_format="DD/MM/YYYY",
                         datetime_format="DD/MM/YYYY") as xw:
         atos.to_excel(xw, sheet_name="Atos", index=False)

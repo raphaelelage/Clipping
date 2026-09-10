@@ -358,10 +358,31 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
     if existentes is None:
         existentes = pd.DataFrame()
 
+    # ---------- 1b) MIGRACAO UNICA: corrige os 3 bugs de extracao na base do Drive ----
+    # (indeferimento contado como autorizacao; verbo do Art. 1 ignorado; prosa nao lida).
+    # Roda uma vez so — a marca fica na aba Notas. Falhar aqui nao derruba o radar.
+    migrou = False
+    notas = abas_extra.get("Notas")
+    if existentes is not None and len(existentes):
+        try:
+            import corrigir_base_dou as _corr
+            if not _corr.ja_aplicada(notas):
+                print("[radar] aplicando correcao unica da base (classificacao + prosa)…",
+                      flush=True)
+                existentes = _corr.aplicar_em_df(existentes,
+                                                 log=lambda m: print(m, flush=True))
+                linha = _corr.linha_marca()
+                notas = (pd.DataFrame([linha]) if notas is None
+                         else pd.concat([notas, pd.DataFrame([linha])], ignore_index=True))
+                abas_extra["Notas"] = notas
+                migrou = True
+        except Exception as e:
+            avisos.aviso(f"Correcao unica da base do DOU nao aplicada ({type(e).__name__}: "
+                         f"{e}) — a planilha segue com a classificacao antiga")
+
     # ---------- 2) ultima checagem (aba Notas) -> quantos dias uteis varrer ----------
     ASSUNTO_STATE = "radar_ultima_checagem"
     ultima = None
-    notas = abas_extra.get("Notas")
     if notas is not None and "Assunto" in getattr(notas, "columns", []):
         achado = notas[notas["Assunto"].astype(str).str.strip() == ASSUNTO_STATE]
         if len(achado):
@@ -433,11 +454,12 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
     state_mudou = (ultima is None) or (state_novo != ultima)
 
     # ---------- 5) grava so quando ha motivo (ato novo / Funil ausente / estado) ------
-    if ineditas.empty and tem_funil and not state_mudou:
+    if ineditas.empty and tem_funil and not state_mudou and not migrou:
         print("[radar] nada novo, Funil em dia e estado atual — sem regravacao", flush=True)
         return
     if ineditas.empty:
         print("[radar] sem ato inedito — regravando por: "
+              + ("correcao unica da base; " if migrou else "")
               + ("Funil ausente; " if not tem_funil else "")
               + ("estado avancou" if state_mudou else ""), flush=True)
     linha_state = {"Assunto": ASSUNTO_STATE,
