@@ -61,8 +61,20 @@ FASE_PENDENTE = {
 COLS_FUNIL = ["cod_ies", "ies", "cod_curso", "curso_padrao", "curso", "uf", "municipio",
               "municipio_check", "medicina", "fase_atual", "data_fase", "via",
               "status_regulatorio", "ref_regulatoria", "regime_seres", "vagas",
-              "cautelar", "sancionador", "qtd_atos", "ato_da_fase", "mantenedora",
-              "processo_recente", "fonte_inep"]
+              "vagas_fonte", "cautelar", "sancionador", "qtd_atos", "ato_da_fase",
+              "mantenedora", "processo_recente", "fonte_inep"]
+
+# o que o numero de VAGAS mede, conforme o ato de onde saiu (o cuidado do dono,
+# 10/09/2026: aumento de vagas NAO e o total da IES; INEP e o total do curso existente)
+_VAGAS_FONTE = {
+    "autorizacao": "DOU — autorizacao (vagas do curso autorizado)",
+    "aditamento_aumento_vagas": "DOU — aditamento de aumento de vagas (numero do ATO; "
+                                "pode ser o total ja ampliado, nao so o acrescimo)",
+    "reducao_vagas": "DOU — reducao de vagas",
+    "reconhecimento": "DOU — reconhecimento (vagas informadas no ato)",
+    "renovacao_reconhecimento": "DOU — renovacao de reconhecimento (vagas do ato)",
+}
+VAGAS_FONTE_INEP = "INEP Censo 2024 — vagas TOTAIS ofertadas do curso existente (nao e o pedido)"
 
 
 def _padronizar_municipios(funil, log=print):
@@ -255,8 +267,15 @@ def gerar(caminho, log=print):
                      g["ato"].map(lambda a: "MAIS MEDICOS" in _norm(a)).any()
         via = ("Judicial" if judicial
                else "Chamamento Mais Medicos" if chamamento else "Ordinaria")
-        vagas_serie = g["numero_vagas"].map(_int_ou_vazio)
-        vagas = next((v for v in reversed(list(vagas_serie)) if v), "")
+        # vagas = ultimo ato que informou numero; guarda tambem QUE ato foi, p/ rotular
+        vagas, vagas_fonte = "", ""
+        for _, rr in g.iloc[::-1].iterrows():
+            vv = _int_ou_vazio(rr["numero_vagas"])
+            if vv:
+                vagas = vv
+                t = str(rr["tipo_decisao"])
+                vagas_fonte = _VAGAS_FONTE.get(t, f"DOU — {t}")
+                break
         cautelar = g[g["tipo_decisao"] == "medida_cautelar"]
         sanc = g[g["tipo_decisao"] == "sancionador_supervisao"]
         nome_raw = ult["curso"]
@@ -270,7 +289,7 @@ def gerar(caminho, log=print):
             "fase_atual": fase,
             "data_fase": data_fase.date() if pd.notna(data_fase) else None,
             "via": via, "status_regulatorio": status, "ref_regulatoria": ref_reg,
-            "municipio_check": "",
+            "municipio_check": "", "vagas_fonte": vagas_fonte,
             "regime_seres": next((regime_por_proc[p] for p in
                                   g["processo"].map(lambda x: _norm(_limpa(x)))
                                   if p and p in regime_por_proc), ""),
@@ -312,6 +331,8 @@ def gerar(caminho, log=print):
             _põe("uf", hit.uf)
             _põe("municipio", hit.municipio)
             _põe("vagas", _int_ou_vazio(hit.vagas))
+            if "vagas" in preenchidos:      # veio do Censo: rotula como total do curso
+                funil.at[i, "vagas_fonte"] = VAGAS_FONTE_INEP
             if not _limpa(r["curso_padrao"]) and _limpa(hit.curso):
                 funil.at[i, "curso_padrao"] = curso_padrao(hit.curso)
                 pintar.append((i, "curso_padrao"))
@@ -337,20 +358,50 @@ def gerar(caminho, log=print):
         ["medicina", "fase_atual", "data_fase"], ascending=[False, True, False])
 
     # ---------------- grava: so a aba Funil muda; amarelo nas celulas do INEP -------
+    # NOTA no cabecalho (linha 1): de onde veio TODO dado que nao estava no ato do DOU
+    # (regra do dono, 10/09/2026 — sempre no cabecalho). Celula amarela = preenchida de
+    # fonte externa; a coluna fonte_inep diz o que veio do Censo em cada linha.
+    n_amarelas = len(pintar)
+    n_ibge = int((funil["municipio_check"] == "ok").sum())
+    NOTA = (
+        "NOTA DE FONTES — celulas AMARELAS foram preenchidas com dado que NAO consta no "
+        "ato do DOU: "
+        f"(1) INEP Censo da Educacao Superior 2024 (cod_curso, cod_ies, curso, uf, "
+        f"municipio, vagas) — {n_amarelas} celulas, so em cruzamento inequivoco (por "
+        "cod_curso, ou IES+nome unico); coluna fonte_inep detalha por linha. "
+        f"(2) Municipios padronizados pela base oficial do IBGE e conferidos contra a UF "
+        f"({n_ibge} 'ok' na coluna municipio_check). "
+        "(3) status_regulatorio/ref_regulatoria: ADC 81 (STF), Portaria MEC 129/2026 "
+        "(revogacao do Edital de Chamamento 1/2023) e Portarias SERES 72-76/2026 (Enamed). "
+        "ATENCAO vagas: veja a coluna vagas_fonte — vagas do INEP sao o TOTAL ofertado do "
+        "curso EXISTENTE (nunca o numero de um pedido pendente nem o acrescimo de um "
+        "aumento de vagas). Nada e estimado por IA.")
+
     abas = {n: xl.parse(n) for n in xl.sheet_names if n != "Funil"}
-    from openpyxl.styles import PatternFill
+    from openpyxl.styles import PatternFill, Font, Alignment
     fill = PatternFill(start_color=AMARELO, end_color=AMARELO, fill_type="solid")
-    pos = {i: k + 2 for k, i in enumerate(funil.index)}      # linha no Excel (1 = cabecalho)
+    # nota na linha 1, cabecalho na 2, dados da 3 em diante
+    pos = {i: k + 3 for k, i in enumerate(funil.index)}
     col_x = {c: j + 1 for j, c in enumerate(COLS_FUNIL)}
     with pd.ExcelWriter(caminho, engine="openpyxl",
                         date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY") as xw:
         for n, df in abas.items():
             df.to_excel(xw, sheet_name=n, index=False)
-        funil.to_excel(xw, sheet_name="Funil", index=False)
+        funil.to_excel(xw, sheet_name="Funil", index=False, startrow=1)
         ws = xw.book["Funil"]
+        ws.cell(row=1, column=1, value=NOTA)
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(COLS_FUNIL))
+        c = ws.cell(row=1, column=1)
+        c.font = Font(italic=True, size=9, color="663300")
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+        c.fill = PatternFill(start_color="FFFDF3D6", end_color="FFFDF3D6", fill_type="solid")
+        ws.row_dimensions[1].height = 58
         for i, col in pintar:
             ws.cell(row=pos[i], column=col_x[col]).fill = fill
-        for aba in list(abas) + ["Funil"]:
+        ws.freeze_panes = "A3"
+        ws.auto_filter.ref = "A2:" + ws.cell(row=2, column=len(COLS_FUNIL)).coordinate \
+            + str(2 + len(funil))
+        for aba in abas:
             w = xw.book[aba]
             w.freeze_panes = "A2"
             w.auto_filter.ref = w.dimensions

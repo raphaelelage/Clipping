@@ -29,7 +29,8 @@ def _ano(serie):
 
 
 def gerar(caminho, log=print):
-    funil = pd.read_excel(caminho, sheet_name="Funil")
+    # a aba Funil tem a NOTA DE FONTES na linha 1; o cabecalho real esta na linha 2
+    funil = pd.read_excel(caminho, sheet_name="Funil", header=1)
     atos = pd.read_excel(caminho, sheet_name="Atos")
     med = funil[funil["medicina"].astype(str) == "Sim"]
     aut = atos[atos["tipo_decisao"].astype(str) == "autorizacao"].copy()
