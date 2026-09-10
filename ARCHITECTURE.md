@@ -350,3 +350,16 @@ Retroativo SEM refazer coleta: `reprocessar_dou.py` (usa o texto ja salvo no par
 `corrigir_base_dou.py` (aplica na planilha, so em celula vazia e so em ato de 1 linha).
 Novo tipo `indeferimento`: entra em ALARME_SEMPRE (rejeicao e material) e vira a fase
 "F. Indeferido" no Funil + o grafico G10 (autorizados x indeferidos por ano).
+
+### Auditoria v3 da base do DOU (10/set/2026) — verbos restantes + dedup
+Varredura de TODOS os verbos decisorios do Art. 1 nos 58k atos. Novos tipos/dispositivos:
+extintos->desativacao (3.8k linhas sairam de reconhecimento; as tabelas de extincao NAO
+trazem nome/codigo do curso, so processo e-MEC novo + IES — por isso ficam FORA do funil
+por curso, sem vinculo inventado), revogacao, sem_efeito (ambos alarmam no radar),
+unificacao_mantidas (206 linhas-curso que inflavam autorizacao; NAO alarma),
+suspensao de chamada publica -> chamamento_mais_medicos.
+DEDUP da 1a carga colapsava (ato+processo+curso+ies) sem municipio/vagas: 1.997 linhas
+legitimas sumiram (mesmo curso em municipios distintos). Chave corrigida em dou_montar e
+linhas devolvidas pela correcao v3 (suplemento com teto por trio link+curso+ies — nunca
+adiciona alem do deficit; processo numerico vira texto sem .0 na chave).
+Marca na aba Notas: correcao_v3_aplicada (roda 1x no robo, idempotente).

@@ -77,6 +77,17 @@ _RX_ART1 = re.compile(r"Art\.?\s*1\s*[ºo°]?\s*[-–.]?\s*(.{0,600})", re.S | r
 _DISPOSITIVOS = [
     ("indeferimento",            r"(?:fica\w*\s+indeferid|indeferir|indefiro|"
                                  r"nega\w*\s+provimento)"),
+    # v3 (auditoria 10/09/2026 — varredura de TODOS os verbos decisorios da base):
+    # "ficam EXTINTOS, a pedido, os cursos do anexo" caia como reconhecimento e 3.846
+    # cursos mortos figuravam vivos no Funil; REVOGACAO/SEM EFEITO (reversao de ato)
+    # caiam no tipo do ato revertido; "aprovada a UNIFICACAO de mantidas" (ato societario,
+    # 206 linhas-curso) inflava autorizacao; suspensao de CHAMADA PUBLICA idem.
+    ("desativacao",              r"fica\w*\s+extint|extinguir\s"),
+    ("revogacao",                r"fica\w*\s+revogad|revogar\b"),
+    ("sem_efeito",               r"torna\w*\s+sem\s+efeito"),
+    ("unificacao_mantidas",      r"(?:fica\w*\s+aprovad\w*|aprovar)\s+a\s+unificacao\s+"
+                                 r"de\s+mantidas"),
+    ("chamamento_mais_medicos",  r"suspender\s+o\s+prosseguimento\s+da\s+chamada\s+publica"),
     ("renovacao_reconhecimento", r"fica\w*\s+renovad\w*\s+o?s?\s*reconheciment|"
                                  r"renovar\s+o\s+reconheciment"),
     ("reconhecimento",           r"fica\w*\s+reconhecid|reconhecer\s+o\s+curso"),

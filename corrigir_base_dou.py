@@ -34,7 +34,11 @@ def _vazio(v):
                                       "não consta na fonte", "0")
 
 
-MARCA = "correcao_v2_aplicada"      # gravada na aba Notas: a correcao roda UMA vez
+# Gravada na aba Notas: a correcao roda UMA vez POR VERSAO. v3 (10/09/2026) somou a
+# auditoria de verbos: extintos->desativacao, revogacao, sem_efeito, unificacao_mantidas,
+# suspensao de chamada publica. Re-rodar sobre base v2 e idempotente (retipo por link +
+# preenchimento so de celula vazia).
+MARCA = "correcao_v3_aplicada"
 
 
 def ja_aplicada(notas):
@@ -48,13 +52,88 @@ def linha_marca():
     from datetime import date
     return {"Assunto": MARCA,
             "Descricao": (f"{date.today().isoformat()} — base reclassificada pelo verbo do "
-                          f"Art. 1 e campos lidos da prosa (indeferimento deixou de ser "
-                          f"contado como autorizacao). NAO apagar: evita reprocessar.")}
+                          f"Art. 1 (indeferimento, extincao, revogacao, sem efeito, "
+                          f"unificacao de mantidas) e campos lidos da prosa. "
+                          f"NAO apagar: evita reprocessar.")}
 
 
 def aplicar_em_df(atos, log=print):
     """Mesma correcao, sobre o DataFrame da aba Atos ja carregado (usada pelo robo)."""
-    return _corrigir_df(pd.read_parquet(PARQUET_V2), atos, log)
+    v2 = pd.read_parquet(PARQUET_V2)
+    atos = _corrigir_df(v2, atos, log)
+    return _suplementar(v2, atos, log)
+
+
+def _nkey(v):
+    """Normaliza um pedaco de chave: minusculo, SEM acento, sem '.0' de float
+    (processo/vagas numericos no Excel viram '201912199.0' e desalinhavam TUDO)."""
+    import unicodedata as u
+    s = "" if v is None else str(v).strip().lower()
+    if s in ("nan", "none", "<na>", "nao consta na fonte", "não consta na fonte"):
+        return ""
+    if s.endswith(".0") and s[:-2].replace(".", "").isdigit():
+        s = s[:-2]
+    return "".join(ch for ch in u.normalize("NFKD", s) if not u.combining(ch))
+
+
+def _col(df, nome):
+    return df[nome] if nome in df.columns else pd.Series([""] * len(df), index=df.index)
+
+
+def _suplementar(v2, atos, log=print):
+    """Devolve ao Excel as linhas-curso que a 1a carga PERDEU: o dedup antigo
+    (ato+processo+curso+IES, sem municipio/vagas) colapsou o mesmo curso ofertado em
+    municipios diferentes (polos EAD, despachos multi-campus). Duas travas contra
+    duplicata: (1) so entra linha cuja chave completa nao exista; (2) TETO por trio
+    (link,curso,ies) = n_parquet - n_excel — mesmo com chave desalinhada por
+    enriquecimento (municipio preenchido depois), nunca adiciona alem do deficit real."""
+    import dou_alerta
+    from collections import Counter
+
+    def trio(link, curso, ies):
+        return _nkey(link) + "|" + _nkey(curso) + "|" + _nkey(ies)
+
+    def chave6(link, proc, curso, ies, municipio, vagas):
+        return "|".join((_nkey(link), _nkey(proc), _nkey(curso), _nkey(ies),
+                         _nkey(municipio), _nkey(vagas)))
+
+    tem6 = set(chave6(*t) for t in zip(
+        atos["link"], _col(atos, "processo"), _col(atos, "curso"),
+        _col(atos, "ies"), _col(atos, "municipio"), _col(atos, "numero_vagas")))
+    n_xl = Counter(trio(l, c, i) for l, c, i in zip(
+        atos["link"], _col(atos, "curso"), _col(atos, "ies")))
+
+    links_xl = set(atos["link"].astype(str))
+    cand = v2[v2["link"].astype(str).isin(links_xl)].copy()
+    cu = cand["curso"]
+    nomeado = ~(cu.isna() | cu.astype(str).str.strip().str.lower().isin(
+        ["", "nan", "none", "<na>", "nao consta na fonte", "não consta na fonte"]))
+    cand = cand[nomeado]
+    n_pq = Counter(trio(l, c, i) for l, c, i in zip(
+        cand["link"], cand["curso"], cand["ies"]))
+    saldo = {t: n_pq[t] - n_xl.get(t, 0) for t in n_pq if n_pq[t] > n_xl.get(t, 0)}
+
+    idx = []
+    for i, l, p, c, ie, m, v in zip(cand.index, cand["link"], cand["processo_emec"],
+                                    cand["curso"], cand["ies"], cand["municipio"],
+                                    cand["vagas_num"]):
+        t = trio(l, c, ie)
+        if saldo.get(t, 0) > 0 and chave6(l, p, c, ie, m, v) not in tem6:
+            idx.append(i)
+            saldo[t] -= 1
+    if not idx:
+        log("[corrigir] suplemento: nenhuma linha perdida a devolver")
+        return atos
+    faltam = cand.loc[idx]
+    sup = dou_alerta.para_formato_excel(faltam)
+    sup["fonte_detalhe"] = "tabela do ato (linha recuperada na correcao v3)"
+    for col in atos.columns:
+        if col not in sup.columns:
+            sup[col] = ""
+    sup = sup[[c for c in atos.columns]]
+    log(f"[corrigir] suplemento: +{len(sup)} linha(s)-curso devolvidas "
+        f"({faltam['link'].nunique()} documentos)")
+    return pd.concat([atos, sup], ignore_index=True)
 
 
 def corrigir(caminho, aplicar=False, log=print):
@@ -63,6 +142,7 @@ def corrigir(caminho, aplicar=False, log=print):
     atos = xl.parse("Atos")
     log(f"[corrigir] Atos: {len(atos)} linhas | parquet v2: {len(v2)} linhas")
     atos = _corrigir_df(v2, atos, log)
+    atos = _suplementar(v2, atos, log)
     return _gravar(caminho, xl, atos, log) if aplicar else atos
 
 

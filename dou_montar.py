@@ -82,7 +82,10 @@ def montar(parquet, saida, oficial_parquet=None, log=print):
     df = df.sort_values("data")
 
     # dedup de republicacao: mesma (ato, processo, curso, ies) -> fica a mais recente
-    chave = ["ato", "processo_emec", "curso", "ies"]
+    # municipio e vagas na chave (v3, 10/09/2026): sem eles, o mesmo ato listando o
+    # mesmo curso da mesma IES em MUNICIPIOS diferentes (polos EAD, despachos
+    # multi-campus) colapsava numa linha so — 1.997 linhas legitimas sumiram da 1a carga.
+    chave = ["ato", "processo_emec", "curso", "ies", "municipio", "vagas_num"]
     for c in chave:
         if c not in df:
             df[c] = ""

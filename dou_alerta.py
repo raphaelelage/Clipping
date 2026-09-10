@@ -37,12 +37,17 @@ ALARME_SEMPRE = {
     # INDEFERIMENTO (tipo novo, 10/09/2026): pedido NEGADO e tao material quanto o
     # deferido — antes vinha classificado como "autorizacao" e alertava como aprovacao
     "indeferimento",
+    # REVOGACAO/SEM EFEITO (v3): reversao de ato anterior — raro (~5/ano) e material
+    "revogacao", "sem_efeito",
 }
 ALARME_SO_MEDICINA = {"reconhecimento", "renovacao_reconhecimento"}
 
 _VERBO = {
     "autorizacao": "autoriza",
     "indeferimento": "INDEFERE o pedido de",
+    "revogacao": "REVOGA ato referente a",
+    "sem_efeito": "TORNA SEM EFEITO ato referente a",
+    "unificacao_mantidas": "aprova unificacao de mantidas de",
     "aditamento_aumento_vagas": "aumenta as vagas de",
     "reducao_vagas": "reduz as vagas de",
     "reconhecimento": "reconhece",
