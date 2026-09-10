@@ -300,3 +300,11 @@ judicial -> "Vivo (Portaria 531/2023)"; pendente ordinario -> "Sem trilho (edita
 Portaria MEC 129/2026)"; decidido com cod_curso nas Portarias SERES 72-76/2026 (cautelares do
 Enamed, parseadas do DOU em cautelares_enamed_2026.json) -> "Restrito - Enamed (...)".
 Nada e inferido por IA: so campos existentes + base oficial com URL da fonte no json.
+
+### Funil automatico no robo (10/set/2026)
+Sempre que o radar acrescenta ato novo, _radar_e_excel regenera a aba Funil (funil.py) e os
+graficos (funil_graficos.py) ANTES do upload ao Drive — pipeline 100% deterministico, sem IA.
+Abas derivadas (Funil/Graficos/Graf_Dados) NAO entram em abas_extra: reescreve-las como
+dataframe mataria os graficos nativos e a nota de cabecalho. Falha no funil vira aviso no
+e-mail e o upload segue so com Atos/Medicina. Rodada manual local: "Atualizar Funil DOU.bat"
+na pasta do projeto.

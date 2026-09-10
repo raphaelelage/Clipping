@@ -329,12 +329,16 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
     local = Path(RADAR_DRIVE_NOME)
     abas_extra = {}
     existentes = None
+    # Funil/Graficos/Graf_Dados sao DERIVADOS (regenerados abaixo por funil.py):
+    # nao entram em abas_extra — re-salva-los como dataframe mataria os graficos
+    # nativos e a nota de cabecalho do Funil.
+    DERIVADAS = ("Atos", "Medicina", "Funil", "Graficos", "Graf_Dados")
     if download_file(RADAR_DRIVE_NOME, local):
         try:
             xl = pd.ExcelFile(local)
             existentes = xl.parse("Atos")
             for aba in xl.sheet_names:
-                if aba not in ("Atos", "Medicina"):
+                if aba not in DERIVADAS:
                     abas_extra[aba] = xl.parse(aba)
         except Exception as e:
             avisos.aviso(f"Radar DOU: {RADAR_DRIVE_NOME} do Drive ilegivel ({type(e).__name__}) "
@@ -343,7 +347,7 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
         xl = pd.ExcelFile(RADAR_SEED)
         existentes = xl.parse("Atos")
         for aba in xl.sheet_names:
-            if aba not in ("Atos", "Medicina"):
+            if aba not in DERIVADAS:
                 abas_extra[aba] = xl.parse(aba)
         print("[radar] Drive sem o arquivo — comecando da semente do repo", flush=True)
     if existentes is None:
@@ -385,6 +389,18 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
             ws = xw.book[aba]
             ws.freeze_panes = "A2"
             ws.auto_filter.ref = ws.dimensions
+    # FUNIL AUTOMATICO (dono, 10/09/2026: "rodar de forma independente de AI"):
+    # sempre que entra ato novo, regenera a aba Funil (estado atual por curso, com
+    # os cruzamentos INEP/IBGE/cautelares — tudo deterministico, ver funil.py) e os
+    # graficos auditaveis. Falha aqui nao segura o upload: sobe sem Funil e avisa.
+    try:
+        import funil as _funil
+        import funil_graficos as _fgraf
+        _funil.gerar(str(local), log=lambda m: print(m, flush=True))
+        _fgraf.gerar(str(local), log=lambda m: print(m, flush=True))
+    except Exception as e:
+        avisos.aviso(f"Funil do DOU nao regenerado ({type(e).__name__}: {e}) — a planilha "
+                     f"subiu com os atos novos, mas a aba Funil/Graficos ficou desatualizada")
     update_file(local, RADAR_DRIVE_NOME, xlsx_mime)
     print(f"[ok] radar: {len(ineditas)} linha(s) nova(s) no {RADAR_DRIVE_NOME} "
           f"({len(RADAR_FRASES)} documento(s) no alerta do e-mail)", flush=True)
