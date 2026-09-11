@@ -173,8 +173,13 @@ def enriquecer(funil, pintar, log=print):
         cod_ies = funil.at[i, "cod_ies"]
         if _vazio(cod_ies):
             continue
+        # fase "0.x" (pedido que ainda NAO existe) e "F." (morto/negado) NAO casam por
+        # nome: o par (IES+curso) acharia o gemeo ATIVO da mesma IES — falso match
+        # medido na P.290/2026 (desativa 1189400, cruzamento colava 1305542 EAD)
+        fase = str(funil.at[i, "fase_atual"] if "fase_atual" in funil.columns else "")
+        pula_cod = fase.startswith("0.") or fase.startswith("F.")
         falta = [c for c in ("cod_curso", "municipio", "uf", "vagas")
-                 if _vazio(funil.at[i, c])]
+                 if _vazio(funil.at[i, c]) and not (pula_cod and c == "cod_curso")]
         if not falta:
             continue
         alvo = _norm(funil.at[i, "curso_padrao"]) or _norm(funil.at[i, "curso"])

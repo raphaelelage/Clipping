@@ -140,8 +140,15 @@ def _padronizar_municipios(funil, log=print):
     for m, u in zip(ibge["municipio"], ibge["uf"]):
         oficial[(u, _norm(m))] = m
     novos, checks, corrigidos = [], [], 0
+    RX_MUN_UF = re.compile(r"^(.*?)\s*/\s*([A-Za-z]{2})$")
     for m, u in zip(funil["municipio"], funil["uf"]):
         m0, u0 = _limpa(m), _limpa(u).upper()
+        mm = RX_MUN_UF.match(m0)          # "Castanhal/PA" -> municipio + UF
+        if mm:
+            m0 = mm.group(1).strip()
+            if not u0:
+                u0 = mm.group(2).upper()
+                funil.loc[funil["municipio"] == m, "uf"] = u0
         if not m0:
             novos.append(m0); checks.append("sem municipio"); continue
         if not u0:
@@ -218,11 +225,21 @@ _PARENS_RX = re.compile(r"\s*\([^)]*\)\s*$")
 _MINUS = {"de", "da", "do", "das", "dos", "e", "em", "a", "o", "para", "com"}
 
 
+_RABO_IES_RX = re.compile(
+    r"\s+(?:d[aeo]s?\s+)?(?:universidade|faculdade|centro\s+universit|escola|"
+    r"instituto|fundacao|uni[a-z]*\b).*$", re.I)
+
+
 def curso_padrao(nome):
     """"MEDICINA (Bacharelado)" -> "Medicina". Parentetico final cai; title-case com
     conectivos minusculos. Vazio/"nao consta" -> ""."""
     n = _limpa(nome)
     n = _PARENS_RX.sub("", n)
+    # "Medicina da Universidade Brasil" (prosa antiga engoliu a IES) -> "Medicina";
+    # so corta se sobrar nome de verdade antes
+    m = _RABO_IES_RX.search(n)
+    if m and len(n[:m.start()].strip()) >= 4:
+        n = n[:m.start()]
     n = re.sub(r"\s+", " ", n).strip(" -–")
     if not n:
         return ""
@@ -239,6 +256,61 @@ def _int_ou_vazio(v):
         return str(int(f)) if f == f else ""          # NaN != NaN
     except Exception:
         return ""
+
+
+_ORDEM_FASE = {"F. Desativado": 6, "F. Indeferido (pedido negado)": 5,
+               "3. Renovacao de reconhecimento": 4, "2. Reconhecido": 3,
+               "1. Autorizado": 2, "0. Sobrestado (ADC 81)": 1,
+               "0. Protocolado (em tramitacao)": 1}
+
+
+def _consolidar_por_cod(funil, pintar, pintar_manual, log=print):
+    """O cod_curso pode chegar so no CRUZAMENTO (depois do agrupamento por chave), e o
+    mesmo curso ficava em 2+ linhas (2.313 na auditoria de 11/09/2026: uma pela chave
+    S/COD com grafia diferente de municipio/IES, outra pelo codigo). Aqui as linhas com
+    o MESMO cod_curso viram uma so: vence a de fase mais avancada (empate: data mais
+    recente, depois mais atos); qtd_atos soma; campo vazio do vencedor herda do outro;
+    as celulas pintadas migram junto."""
+    cod = funil["cod_curso"].astype(str).str.strip()
+    dup = cod.ne("") & cod.ne("nan") & cod.duplicated(keep=False)
+    if not dup.any():
+        return funil, pintar, pintar_manual
+    manter, remap, drop = {}, {}, set()
+    dfd = funil[dup]
+    rank = dfd["fase_atual"].map(lambda x: _ORDEM_FASE.get(str(x), 0))
+    dtf = pd.to_datetime(dfd["data_fase"], errors="coerce")
+    qa = pd.to_numeric(dfd["qtd_atos"], errors="coerce").fillna(0)
+    ordem = pd.DataFrame({"c": cod[dup], "r": rank, "d": dtf, "q": qa},
+                         index=dfd.index).sort_values(
+        ["c", "r", "d", "q"], ascending=[True, False, False, False])
+    for c, grupo in ordem.groupby("c", sort=False):
+        idx = list(grupo.index)
+        win, perde = idx[0], idx[1:]
+        soma = int(pd.to_numeric(funil.loc[idx, "qtd_atos"], errors="coerce")
+                   .fillna(0).sum())
+        funil.at[win, "qtd_atos"] = soma
+        if (funil.loc[idx, "via"] == "Judicial").any():
+            funil.at[win, "via"] = "Judicial"
+        for i in perde:
+            for col in funil.columns:
+                if col in ("qtd_atos", "via"):
+                    continue
+                if _limpa(funil.at[win, col]) == "" and _limpa(funil.at[i, col]) != "":
+                    funil.at[win, col] = funil.at[i, col]
+                    remap[(i, col)] = (win, col)
+            drop.add(i)
+    pintar = [remap.get(t, t) for t in pintar if t[0] not in drop or t in remap]
+    pintar_manual = [remap.get(t, t) for t in pintar_manual
+                     if t[0] not in drop or t in remap]
+    n = len(drop)
+    funil = funil.drop(index=drop).reset_index(drop=True)
+    # os indices mudaram com o reset: reconstroi o mapa posicional
+    novo_idx = {old: new for new, old in enumerate(
+        [i for i in range(len(funil) + n) if i not in drop])}
+    pintar = [(novo_idx[i], c) for i, c in pintar if i in novo_idx]
+    pintar_manual = [(novo_idx[i], c) for i, c in pintar_manual if i in novo_idx]
+    log(f"[funil] consolidacao por cod_curso: {n} linha(s) duplicada(s) fundida(s)")
+    return funil, pintar, pintar_manual
 
 
 def _carregar_inep(log=print):
@@ -379,6 +451,14 @@ def gerar(caminho, log=print):
             "fonte_externa": "", "link_fonte": link_fase,
         })
     funil = pd.DataFrame(linhas)
+    # linha-LEGENDA de tabela (P.2.001/2023, stricto sensu): "Legenda:" foi parar em
+    # ies E uf ao mesmo tempo — nao e curso, e rodape de tabela. Fora.
+    _lixo = (funil["ies"].astype(str).str.strip().str.lower()
+             == funil["uf"].astype(str).str.strip().str.lower()) & \
+        (funil["uf"].astype(str).str.len() > 3)
+    if _lixo.any():
+        log(f"[funil] {int(_lixo.sum())} linha(s)-legenda de tabela descartada(s)")
+        funil = funil[~_lixo].reset_index(drop=True)
 
     # ---------------- ajustes MANUAIS do dono (celulas verdes; prioridade maxima) ----
     pintar_manual = []
@@ -461,12 +541,15 @@ def gerar(caminho, log=print):
         log(f"[funil] Enamed: {int(alvo.sum())} cursos decididos marcados como restritos")
 
     funil = _padronizar_municipios(funil, log)
+    funil, pintar, pintar_manual = _consolidar_por_cod(funil, pintar, pintar_manual, log)
 
     # Medicina continua NO TOPO da aba, so que sem coluna dedicada (dono,
     # 11/09/2026: redundante — filtre curso_padrao = "Medicina")
     _med_topo = funil["curso"].map(
         lambda c: bool(re.search(r"\bMEDICINA\b", _norm(c)))
         and "VETERIN" not in _norm(c))
+    for _c in ("cod_ies", "cod_curso", "vagas", "qtd_atos"):
+        funil[_c] = pd.to_numeric(funil[_c], errors="coerce").astype("Int64")
     funil = (funil.assign(_m=_med_topo)
              .sort_values(["_m", "fase_atual", "data_fase"],
                           ascending=[False, True, False])
@@ -559,6 +642,45 @@ def gerar(caminho, log=print):
             "(vazio) - curso decidido, sem restricao vigente conhecida",
             "Robo Clipping", 220, 400)
         ws.cell(row=2, column=col_x["status_regulatorio"]).comment = _c_status
+        _notas_cols = {
+            "sancionador": ("Data do ULTIMO ato sancionador/supervisao do MEC contra "
+                            "este curso (processo administrativo por irregularidade). "
+                            "Poucas linhas tem: a maioria dos atos de supervisao mira a "
+                            "INSTITUICAO, sem nomear curso — esses ficam so na aba Atos. "
+                            "Curso com historico aqui = risco maior de restricao futura."),
+            "qtd_atos": ("Quantas linhas da aba Atos pertencem a este curso (a historia "
+                         "dele no DOU desde 2018). A soma da coluna e MENOR que o total "
+                         "da aba Atos de proposito: atos sem nome nem codigo de curso "
+                         "(extincoes que so citam processo, credenciamento de IES, "
+                         "CEBAS, sancionador de instituicao) nao viram linha aqui."),
+            "link_fonte": ("Link da FONTE da fase atual. Ato no DOU: in.gov.br. Linhas "
+                           "PENDENTES (fase 0.x) apontam para a pagina da SERES/MEC: "
+                           "pedido pendente NAO tem ato no DOU — a fonte e a planilha "
+                           "oficial de processos em tramitacao."),
+            "municipio_check": ("ok = grafia casou com o IBGE dentro da UF (padronizada); "
+                                "nao encontrado na UF = mantido como veio (conferir); "
+                                "sem municipio / sem UF para checar."),
+            "situacao_emec": ("Situacao no Cadastro e-MEC (coluna INTEIRA de fonte "
+                              "externa — por isso o cabecalho amarelo): Em atividade / "
+                              "Em extincao / Extinto. E o unico lugar que diz se o curso "
+                              "ainda existe: o DOU publica extincao sem nomear o curso."),
+            "data_fase": "Data de publicacao do ato que definiu a fase atual.",
+            "via": ("Judicial = algum ato do curso cita decisao judicial/liminar; "
+                    "Chamamento Mais Medicos = veio de edital; senao Ordinaria."),
+            "regime_seres": ("So para pendentes de Medicina: norma que rege a tramitacao "
+                             "segundo a planilha da SERES (ex.: Portaria 531 = padrao "
+                             "decisorio dos judicializados)."),
+            "vagas_fonte": ("De ONDE saiu o numero de vagas (tipo de ato do DOU, INEP ou "
+                            "e-MEC). ATENCAO: INEP/e-MEC = total do curso EXISTENTE, "
+                            "nunca o numero de um pedido."),
+            "fonte_externa": ("Auditoria por linha: quais campos vieram de FORA do DOU "
+                              "(INEP:..., e-MEC: ..., manual: ...). Celula amarela = "
+                              "cruzamento; verde = aba Ajustes (dono)."),
+        }
+        for _col, _txt in _notas_cols.items():
+            if _col in col_x:
+                ws.cell(row=2, column=col_x[_col]).comment = \
+                    Comment(_txt, "Robo Clipping", 170, 380)
         fill_manual = PatternFill(start_color=VERDE_MANUAL, end_color=VERDE_MANUAL,
                                   fill_type="solid")
         for i, col in pintar_manual:
