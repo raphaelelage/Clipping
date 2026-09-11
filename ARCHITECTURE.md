@@ -457,3 +457,12 @@ O que AINDA exigiria sessao de IA: (1) mudanca de formato na API leiturajornal d
 in.gov.br (quebra RUIDOSA: aviso + job vermelho, nunca silenciosa); (2) nova planilha
 de pendentes da SERES (PDF -> tabela, parada em 06/2024); (3) evolucao de features.
 Rotina diaria e varredura: ZERO tokens de IA por construcao.
+
+### Atualizacao da planilha SERES: prompt pronto + cirurgia por script (11/set/2026)
+Quando sair foto nova dos pendentes de Medicina: abrir PROMPT_ATUALIZAR_SERES.md na
+raiz do repo e colar o prompt numa sessao do Claude. A sessao so faz o PDF->CSV
+(conferindo totais contra o PDF); a troca na base e o atualizar_seres.py, testado:
+remove os pendentes da foto antiga, insere os novos com os tipos EXATOS de
+funil.FASE_PENDENTE e reconstroi a aba Medicina_SERES. Depois: regenerar funil e
+atualizar a data em ST_SOBRESTADO. A data que vale e a de DENTRO do PDF (a da pagina
+do MEC ja enganou: dizia 04/2025 com PDF de 07/06/2024).
