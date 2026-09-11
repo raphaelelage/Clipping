@@ -32,18 +32,25 @@ def _rotulo_x(coluna):
     return _ROTULO_X.get(str(coluna), str(coluna).replace("_", " "))
 
 
-def _formatar_eixos(ch, eixo_y, rot_x, n_cat, decimal=False):
-    """Eixos legiveis (dono, 11/09/2026: "o eixo y de para ver melhor e quero ver o
-    eixo x com o que quer dizer"). Pontos que importam no openpyxl:
-      - delete=False: sem isso o Excel/WPS pode ESCONDER o eixo inteiro;
+def _formatar_eixos(ch, eixo_y, rot_x, n_cat, decimal=False, n_series=1):
+    """Eixos legiveis SEM sobreposicao (dono, 11/09/2026 — a 1a versao colidia:
+    titulo do X em cima da legenda, titulo do Y em cima dos numeros, rotulo inclinado
+    estourando a moldura). O que resolve cada coisa:
+      - delete=False: sem isso o Excel/WPS ESCONDE o eixo inteiro;
       - majorGridlines no Y: sem a grade nao da para ler a altura da barra;
-      - numFmt com separador de milhar: 15712 vira 15.712;
-      - rotulo do X rotacionado quando a categoria e texto longo (fase, mantenedora),
-        senao o Excel corta ou sobrepoe os nomes."""
+      - numFmt com milhar; decimal SO onde o valor e fracionario (fila de 4,5 anos);
+      - LEGENDA REMOVIDA quando ha 1 serie so: ela repetia o titulo do eixo Y e caia
+        em cima do titulo do eixo X;
+      - manualLayout: reserva espaco embaixo (rotulo inclinado) e a esquerda (titulo
+        do Y), que e a unica forma de o Excel nao sobrepor os textos;
+      - grafico mais alto (11cm) para caber tudo."""
     from openpyxl.chart.axis import ChartLines
+    from openpyxl.chart.layout import Layout, ManualLayout
     from openpyxl.chart.text import RichText
     from openpyxl.drawing.text import (Paragraph, ParagraphProperties,
                                        CharacterProperties, RichTextProperties)
+
+    ch.height, ch.width = 11, 18
 
     ch.y_axis.title = eixo_y
     ch.y_axis.delete = False
@@ -54,14 +61,70 @@ def _formatar_eixos(ch, eixo_y, rot_x, n_cat, decimal=False):
     ch.x_axis.title = rot_x
     ch.x_axis.delete = False
     ch.x_axis.majorTickMark = "out"
-    ch.x_axis.tickLblPos = "low"       # rotulos embaixo, longe das barras
-    # texto longo (fases, UF, mantenedoras) na diagonal para nao sobrepor
-    if rot_x not in ("ano da decisao (publicacao no DOU)", "UF") or n_cat > 12:
+    ch.x_axis.tickLblPos = "low"
+
+    # categoria em texto longo (fases, status, mantenedoras) ou muitas categorias
+    # (27 UFs): rotulo a -45 graus, e o plot area encolhe para caber o texto embaixo
+    inclinar = rot_x not in ("ano da decisao (publicacao no DOU)",) or n_cat > 14
+    if inclinar:
         ch.x_axis.txPr = RichText(
-            p=[Paragraph(pPr=ParagraphProperties(defRPr=CharacterProperties(sz=900)),
-                         endParaRPr=CharacterProperties(sz=900))],
-            bodyPr=RichTextProperties(rot="-2700000", vert="horz"))   # -45 graus
-    ch.legend.position = "b" if ch.legend else "b"
+            p=[Paragraph(pPr=ParagraphProperties(defRPr=CharacterProperties(sz=800)),
+                         endParaRPr=CharacterProperties(sz=800))],
+            bodyPr=RichTextProperties(rot="-2700000", vert="horz"))
+
+    # 1 serie so: a legenda nao informa nada (o titulo do eixo Y ja diz) e colidia
+    # com o titulo do eixo X. Com 2+ series ela fica embaixo, sem sobrepor o grafico.
+    if n_series <= 1:
+        ch.legend = None
+    else:
+        ch.legend.position = "b"
+        ch.legend.overlay = False
+
+    # plot area explicito: sobra embaixo p/ rotulo inclinado + titulo do X (+ legenda)
+    baixo = 0.34 if inclinar else 0.20
+    if n_series > 1:
+        baixo += 0.08
+    ch.layout = Layout(manualLayout=ManualLayout(
+        xMode="edge", yMode="edge", x=0.13, y=0.10, w=0.84, h=max(0.40, 0.90 - baixo)))
+
+
+def _grafico_dois_eixos(wsd, titulo, eixo_y, h0, h1, rot_x):
+    """Grafico com eixo Y secundario: col.2 (milhares) na esquerda, col.3 (dezenas) na
+    direita. Sem isso a serie pequena vira uma reta colada no zero."""
+    from openpyxl.chart.axis import ChartLines
+    from openpyxl.chart.layout import Layout, ManualLayout
+
+    cats = Reference(wsd, min_col=1, min_row=h0 + 1, max_row=h1)
+    c1 = LineChart()
+    c1.add_data(Reference(wsd, min_col=2, max_col=2, min_row=h0, max_row=h1),
+                titles_from_data=True)
+    c1.set_categories(cats)
+    c1.title = titulo.split(" | ")[0]
+    c1.y_axis.title = eixo_y
+    c1.y_axis.delete = False
+    c1.y_axis.majorGridlines = ChartLines()
+    c1.y_axis.numFmt = "#,##0"
+    c1.x_axis.title = rot_x
+    c1.x_axis.delete = False
+    c1.x_axis.majorTickMark = "out"
+
+    c2 = LineChart()
+    c2.add_data(Reference(wsd, min_col=3, max_col=3, min_row=h0, max_row=h1),
+                titles_from_data=True)
+    c2.y_axis.axId = 200
+    c2.y_axis.title = "cursos de MEDICINA (eixo direito)"
+    c2.y_axis.delete = False
+    c2.y_axis.numFmt = "#,##0"
+    c2.y_axis.majorGridlines = None      # so uma grade, senao o fundo vira grade dupla
+    c2.y_axis.crosses = "max"            # joga o 2o eixo para a direita
+    c1 += c2
+
+    c1.height, c1.width = 11, 18
+    c1.legend.position = "b"
+    c1.legend.overlay = False
+    c1.layout = Layout(manualLayout=ManualLayout(
+        xMode="edge", yMode="edge", x=0.11, y=0.10, w=0.78, h=0.58))
+    return c1
 
 
 def _eh_med(s):
@@ -118,8 +181,11 @@ def gerar(caminho, log=print):
     t4["ano"] = t4["ano"].astype(int)
     blocos.append(("G4. Autorizacoes por ano (n. de cursos) | fonte: aba Atos, "
                    "tipo_decisao='autorizacao', ano de data_decisao; Medicina = "
-                   "\\bMEDICINA\\b sem VETERIN", t4[["ano", "Medicina", "Demais cursos"]],
-                   "line", "cursos autorizados"))
+                   "\\bMEDICINA\\b sem VETERIN. Medicina tem EIXO PROPRIO (direita): "
+                   "sao dezenas contra milhares — no mesmo eixo a linha ficava colada "
+                   "no zero e nao dava para ler a tendencia",
+                   t4[["ano", "Demais cursos", "Medicina"]],
+                   "line_dual", "cursos autorizados (demais)"))
 
     # ANOS COMPLETOS nos graficos de Medicina: sem isto a serie MORRE em 2021 e parece
     # dado faltando — quando o fato e a MORATORIA (zero autorizacao nova de Medicina de
@@ -236,9 +302,17 @@ def gerar(caminho, log=print):
                         _rotulo_x(df.columns[0]), len(df), decimal))
         linha = head + len(df) + 3
 
-    pos = ["A1", "J1", "A20", "J20", "A39", "J39", "A58", "J58", "A77", "J77",
-           "A96", "J96"]
+    # 11cm de altura ~ 23 linhas: ancoras espacadas 24 linhas para os
+    # graficos nao se sobreporem na aba
+    pos = ["A1", "L1", "A25", "L25", "A49", "L49", "A73", "L73",
+           "A97", "L97", "A121", "L121"]
     for k, (titulo, tipo, eixo_y, h0, h1, ncols, rot_x, n_cat, dec) in enumerate(ancoras):
+        if tipo == "line_dual":
+            # duas ordens de grandeza no mesmo grafico (milhares x dezenas): a 2a serie
+            # ganha eixo proprio a direita, senao fica achatada no zero. Cada eixo diz
+            # a que serie pertence, para a leitura nao confundir as escalas.
+            wsg.add_chart(_grafico_dois_eixos(wsd, titulo, eixo_y, h0, h1, rot_x), pos[k])
+            continue
         ch = LineChart() if tipo == "line" else BarChart()
         if tipo == "bar_stack":
             ch.type, ch.grouping, ch.overlap = "col", "stacked", 100
@@ -252,7 +326,7 @@ def gerar(caminho, log=print):
         cats = Reference(wsd, min_col=1, min_row=h0 + 1, max_row=h1)
         ch.add_data(dados, titles_from_data=True)
         ch.set_categories(cats)
-        _formatar_eixos(ch, eixo_y, rot_x, n_cat, dec)
+        _formatar_eixos(ch, eixo_y, rot_x, n_cat, dec, ncols - 1)
         wsg.add_chart(ch, pos[k])
 
     wsd.freeze_panes = "A2"
