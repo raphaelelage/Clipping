@@ -634,7 +634,7 @@ def gerar(caminho, log=print):
         "(revogacao do Edital de Chamamento 1/2023) e Portarias SERES 72-76/2026 (Enamed). "
         "ATENCAO vagas: veja a coluna vagas_fonte — vagas do INEP sao o TOTAL ofertado do "
         "curso EXISTENTE (nunca o numero de um pedido pendente nem o acrescimo de um "
-        "aumento de vagas). CELULAS VERDES = correcao manual do dono via aba Ajustes (link do ato + campo + valor) - preencha LA, nunca direto no Funil: o Funil e regenerado pelo robo e edicoes diretas se perdem. Nada e estimado por IA.")
+        "aumento de vagas). ESCOPO: a base cobre o sistema FEDERAL de ensino (atos do MEC no DOU); cursos de IES ESTADUAIS/municipais sao regulados pelos Conselhos Estaduais e publicados nos diarios dos ESTADOS — ficam fora (~69 cursos de Medicina ativos nessa situacao: UERJ, UPE, UEPA...; e-MEC, 11/09/2026). CELULAS VERDES = correcao manual do dono via aba Ajustes (link do ato + campo + valor) - preencha LA, nunca direto no Funil: o Funil e regenerado pelo robo e edicoes diretas se perdem. Nada e estimado por IA.")
 
     # Graficos/Graf_Dados NUNCA sao reescritos aqui: parse+to_excel transforma os
     # DESENHOS em aba de dados morta (foi assim que uma regeneracao so-funil abriu
