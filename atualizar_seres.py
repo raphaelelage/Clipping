@@ -102,16 +102,12 @@ def main(arquivo, data_foto, tram_csv, sobr_csv):
                      sobr.assign(lista="sobrestado MC ADC 81")], ignore_index=True)
     aba["fonte"] = f"planilha oficial SERES ({data_foto}) — {LINK_SERES}"
 
-    cu = atos["curso"].astype(str).str.upper()
-    med = atos[cu.str.contains(r"\bMEDICINA\b", regex=True, na=False)
-               & ~cu.str.contains("VETERIN", na=False)]
     outras = {n: xl.parse(n) for n in xl.sheet_names
               if n not in ("Atos", "Medicina", "Medicina_SERES",
                            "Funil", "Graficos", "Graf_Dados")}
     with pd.ExcelWriter(arquivo, engine="openpyxl", date_format="DD/MM/YYYY",
                         datetime_format="DD/MM/YYYY") as xw:
         atos.to_excel(xw, sheet_name="Atos", index=False)
-        med.to_excel(xw, sheet_name="Medicina", index=False)
         aba.to_excel(xw, sheet_name="Medicina_SERES", index=False)
         for n, d in outras.items():
             d.to_excel(xw, sheet_name=n, index=False)

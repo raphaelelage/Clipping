@@ -202,9 +202,6 @@ def _corrigir_df(v2, atos, log=print):
 
 
 def _gravar(caminho, xl, atos, log=print):
-    c = atos["curso"].astype(str).str.upper()
-    med_nova = atos[c.str.contains(r"\bMEDICINA\b", regex=True, na=False)
-                    & ~c.str.contains("VETERIN", na=False)]
     outras = {n: xl.parse(n) for n in xl.sheet_names
               if n not in ("Atos", "Medicina", "Funil", "Graficos", "Graf_Dados")}
     notas = outras.get("Notas")
@@ -214,14 +211,13 @@ def _gravar(caminho, xl, atos, log=print):
     with pd.ExcelWriter(caminho, engine="openpyxl", date_format="DD/MM/YYYY",
                         datetime_format="DD/MM/YYYY") as xw:
         atos.to_excel(xw, sheet_name="Atos", index=False)
-        med_nova.to_excel(xw, sheet_name="Medicina", index=False)
         for n, d in outras.items():
             d.to_excel(xw, sheet_name=n, index=False)
-        for aba in ["Atos", "Medicina"] + list(outras):
+        for aba in ["Atos"] + list(outras):
             w = xw.book[aba]
             w.freeze_panes = "A2"
             w.auto_filter.ref = w.dimensions
-    log(f"\n[ok] base corrigida: {caminho} | Atos={len(atos)} Medicina={len(med_nova)}")
+    log(f"\n[ok] base corrigida: {caminho} | Atos={len(atos)}")
     return atos
 
 

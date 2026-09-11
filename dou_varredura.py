@@ -131,9 +131,6 @@ def _fundir(novas, caminho, manifesto, inicio, fim, log):
     ineditas = ineditas.reindex(columns=atos.columns, fill_value="")
     todas = pd.concat([atos, ineditas], ignore_index=True) if len(ineditas) else atos
 
-    cu = todas["curso"].astype(str).str.upper()
-    med = todas[cu.str.contains(r"\bMEDICINA\b", regex=True, na=False)
-                & ~cu.str.contains("VETERIN", na=False)]
 
     outras = {n: xl.parse(n) for n in xl.sheet_names
               if n not in ("Atos", "Medicina", "Funil", "Graficos", "Graf_Dados")}
@@ -165,14 +162,13 @@ def _fundir(novas, caminho, manifesto, inicio, fim, log):
     with pd.ExcelWriter(caminho, engine="openpyxl",
                         date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY") as xw:
         todas.to_excel(xw, sheet_name="Atos", index=False)
-        med.to_excel(xw, sheet_name="Medicina", index=False)
         for n, df in outras.items():
             df.to_excel(xw, sheet_name=n, index=False)
         for aba in ["Atos", "Medicina"] + list(outras):
             w = xw.book[aba]
             w.freeze_panes = "A2"
             w.auto_filter.ref = w.dimensions
-    return len(ineditas), med
+    return len(ineditas), todas
 
 
 # ------------------------------------------------------------------ orquestrador
@@ -203,7 +199,7 @@ def varrer(inicio, fim=None, caminho="Regulacao_Cursos.xlsx", log=print):
         novas = pd.DataFrame(columns=["link", "processo", "curso", "ies", "municipio",
                                       "numero_vagas"])
 
-    n_novas, med = _fundir(novas, caminho, manifesto, inicio, fim, log)
+    n_novas, todas = _fundir(novas, caminho, manifesto, inicio, fim, log)
 
     # Funil + graficos SEMPRE que a planilha foi regravada (a regravacao via pandas
     # apaga a formatacao da aba Funil — a regeneracao devolve nota, amarelo e tudo)
@@ -224,8 +220,11 @@ def varrer(inicio, fim=None, caminho="Regulacao_Cursos.xlsx", log=print):
         "minutos": round((time.time() - t0) / 60, 1),
         "novidades_medicina": [],
     }
-    if n_novas and len(med):
+    if n_novas and len(todas):
         try:
+            cu = todas["curso"].astype(str).str.upper()
+            med = todas[cu.str.contains(r"\bMEDICINA\b", regex=True, na=False)
+                        & ~cu.str.contains("VETERIN", na=False)]
             dd = pd.to_datetime(med["data_decisao"], errors="coerce").dt.date
             rec = med[(dd >= inicio) & (dd <= fim)]
             resumo["novidades_medicina"] = [

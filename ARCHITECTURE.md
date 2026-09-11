@@ -466,3 +466,17 @@ remove os pendentes da foto antiga, insere os novos com os tipos EXATOS de
 funil.FASE_PENDENTE e reconstroi a aba Medicina_SERES. Depois: regenerar funil e
 atualizar a data em ST_SOBRESTADO. A data que vale e a de DENTRO do PDF (a da pagina
 do MEC ja enganou: dizia 04/2025 com PDF de 07/06/2024).
+
+### v7 (11/set/2026, aprovacoes do dono)
+- ESTADUAIS/MUNICIPAIS na base: cursos de IES publicas estaduais/municipais entram como
+  linha INTEGRAL do e-MEC (fase "(sistema estadual/municipal)", via "Sistema estadual"),
+  porque a regulacao deles e dos Conselhos Estaduais (diario do estado, nao DOU) —
+  ~6.1k cursos, 58 Medicinas ativas (UERJ, UPE...). cursos_emec.parquet ganhou a coluna
+  `categoria`. No clipping, noticias dessas IES chegam pelo Google News; monitorar 27
+  diarios estaduais nao e viavel gratis/deterministico (registrado e comunicado).
+- municipio_check REMOVIDA do Funil (padronizacao IBGE continua, so o carimbo saiu).
+- Aba MEDICINA REMOVIDA (era vista filtrada de Atos): nenhum escritor grava mais
+  (clipping/corrigir/varredura/atualizar_seres/dou_montar) e o funil.gerar a DESCARTA de
+  arquivos antigos. Medicina_SERES FICA: e insumo (regime_seres) e prova da foto oficial.
+- COMO_ATUALIZAR.md: runbook completo de operacao sem IA (dia a dia, varredura, Ajustes,
+  manutencao das bases, investigacao, desastres).

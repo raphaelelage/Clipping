@@ -26,7 +26,8 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 CSV_PADRAO = (r"C:\Users\Raphael\OneDrive\Documentos\1. Profissional\VS Code\Codigos"
               r"\Clipping New\PDA_Dados_Cursos_Graduacao_Brasil.csv")
 COLS = ["CODIGO_CURSO", "CODIGO_IES", "NOME_IES", "NOME_CURSO", "MUNICIPIO", "UF",
-        "QT_VAGAS_AUTORIZADAS", "MODALIDADE", "SITUACAO_CURSO"]
+        "QT_VAGAS_AUTORIZADAS", "MODALIDADE", "SITUACAO_CURSO",
+        "CATEGORIA_ADMINISTRATIVA"]
 
 
 def _norm(s):
@@ -53,6 +54,8 @@ def gerar(csv_path):
         "vagas": pd.to_numeric(cur["QT_VAGAS_AUTORIZADAS"], errors="coerce").astype("Int64"),
         "modalidade": cur["MODALIDADE"].fillna(""),
         "situacao_emec": cur["SITUACAO_CURSO"].fillna(""),
+        "categoria": cur["CATEGORIA_ADMINISTRATIVA"].fillna("")
+        .str.replace("Pública ", "", regex=False),
     }).dropna(subset=["cod_curso"])
     out["_k_ies_curso"] = out["cod_ies"].astype(str) + "|" + out["curso"].map(_norm)
     dest = os.path.join(BASE, "cursos_emec.parquet")

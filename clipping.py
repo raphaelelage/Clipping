@@ -478,20 +478,14 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
     for c in ("data_pedido", "data_decisao"):
         if c in todas.columns:
             todas[c] = pd.to_datetime(todas[c], errors="coerce").dt.date
-    med = (todas[todas["curso"].astype(str).str.contains(r"\bMEDICINA\b", case=False,
-                                                         regex=True)
-                 & ~todas["curso"].astype(str).str.contains("VETERIN", case=False)]
-           if "curso" in todas.columns else todas.iloc[0:0])
     with pd.ExcelWriter(local, engine="openpyxl",
                         date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY") as xw:
         todas.to_excel(xw, sheet_name="Atos", index=False)
-        med.to_excel(xw, sheet_name="Medicina", index=False)
         for aba, conteudo in abas_extra.items():
             conteudo.to_excel(xw, sheet_name=aba, index=False)
-        for aba in ("Atos", "Medicina"):
-            ws = xw.book[aba]
-            ws.freeze_panes = "A2"
-            ws.auto_filter.ref = ws.dimensions
+        ws = xw.book["Atos"]
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
     # FUNIL AUTOMATICO (dono, 10/09/2026: "rodar de forma independente de AI"):
     # sempre que entra ato novo, regenera a aba Funil (estado atual por curso, com
     # os cruzamentos INEP/IBGE/cautelares — tudo deterministico, ver funil.py) e os

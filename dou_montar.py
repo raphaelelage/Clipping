@@ -115,7 +115,6 @@ def montar(parquet, saida, oficial_parquet=None, log=print):
     notas = pd.DataFrame(NOTAS, columns=["Assunto", "Descricao"])
     with pd.ExcelWriter(saida, engine="openpyxl") as xw:
         corpo.to_excel(xw, sheet_name="Atos", index=False)
-        med.to_excel(xw, sheet_name="Medicina", index=False)
         if oficial is not None:
             oficial.to_excel(xw, sheet_name="Medicina_SERES", index=False)
         notas.to_excel(xw, sheet_name="Notas", index=False)

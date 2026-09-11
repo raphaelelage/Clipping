@@ -1,0 +1,522 @@
+{
+ "fonte": "Portarias SERES/MEC (cautelares do Enamed) lidas do DOU por atualizar_cautelares.py — deterministico, sem IA",
+ "portarias": {
+  "72": {
+   "url": "https://www.in.gov.br/web/dou/-/portaria-seres/mec-n-72-de-16-de-marco-de-2026-*-693446231",
+   "medidas": [
+    "suspensao de ingresso",
+    "veto a aumento de vagas",
+    "suspensao de FIES/financiamento"
+   ],
+   "cursos": [
+    {
+     "cod_curso": "1399482",
+     "cod_ies": "163",
+     "ies": "UNIVERSIDADE ESTÁCIO DE SÁ"
+    },
+    {
+     "cod_curso": "5000980",
+     "cod_ies": "1046",
+     "ies": "UNIÃO DAS FACULDADES DOS GRANDES LAGOS"
+    },
+    {
+     "cod_curso": "1487491",
+     "cod_ies": "1420",
+     "ies": "FACULDADE DE DRACENA"
+    },
+    {
+     "cod_curso": "5001294",
+     "cod_ies": "1573",
+     "ies": "CENTRO UNIVERSITÁRIO ALFREDO NASSER"
+    },
+    {
+     "cod_curso": "1184060",
+     "cod_ies": "2058",
+     "ies": "FACULDADE METROPOLITANA"
+    },
+    {
+     "cod_curso": "1193275",
+     "cod_ies": "2132",
+     "ies": "CENTRO UNIVERSITÁRIO UNINORTE"
+    },
+    {
+     "cod_curso": "1457707",
+     "cod_ies": "2961",
+     "ies": "CENTRO UNIVERSITÁRIO ESTÁCIO DO PANTANAL"
+    }
+   ]
+  },
+  "73": {
+   "url": "https://www.in.gov.br/web/dou/-/portaria-seres/mec-n-73-de-16-de-marco-de-2026-*-693464457",
+   "medidas": [
+    "veto a aumento de vagas",
+    "suspensao de FIES/financiamento"
+   ],
+   "cursos": [
+    {
+     "cod_curso": "65924",
+     "cod_ies": "308",
+     "ies": "CENTRO UNIVERSITÁRIO PRESIDENTE ANTÔNIO CARLOS"
+    },
+    {
+     "cod_curso": "65114",
+     "cod_ies": "319",
+     "ies": "UNIVERSIDADE BRASIL"
+    },
+    {
+     "cod_curso": "10591",
+     "cod_ies": "521",
+     "ies": "UNIVERSIDADE DE MOGI DAS CRUZES"
+    },
+    {
+     "cod_curso": "49060",
+     "cod_ies": "669",
+     "ies": "UNIVERSIDADE NILTON LINS"
+    },
+    {
+     "cod_curso": "1190280",
+     "cod_ies": "1294",
+     "ies": "CENTRO UNIVERSITÁRIO DAS AMÉRICAS"
+    },
+    {
+     "cod_curso": "66361",
+     "cod_ies": "1664",
+     "ies": "FACULDADE DA SAÚDE E ECOLOGIA HUMANA"
+    },
+    {
+     "cod_curso": "1385538",
+     "cod_ies": "2147",
+     "ies": "CENTRO UNIVERSITÁRIO CEUNI - FAMETRO"
+    },
+    {
+     "cod_curso": "1390311",
+     "cod_ies": "22096",
+     "ies": "FACULDADE SÃO LEOPOLDO MANDIC DE ARARAS"
+    },
+    {
+     "cod_curso": "1408508",
+     "cod_ies": "22191",
+     "ies": "FACULDADE ESTÁCIO DE JARAGUÁ DO SUL"
+    },
+    {
+     "cod_curso": "1465625",
+     "cod_ies": "23454",
+     "ies": "FACULDADE ZARNS - ITUMBIARA"
+    }
+   ]
+  },
+  "74": {
+   "url": "https://www.in.gov.br/web/dou/-/portaria-seres/mec-n-74-de-16-de-marco-de-2026-*-693450617",
+   "medidas": [
+    "veto a aumento de vagas",
+    "suspensao de FIES/financiamento"
+   ],
+   "cursos": [
+    {
+     "cod_curso": "1453564",
+     "cod_ies": "68",
+     "ies": "FACULDADE DE FILOSOFIA, CIÊNCIAS E LETRAS DE PENÁPOLIS"
+    },
+    {
+     "cod_curso": "1427419",
+     "cod_ies": "208",
+     "ies": "UNIVERSIDADE DE RIBEIRÃO PRETO"
+    },
+    {
+     "cod_curso": "7414",
+     "cod_ies": "330",
+     "ies": "UNIVERSIDADE IGUAÇU"
+    },
+    {
+     "cod_curso": "19294",
+     "cod_ies": "330",
+     "ies": "UNIVERSIDADE IGUAÇU"
+    },
+    {
+     "cod_curso": "74655",
+     "cod_ies": "375",
+     "ies": "UNIVERSIDADE SANTO AMARO"
+    },
+    {
+     "cod_curso": "8698",
+     "cod_ies": "420",
+     "ies": "UNIVERSIDADE DE MARÍLIA"
+    },
+    {
+     "cod_curso": "1399481",
+     "cod_ies": "437",
+     "ies": "UNIVERSIDADE PARANAENSE"
+    },
+    {
+     "cod_curso": "100956",
+     "cod_ies": "466",
+     "ies": "UNIVERSIDADE ANHEMBI MORUMBI"
+    },
+    {
+     "cod_curso": "18605",
+     "cod_ies": "472",
+     "ies": "AFYA UNIVERSIDADE UNIGRANRIO"
+    },
+    {
+     "cod_curso": "9805",
+     "cod_ies": "480",
+     "ies": "CENTRO UNIVERSITÁRIO SERRA DOS ÓRGÃOS"
+    },
+    {
+     "cod_curso": "18472",
+     "cod_ies": "780",
+     "ies": "UNIVERSIDADE DE CUIABÁ"
+    },
+    {
+     "cod_curso": "5001341",
+     "cod_ies": "1227",
+     "ies": "CENTRO UNIVERSITÁRIO MAURÍCIO DE NASSAU DE BARREIRAS"
+    },
+    {
+     "cod_curso": "1185903",
+     "cod_ies": "1270",
+     "ies": "CENTRO UNIVERSITÁRIO ESTÁCIO DE RIBEIRÃO PRETO"
+    },
+    {
+     "cod_curso": "85652",
+     "cod_ies": "1414",
+     "ies": "AFYA CENTRO UNIVERSITÁRIO DE PORTO VELHO"
+    },
+    {
+     "cod_curso": "5000931",
+     "cod_ies": "1430",
+     "ies": "CENTRO UNIVERSITÁRIO INGÁ"
+    },
+    {
+     "cod_curso": "72681",
+     "cod_ies": "1995",
+     "ies": "FACULDADE DE MEDICINA NOVA ESPERANÇA"
+    },
+    {
+     "cod_curso": "72667",
+     "cod_ies": "2082",
+     "ies": "AFYA FACULDADE DE CIÊNCIAS MÉDICAS DA PARAÍBA"
+    },
+    {
+     "cod_curso": "1188127",
+     "cod_ies": "2383",
+     "ies": "FACULDADE ATITUS EDUCAÇÃO PASSO FUNDO"
+    },
+    {
+     "cod_curso": "1184432",
+     "cod_ies": "2571",
+     "ies": "AFYA CENTRO UNIVERSITÁRIO DE ITAPERUNA"
+    },
+    {
+     "cod_curso": "1108786",
+     "cod_ies": "2835",
+     "ies": "CENTRO UNIVERSITÁRIO MAURÍCIO DE NASSAU"
+    },
+    {
+     "cod_curso": "5001300",
+     "cod_ies": "4198",
+     "ies": "FACULDADE MORGANA POTRICH"
+    },
+    {
+     "cod_curso": "72767",
+     "cod_ies": "5544",
+     "ies": "AFYA FACULDADE DE PORTO NACIONAL"
+    },
+    {
+     "cod_curso": "1427420",
+     "cod_ies": "11645",
+     "ies": "FACULDADE UNINASSAU VILHENA"
+    },
+    {
+     "cod_curso": "1166567",
+     "cod_ies": "12430",
+     "ies": "CENTRO UNIVERSITÁRIO FAMESC"
+    },
+    {
+     "cod_curso": "1168313",
+     "cod_ies": "16879",
+     "ies": "FACULDADE DE MEDICINA DE OLINDA"
+    },
+    {
+     "cod_curso": "1399614",
+     "cod_ies": "22076",
+     "ies": "FACULDADE ESTÁCIO DE ALAGOINHAS"
+    },
+    {
+     "cod_curso": "1408507",
+     "cod_ies": "22197",
+     "ies": "FACULDADE ATENAS PASSOS"
+    },
+    {
+     "cod_curso": "1399618",
+     "cod_ies": "22202",
+     "ies": "FACULDADE ESTÁCIO DE JUAZEIRO"
+    },
+    {
+     "cod_curso": "1408505",
+     "cod_ies": "22514",
+     "ies": "AFYA FACULDADE DE CIÊNCIAS MÉDICAS DE JABOATÃO DOS GUARARAPES"
+    },
+    {
+     "cod_curso": "1485621",
+     "cod_ies": "24488",
+     "ies": "FACULDADE UNICESUMAR DE CORUMBÁ"
+    },
+    {
+     "cod_curso": "1486822",
+     "cod_ies": "24509",
+     "ies": "FACULDADE ESTÁCIO DE CANINDÉ"
+    },
+    {
+     "cod_curso": "1487290",
+     "cod_ies": "24550",
+     "ies": "AFYA FACULDADE DE CIÊNCIAS MÉDICAS DE SANTA INÊS"
+    }
+   ]
+  },
+  "75": {
+   "url": "https://www.in.gov.br/web/dou/-/portaria-seres/mec-n-75-de-16-de-marco-de-2026-*-693441949",
+   "medidas": [],
+   "cursos": [
+    {
+     "cod_curso": "7105",
+     "cod_ies": "307",
+     "ies": "FACULDADE DE MEDICINA DE BARBACENA"
+    },
+    {
+     "cod_curso": "1390317",
+     "cod_ies": "316",
+     "ies": "UNIVERSIDADE NOVE DE JULHO"
+    },
+    {
+     "cod_curso": "1397771",
+     "cod_ies": "316",
+     "ies": "UNIVERSIDADE NOVE DE JULHO"
+    },
+    {
+     "cod_curso": "1190667",
+     "cod_ies": "352",
+     "ies": "CENTRO UNIVERSITÁRIO DE JOÃO PESSOA"
+    },
+    {
+     "cod_curso": "57402",
+     "cod_ies": "417",
+     "ies": "UNIVERSIDADE CIDADE DE SÃO PAULO"
+    },
+    {
+     "cod_curso": "1136509",
+     "cod_ies": "434",
+     "ies": "FACULDADE SANTA MARCELINA"
+    },
+    {
+     "cod_curso": "9326",
+     "cod_ies": "449",
+     "ies": "UNIVERSIDADE LUTERANA DO BRASIL"
+    },
+    {
+     "cod_curso": "1399477",
+     "cod_ies": "466",
+     "ies": "UNIVERSIDADE ANHEMBI MORUMBI"
+    },
+    {
+     "cod_curso": "1408259",
+     "cod_ies": "466",
+     "ies": "UNIVERSIDADE ANHEMBI MORUMBI"
+    },
+    {
+     "cod_curso": "75821",
+     "cod_ies": "472",
+     "ies": "AFYA UNIVERSIDADE UNIGRANRIO"
+    },
+    {
+     "cod_curso": "9988",
+     "cod_ies": "489",
+     "ies": "CENTRO UNIVERSITÁRIO DE VOLTA REDONDA"
+    },
+    {
+     "cod_curso": "10289",
+     "cod_ies": "506",
+     "ies": "FACULDADE DE MEDICINA DE CAMPOS"
+    },
+    {
+     "cod_curso": "1102360",
+     "cod_ies": "513",
+     "ies": "UNIVERSIDADE VALE DO RIO DOCE"
+    },
+    {
+     "cod_curso": "39415",
+     "cod_ies": "671",
+     "ies": "UNIVERSIDADE ANHANGUERA"
+    },
+    {
+     "cod_curso": "1192188",
+     "cod_ies": "823",
+     "ies": "UNIVERSIDADE CEUMA"
+    },
+    {
+     "cod_curso": "59174",
+     "cod_ies": "823",
+     "ies": "UNIVERSIDADE CEUMA"
+    },
+    {
+     "cod_curso": "1179501",
+     "cod_ies": "1041",
+     "ies": "UNIVERSIDADE DO VALE DO TAQUARI"
+    },
+    {
+     "cod_curso": "72675",
+     "cod_ies": "1087",
+     "ies": "CENTRO UNIVERSITÁRIO APARÍCIO CARVALHO"
+    },
+    {
+     "cod_curso": "107766",
+     "cod_ies": "1128",
+     "ies": "UNIVERSIDADE DE ITAÚNA"
+    },
+    {
+     "cod_curso": "90483",
+     "cod_ies": "1334",
+     "ies": "CENTRO UNIVERSITÁRIO FACISA"
+    },
+    {
+     "cod_curso": "78256",
+     "cod_ies": "1461",
+     "ies": "CENTRO UNIVERSITÁRIO ZARNS - SALVADOR"
+    },
+    {
+     "cod_curso": "1178524",
+     "cod_ies": "1883",
+     "ies": "CENTRO UNIVERSITÁRIO UNIME"
+    },
+    {
+     "cod_curso": "1163738",
+     "cod_ies": "1913",
+     "ies": "CENTRO UNIVERSITÁRIO FAMINAS"
+    },
+    {
+     "cod_curso": "1193264",
+     "cod_ies": "1984",
+     "ies": "CENTRO UNIVERSITÁRIO UNIFACIG"
+    },
+    {
+     "cod_curso": "1184047",
+     "cod_ies": "2368",
+     "ies": "FACULDADE SÃO LEOPOLDO MANDIC"
+    },
+    {
+     "cod_curso": "1257548",
+     "cod_ies": "2632",
+     "ies": "FACULDADES INTEGRADAS DO EXTREMO SUL DA BAHIA"
+    },
+    {
+     "cod_curso": "1189607",
+     "cod_ies": "2636",
+     "ies": "FACULDADE DINÂMICA DO VALE DO PIRANGA"
+    },
+    {
+     "cod_curso": "1029204",
+     "cod_ies": "3194",
+     "ies": "FACULDADE DE MINAS BH"
+    },
+    {
+     "cod_curso": "1192047",
+     "cod_ies": "4431",
+     "ies": "FACULDADE DE ENFERMAGEM NOVA ESPERANÇA DE MOSSORÓ - FACENE/RN"
+    },
+    {
+     "cod_curso": "1171609",
+     "cod_ies": "4450",
+     "ies": "CENTRO UNIVERSITÁRIO METROPOLITANO DA AMAZÔNIA"
+    },
+    {
+     "cod_curso": "1188900",
+     "cod_ies": "4846",
+     "ies": "CENTRO UNIVERSITÁRIO VÉRTICE"
+    },
+    {
+     "cod_curso": "99476",
+     "cod_ies": "4849",
+     "ies": "AFYA CENTRO UNIVERSITÁRIO DE ARAGUAÍNA"
+    },
+    {
+     "cod_curso": "1050663",
+     "cod_ies": "13040",
+     "ies": "AFYA FACULDADE DE CIÊNCIAS MÉDICAS DE MARABÁ"
+    },
+    {
+     "cod_curso": "1179189",
+     "cod_ies": "17498",
+     "ies": "AFYA FACULDADE DE CIÊNCIAS MÉDICAS DE VITÓRIA DA CONQUISTA"
+    },
+    {
+     "cod_curso": "1180318",
+     "cod_ies": "17565",
+     "ies": "AFYA FACULDADE DE PARNAÍBA"
+    },
+    {
+     "cod_curso": "1399619",
+     "cod_ies": "22059",
+     "ies": "FACULDADE PITÁGORAS DE MEDICINA DE EUNÁPOLIS"
+    },
+    {
+     "cod_curso": "1399616",
+     "cod_ies": "22088",
+     "ies": "AFYA FACULDADE DE CIÊNCIAS MÉDICAS DE ITABUNA"
+    },
+    {
+     "cod_curso": "1399615",
+     "cod_ies": "22093",
+     "ies": "FACULDADE AGES DE MEDICINA"
+    },
+    {
+     "cod_curso": "1399617",
+     "cod_ies": "22194",
+     "ies": "FACULDADE ATENAS SETE LAGOAS"
+    },
+    {
+     "cod_curso": "1483759",
+     "cod_ies": "24443",
+     "ies": "FACULDADE AGES DE MEDICINA DE IRECÊ"
+    }
+   ]
+  },
+  "76": {
+   "url": "https://www.in.gov.br/web/dou/-/portaria-seres/mec-n-76-de-16-de-marco-de-2026-693111839",
+   "medidas": [
+    "veto a aumento de vagas"
+   ],
+   "cursos": [
+    {
+     "cod_curso": "1202539",
+     "cod_ies": "569",
+     "ies": "Universidade Federal do Pará"
+    },
+    {
+     "cod_curso": "1257777",
+     "cod_ies": "548",
+     "ies": "Universidade Federal do Maranhão"
+    },
+    {
+     "cod_curso": "1292726",
+     "cod_ies": "15001",
+     "ies": "Universidade Federal da Integração Latino-Americana"
+    },
+    {
+     "cod_curso": "1292917",
+     "cod_ies": "18812",
+     "ies": "Universidade Federal do Sul da Bahia"
+    },
+    {
+     "cod_curso": "1202539",
+     "cod_ies": "569",
+     "ies": "Universidade Federal do Pará"
+    },
+    {
+     "cod_curso": "1202539",
+     "cod_ies": "569",
+     "ies": "Universidade Federal do Pará"
+    }
+   ]
+  }
+ }
+}

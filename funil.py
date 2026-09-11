@@ -68,7 +68,7 @@ FASE_PENDENTE = {
 
 # ordem das colunas da aba Funil — pensada para virar grafico (codigos primeiro)
 COLS_FUNIL = ["cod_ies", "ies", "cod_curso", "curso_padrao", "curso", "uf", "municipio",
-              "municipio_check", "fase_atual", "situacao_emec",
+              "fase_atual", "situacao_emec",
               "data_fase", "via",
               "status_regulatorio", "ref_regulatoria", "regime_seres", "vagas",
               "vagas_fonte", "sancionador", "qtd_atos", "ato_da_fase",
@@ -136,7 +136,6 @@ def _padronizar_municipios(funil, log=print):
     nada e inventado), 'sem UF para checar' ou 'sem municipio'."""
     if not os.path.exists(MUNICIPIOS_IBGE):
         log("[funil] municipios_ibge.parquet ausente — padronizacao pulada")
-        funil["municipio_check"] = ""
         return funil
     ibge = pd.read_parquet(MUNICIPIOS_IBGE)
 
@@ -192,11 +191,11 @@ def _padronizar_municipios(funil, log=print):
                 corrigidos += 1
             novos.append(of); checks.append("ok")
     funil["municipio"] = novos
-    funil["municipio_check"] = checks
+    # carimbo agora e so LOG (dono, 11/09/2026: coluna municipio_check removida)
     n_nok = sum(1 for c in checks if c == "nao encontrado na UF")
     log(f"[funil] municipios: {corrigidos} grafias padronizadas pelo IBGE; "
         f"{n_nok} nao encontrados na UF (mantidos como vieram)")
-    return funil
+    return funil, sum(1 for c in checks if c == "ok")
 
 
 def _carregar_emec(log=print):
@@ -212,6 +211,52 @@ def _carregar_emec(log=print):
            if pd.notna(c) and str(s).strip()}
     log(f"[funil] e-MEC: situacao de {len(out)} cursos carregada")
     return out
+
+
+FASE_ESTADUAL = "(sistema estadual/municipal — regulacao fora do DOU)"
+
+
+def _acrescentar_estaduais(funil, log=print):
+    """Cursos de IES Publica Estadual/Municipal 'Em atividade' ou 'Em extincao' no
+    e-MEC que nao tem linha no funil (por cod): entram como linha integral do
+    cadastro. Extintos ficam fora (nao inflar a base com 2.4k mortos sem historia)."""
+    if not os.path.exists(EMEC_PARQUET):
+        return funil
+    e = pd.read_parquet(EMEC_PARQUET)
+    if "categoria" not in e.columns:
+        log("[funil] cursos_emec.parquet sem 'categoria' — rode atualizar_emec.py")
+        return funil
+    alvo = e[e["categoria"].isin(["Estadual", "Municipal"])
+             & e["situacao_emec"].isin(["Em atividade", "Em extinção"])]
+    ja = set(funil["cod_curso"].astype(str).str.replace(".0", "", regex=False))
+    novos = alvo[~alvo["cod_curso"].astype(int).astype(str).isin(ja)]
+    linhas = []
+    for r in novos.itertuples():
+        linhas.append({
+            "cod_ies": str(int(r.cod_ies)) if pd.notna(r.cod_ies) else "",
+            "ies": r.ies, "cod_curso": str(int(r.cod_curso)),
+            "curso_padrao": curso_padrao(r.curso), "curso": r.curso,
+            "uf": r.uf, "municipio": r.municipio,
+            "fase_atual": FASE_ESTADUAL, "situacao_emec": r.situacao_emec,
+            "data_fase": None, "via": "Sistema estadual (Conselho Estadual)",
+            "status_regulatorio": "", "ref_regulatoria": "", "regime_seres": "",
+            "vagas": str(int(r.vagas)) if pd.notna(r.vagas) else "",
+            "vagas_fonte": VAGAS_FONTE_EMEC_ES if pd.notna(r.vagas) else "",
+            "sancionador": "", "qtd_atos": 0,
+            "ato_da_fase": "Cadastro e-MEC (IES publica estadual/municipal)",
+            "mantenedora": "", "processo_recente": "",
+            "fonte_externa": "e-MEC: linha integral (IES estadual/municipal)",
+            "link_fonte": "https://emec.mec.gov.br/",
+        })
+    if linhas:
+        funil = pd.concat([funil, pd.DataFrame(linhas)], ignore_index=True)
+        log(f"[funil] sistema estadual/municipal: +{len(linhas)} cursos do e-MEC "
+            f"(aprovado pelo dono em 11/09/2026)")
+    return funil
+
+
+VAGAS_FONTE_EMEC_ES = ("e-MEC — vagas autorizadas (curso de IES estadual/municipal; "
+                       "regulacao do Conselho Estadual, fora do DOU)")
 
 
 def _carregar_cautelares(log=print):
@@ -489,7 +534,7 @@ def gerar(caminho, log=print):
             "fase_atual": fase, "situacao_emec": "",
             "data_fase": data_fase.date() if pd.notna(data_fase) else None,
             "via": via, "status_regulatorio": status, "ref_regulatoria": ref_reg,
-            "municipio_check": "", "vagas_fonte": vagas_fonte,
+            "vagas_fonte": vagas_fonte,
             "regime_seres": next((regime_por_proc[p] for p in
                                   g["processo"].map(lambda x: _norm(_limpa(x)))
                                   if p and p in regime_por_proc), ""),
@@ -590,8 +635,14 @@ def gerar(caminho, log=print):
             funil.loc[alvo, "cod_curso"].map(lambda c: cautelares[c][1])
         log(f"[funil] Enamed: {int(alvo.sum())} cursos decididos marcados como restritos")
 
-    funil = _padronizar_municipios(funil, log)
+    funil, n_mun_ok = _padronizar_municipios(funil, log)
     funil, pintar, pintar_manual = _consolidar_por_cod(funil, pintar, pintar_manual, log)
+
+    # -------- ESTADUAIS/MUNICIPAIS pelo e-MEC (dono aprovou 11/09/2026) ------------
+    # A regulacao dessas IES e dos CONSELHOS ESTADUAIS (diario do estado, nao DOU):
+    # sem isto, 58 Medicinas ativas (UERJ, UPE, UEPA...) ficavam invisiveis. Entram
+    # como linha INTEGRAL do Cadastro e-MEC, com fase propria e fonte declarada.
+    funil = _acrescentar_estaduais(funil, log)
 
     # Medicina continua NO TOPO da aba, so que sem coluna dedicada (dono,
     # 11/09/2026: redundante — filtre curso_padrao = "Medicina")
@@ -610,15 +661,15 @@ def gerar(caminho, log=print):
     # (regra do dono, 10/09/2026 — sempre no cabecalho). Celula amarela = preenchida de
     # fonte externa; a coluna fonte_externa diz o que veio de fora do DOU em cada linha.
     n_amarelas = len(pintar)
-    n_ibge = int((funil["municipio_check"] == "ok").sum())
+    n_ibge = n_mun_ok
     NOTA = (
         "NOTA DE FONTES — celulas AMARELAS foram preenchidas com dado que NAO consta no "
         "ato do DOU: "
         f"(1) INEP Censo da Educacao Superior 2024 (cod_curso, cod_ies, curso, uf, "
         f"municipio, vagas) — {n_amarelas} celulas, so em cruzamento inequivoco (por "
         "cod_curso, ou IES+nome unico); coluna fonte_externa detalha por linha. "
-        f"(2) Municipios padronizados pela base oficial do IBGE e conferidos contra a UF "
-        f"({n_ibge} 'ok' na coluna municipio_check). "
+        f"(2) Municipios padronizados pela base oficial do IBGE, validados contra a UF "
+        f"da linha ({n_ibge} confirmados; grafia sem casamento e mantida como veio). "
         f"(3) Cadastro e-MEC / dados abertos do MEC, arquivo \"Cursos de Graduacao do "
         f"Brasil\": a COLUNA situacao_emec inteira ({n_emec} cursos — Em atividade / Em "
         f"extincao / Extinto; por isso o CABECALHO dela e amarelo, nao cada celula; "
@@ -634,13 +685,15 @@ def gerar(caminho, log=print):
         "(revogacao do Edital de Chamamento 1/2023) e Portarias SERES 72-76/2026 (Enamed). "
         "ATENCAO vagas: veja a coluna vagas_fonte — vagas do INEP sao o TOTAL ofertado do "
         "curso EXISTENTE (nunca o numero de um pedido pendente nem o acrescimo de um "
-        "aumento de vagas). ESCOPO: a base cobre o sistema FEDERAL de ensino (atos do MEC no DOU); cursos de IES ESTADUAIS/municipais sao regulados pelos Conselhos Estaduais e publicados nos diarios dos ESTADOS — ficam fora (~69 cursos de Medicina ativos nessa situacao: UERJ, UPE, UEPA...; e-MEC, 11/09/2026). CELULAS VERDES = correcao manual do dono via aba Ajustes (link do ato + campo + valor) - preencha LA, nunca direto no Funil: o Funil e regenerado pelo robo e edicoes diretas se perdem. Nada e estimado por IA.")
+        "aumento de vagas). ESCOPO ampliado (aprovado 11/09/2026): cursos de IES ESTADUAIS/municipais entram como linha INTEGRAL do Cadastro e-MEC - fase (sistema estadual/municipal) - porque a regulacao deles e dos Conselhos Estaduais (diario do estado, nao DOU). Historicamente a base cobria so o sistema FEDERAL de ensino (atos do MEC no DOU); cursos de IES ESTADUAIS/municipais sao regulados pelos Conselhos Estaduais e publicados nos diarios dos ESTADOS — As ~69 Medicinas ativas dessas IES (UERJ, UPE, UEPA...) hoje estao DENTRO pela linha e-MEC. CELULAS VERDES = correcao manual do dono via aba Ajustes (link do ato + campo + valor) - preencha LA, nunca direto no Funil: o Funil e regenerado pelo robo e edicoes diretas se perdem. Nada e estimado por IA.")
 
     # Graficos/Graf_Dados NUNCA sao reescritos aqui: parse+to_excel transforma os
     # DESENHOS em aba de dados morta (foi assim que uma regeneracao so-funil abriu
     # sem nenhum grafico em 11/09/2026). Quem os recria e funil_graficos.gerar.
+    # "Medicina" saiu do arquivo (dono, 11/09/2026): era vista filtrada de Atos;
+    # deixa-la fora da preservacao faz a regeneracao REMOVE-la de arquivos antigos
     abas = {n: xl.parse(n) for n in xl.sheet_names
-            if n not in ("Funil", "Graficos", "Graf_Dados")}
+            if n not in ("Funil", "Graficos", "Graf_Dados", "Medicina")}
     if "Ajustes" not in abas:      # cria vazia com instrucao na 1a linha de dados
         abas["Ajustes"] = pd.DataFrame(
             [{"link": "(cole aqui o link_fonte da linha do Funil)",
@@ -680,7 +733,10 @@ def gerar(caminho, log=print):
             "F. Desativado - curso extinto ou desativado\n"
             "(sem ato do trilho no periodo) - desde 2018 o curso so apareceu em atos "
             "transversais (vagas, supervisao, cautelar), nunca num ato de "
-            "autorizacao/reconhecimento/renovacao", "Robo Clipping", 240, 420)
+            "autorizacao/reconhecimento/renovacao\n"
+            "(sistema estadual/municipal) - IES publica estadual/municipal: quem "
+            "regula e o Conselho Estadual (diario do estado); linha integral do "
+            "e-MEC, sem atos do DOU", "Robo Clipping", 260, 440)
         ws.cell(row=2, column=col_x["fase_atual"]).comment = _c_fase
         _c_status = Comment(
             "STATUS REGULATORIO - so para pendentes de Medicina e cursos com "
@@ -712,9 +768,6 @@ def gerar(caminho, log=print):
                            "PENDENTES (fase 0.x) apontam para a pagina da SERES/MEC: "
                            "pedido pendente NAO tem ato no DOU — a fonte e a planilha "
                            "oficial de processos em tramitacao."),
-            "municipio_check": ("ok = grafia casou com o IBGE dentro da UF (padronizada); "
-                                "nao encontrado na UF = mantido como veio (conferir); "
-                                "sem municipio / sem UF para checar."),
             "situacao_emec": ("Situacao no Cadastro e-MEC (coluna INTEIRA de fonte "
                               "externa — por isso o cabecalho amarelo): Em atividade / "
                               "Em extincao / Extinto. E o unico lugar que diz se o curso "
