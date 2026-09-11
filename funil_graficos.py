@@ -242,11 +242,21 @@ def gerar(caminho, log=print):
         x = _u.normalize("NFKD", str(x or ""))
         x = "".join(c for c in x if not _u.combining(c)).upper()
         return " ".join(x.replace(".", "").replace(",", "").split())
-    t7["mantenedora"] = t7["mantenedora"].astype(str).str.strip()
-    _rep = (t7.groupby(_nmant := t7["mantenedora"].map(_nmant))["mantenedora"]
-            .agg(lambda x: x.value_counts().index[0]))
-    t7["mantenedora"] = _nmant.map(_rep)
-    t7 = t7[~t7["mantenedora"].str.lower().isin(["", "nan", "nao consta na fonte"])]
+    # python puro: NA do arrow atravessava filtro/mode e explodia (2 crashes em
+    # 11/09/2026) — aqui nada de semantica de NA
+    from collections import Counter
+    _originais = [("" if v is None or (isinstance(v, float)) else str(v).strip())
+                  for v in t7["mantenedora"].tolist()]
+    _vazios = {"", "nan", "none", "<na>", "nao consta na fonte"}
+    _cont = {}
+    for o in _originais:
+        if o.lower() in _vazios:
+            continue
+        _cont.setdefault(_nmant(o), Counter())[o] += 1
+    _rep = {k: c.most_common(1)[0][0] for k, c in _cont.items()}
+    t7["mantenedora"] = [_rep.get(_nmant(o), "") if o.lower() not in _vazios else ""
+                         for o in _originais]
+    t7 = t7[t7["mantenedora"] != ""]
     t7 = (t7.groupby("mantenedora").size().rename("autorizacoes").reset_index()
             .sort_values("autorizacoes", ascending=False).head(15))
     blocos.append(("G7. Top 15 mantenedoras em AUTORIZACOES de Medicina 2018-2026 | "
