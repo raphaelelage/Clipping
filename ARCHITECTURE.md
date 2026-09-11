@@ -373,3 +373,14 @@ curso em atividade. Coluna situacao_emec no Funil (Em atividade / Em extincao / 
 pintada de AMARELO e declarada na nota de cabecalho, como todo dado de fonte externa.
 Casamento por cod_curso: 20.666 dos 21.929 cursos com codigo (94%).
 Para atualizar: baixar o CSV de novo (1-2x/ano) e regerar o parquet.
+
+### v4 (11/set/2026): a decisao pode estar no Art. 2
+Portaria cujo Art. 1 e PROCEDIMENTAL ("Anular a Portaria X", "Revogar a Portaria Y") poe a
+decisao real no Art. 2 — "Art. 2o Indeferir o pedido de autorizacao do curso de Medicina".
+Lendo so o Art. 1, o ato caia em autorizacao: 3 INDEFERIMENTOS DE MEDICINA (Portarias SERES
+281, 371 e 454/2026) estavam registrados como APROVACAO. `classificar` agora consulta o
+Art. 2 quando o Art. 1 e procedimental; revogacao pura (sem decisao no Art. 2) segue
+revogacao. Achado ao responder "quais checks provam que o total do scraper esta correto".
+COBERTURA: os 770 dias uteis sem ato NAO sao falha de coleta — amostra de 20 dias checada
+na fonte viva: 19 tem ato do MEC, mas ZERO tem ato de regulacao de curso (nomeacao,
+exoneracao etc. sao corretamente filtrados por `relevante()`).

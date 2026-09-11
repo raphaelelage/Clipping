@@ -106,8 +106,25 @@ def _dispositivo(texto):
     return m.group(1) if m else ""
 
 
+# Art. 1 PROCEDIMENTAL: "Anular a Portaria X" / "Revogar a Portaria Y" e arrumacao de
+# casa — a decisao que interessa esta no Art. 2 ("Art. 2o Indeferir o pedido de
+# autorizacao do curso de Medicina"). Sem olhar o Art. 2, o ato caia como autorizacao:
+# 3 INDEFERIMENTOS DE MEDICINA estavam registrados como aprovacao (SERES 281, 371 e
+# 454/2026 — achado em 11/09/2026, checando o total do scraper a pedido do dono).
+_RX_ART2 = re.compile(r"Art\.?\s*2\s*[ºo°]?\s*[-–.]?\s*(.{0,400})", re.S | re.I)
+_RX_PROCEDIMENTAL = re.compile(
+    r"^\W{0,4}(anular|fica\w*\s+anulad|fica\w*\s+revogad|revogar|torna\w*\s+sem\s+efeito)")
+
+
 def classificar(titulo, texto):
     disp = _norm(_dispositivo(texto)).strip()
+    if disp and _RX_PROCEDIMENTAL.match(disp):
+        m = _RX_ART2.search(texto or "")
+        if m:
+            d2 = _norm(m.group(1)).strip()
+            for tipo, rx in _DISPOSITIVOS_RX:
+                if rx.match(d2):
+                    return tipo                # decisao real mora no Art. 2
     if disp:
         for tipo, rx in _DISPOSITIVOS_RX:      # verbo claro no inicio do Art. 1: manda
             if rx.match(disp):
