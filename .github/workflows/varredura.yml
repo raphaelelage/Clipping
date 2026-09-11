@@ -66,7 +66,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt
+          cache-dependency-path: clipping_requirements.txt
+      - run: pip install -r clipping_requirements.txt
       - name: Varredura DOU
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
