@@ -61,10 +61,23 @@ def main():
     import dou_varredura
     resumo = dou_varredura.varrer(inicio, fim, str(local))
 
-    service.files().update(
-        fileId=fid,
-        media_body=MediaFileUpload(str(local), mimetype=XLSX_MIME, resumable=False),
-    ).execute()
+    # a conexao do download fica parada durante a varredura (7-100 min) e o socket
+    # morre (ssl.SSLEOFError no 1o run oficial, 11/09/2026): SEMPRE reconectar para
+    # subir, e uma retentativa — perder o upload seria perder a varredura inteira
+    for tentativa in (1, 2):
+        try:
+            service = _drive()
+            service.files().update(
+                fileId=fid,
+                media_body=MediaFileUpload(str(local), mimetype=XLSX_MIME,
+                                           resumable=False),
+            ).execute(num_retries=3)
+            break
+        except Exception as e:
+            print(f"[varredura_ci] upload falhou (tentativa {tentativa}: "
+                  f"{type(e).__name__}) — reconectando")
+            if tentativa == 2:
+                raise
     url = f"https://drive.google.com/file/d/{fid}/view"
     print(f"[varredura_ci] planilha atualizada no Drive: {url}")
 
