@@ -39,12 +39,14 @@ ALARME_SEMPRE = {
     "indeferimento",
     # REVOGACAO/SEM EFEITO (v3): reversao de ato anterior — raro (~5/ano) e material
     "revogacao", "sem_efeito",
+    # SENTINELAS (dono, 11/09/2026): eventos raros que merecem alerta imediato
+    "sentinela_chamamento_s3", "sentinela_comando_s2",
 }
 ALARME_SO_MEDICINA = {"reconhecimento", "renovacao_reconhecimento"}
 
 _VERBO = {
     "autorizacao": "autoriza",
-    "indeferimento": "INDEFERE o pedido de",
+    "indeferimento": "INDEFERE o pedido de autorizacao para",
     "revogacao": "REVOGA ato referente a",
     "sem_efeito": "TORNA SEM EFEITO ato referente a",
     "unificacao_mantidas": "aprova unificacao de mantidas de",
@@ -60,6 +62,10 @@ _VERBO = {
     "desativacao": "desativa",
     "sobrestamento": "sobresta processo de",
     "chamamento_mais_medicos": "movimenta chamamento publico (Mais Medicos) de",
+    "sentinela_chamamento_s3": "SENTINELA S3 — movimento de CHAMAMENTO PUBLICO de "
+                               "medicina (edital/resultado na Secao 3):",
+    "sentinela_comando_s2": "SENTINELA S2 — mudanca no comando regulatorio "
+                            "(SERES/INEP):",
 }
 
 
@@ -115,6 +121,48 @@ def coletar_novidades(dias=3, log=print):
                     atos.append(a)
         if falhou:
             inacessiveis.append(d)
+    # ---------------- SENTINELAS S2/S3 (camada de alerta; falha NAO trava estado) ---
+    RX_S3 = re.compile(r"chamamento\s+p[uú]blico|edital", re.I)
+    RX_S3_MED = re.compile(r"medicin", re.I)
+    RX_S2 = re.compile(r"(nomear|exonerar|designar|dispensar)", re.I)
+    RX_S2_ALVO = re.compile(r"regula[cç][aã]o e supervis[aã]o da educa[cç][aã]o superior|"
+                            r"\bSERES\b|presidente do (INEP|Instituto Nacional de "
+                            r"Estudos e Pesquisas)", re.I)
+    sentinelas = []
+    for d in _dias_uteis_recentes(dias):
+        for sec, filtro in (("do3", "chamamento"), ("do2", "comando")):
+            try:
+                arr = dh.atos_do_dia(d, sec, tentativas=2)
+            except Exception:
+                arr = None
+            if arr is None:
+                log(f"[radar] sentinela {sec} {d}: inacessivel (so alerta; nao trava)")
+                continue
+            for a_ in arr:
+                if not str(a_.get("hierarchyStr", "")).startswith("Ministério da Educação"):
+                    continue
+                blob = (str(a_.get("title", "")) + " " + str(a_.get("content", "") or ""))
+                if filtro == "chamamento":
+                    ok = RX_S3.search(blob) and RX_S3_MED.search(blob)
+                    tipo = "sentinela_chamamento_s3"
+                else:
+                    ok = RX_S2.search(blob) and RX_S2_ALVO.search(blob)
+                    tipo = "sentinela_comando_s2"
+                if ok:
+                    sentinelas.append({
+                        "tipo_ato": tipo, "ato": str(a_.get("title", "")).strip(),
+                        "curso": "", "ies": "", "municipio": "", "uf": "",
+                        "vagas_num": None, "cod_ies": "", "mantenedora": "",
+                        "processo_emec": "", "ref_judicial": "", "retificacao": False,
+                        "resumo_texto": blob[:300].strip(),
+                        "texto_inicio": blob[:300], "fonte_detalhe": f"sentinela {sec}",
+                        "orgao": str(a_.get("hierarchyStr", "")),
+                        "data_publicacao": d.strftime("%d/%m/%Y"),
+                        "_url": str(a_.get("urlTitle", "") or ""),
+                    })
+    if sentinelas:
+        log(f"[radar] SENTINELA: {len(sentinelas)} ato(s) S2/S3 detectado(s)")
+
     if len(inacessiveis) >= dias:
         import avisos
         avisos.aviso("Radar DOU: nenhuma edicao do DOU acessivel ("
@@ -125,6 +173,13 @@ def coletar_novidades(dias=3, log=print):
 
     linhas = dx.extrair(atos, workers=6, log=lambda m: None)
     df = pd.DataFrame(linhas)
+    if sentinelas:
+        for i, s_ in enumerate(sentinelas):
+            s_["link"] = ("https://www.in.gov.br/web/dou/-/"
+                          + str(s_.pop("_url", "") or s_["ato"])
+                          .replace(" ", "-").lower()[:120])
+        df = pd.concat([df, pd.DataFrame(sentinelas)], ignore_index=True) \
+            if len(df) else pd.DataFrame(sentinelas)
     if df.empty:
         return [], df, inacessiveis
     # Ato so de instituicao (credenciamento, sancionador...) nao tem tabela de cursos e o
@@ -190,6 +245,31 @@ def coletar_novidades(dias=3, log=print):
             pedacos.append(f"— e mais {extras} curso(s) no mesmo ato")
         frases.append({"frase": " ".join(pedacos), "link": link, "medicina": tem_med,
                        "tipo": tipo})
+    # portaria NOVA citando Enamed fora do cautelares_enamed_2026.json? Avisa para o
+    # dono pedir a regeneracao do JSON (as medidas ficam no anexo; nada e parseado
+    # automaticamente — regra do dono).
+    try:
+        import json as _json
+        import os as _os
+        _cj = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                            "cautelares_enamed_2026.json")
+        _conhecidas = set((_json.load(open(_cj, encoding="utf-8"))
+                           .get("portarias") or {}).keys()) if _os.path.exists(_cj) else set()
+        _en = df[df["texto_inicio"].astype(str).str.contains("Enamed", case=False,
+                                                             na=False)]
+        _novas = []
+        for _t in _en["ato"].astype(str):
+            _m = re.search(r"N[ºo°]?\s*([\d.]+)", _t)
+            _num = _m.group(1).replace(".", "") if _m else ""
+            if _num and _num not in _conhecidas:
+                _novas.append(_t.strip()[:70])
+        if _novas:
+            import avisos
+            avisos.aviso("ENAMED: portaria(s) NOVA(s) citando Enamed fora do JSON de "
+                         "cautelares — pedir regeneracao de cautelares_enamed_2026.json: "
+                         + "; ".join(sorted(set(_novas))[:4]))
+    except Exception:
+        pass
     frases.sort(key=lambda f: (not f["medicina"], f["tipo"]))
     log(f"[radar] {len(df)} linha(s) alarmante(s) em {df['link'].nunique()} documento(s)")
     return frases, df, inacessiveis

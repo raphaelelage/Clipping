@@ -428,3 +428,13 @@ Camadas: varredura_ci.py (Drive download/upload + e-mail, usado pelo workflow
 varredura.yml — PC-primeiro via RUNNER_PAT, concurrency para nao rodarem duas juntas)
 e aba "Varredura DOU" no streamlit_app.py (datas com fim=hoje, e-mail, rodar agora +
 agendamento cron-job.org com dias_retro). No PC: "Varredura DOU.bat" (arquivo local).
+
+### Sentinelas S2/S3 + detector Enamed (11/set/2026, aprovados pelo dono)
+O radar diario, alem de do1+do1_extra, agora VIGIA (camada de alerta, sem afetar o
+funil nem o estado): SECAO 3 — "chamamento publico/edital" + "medicina" (novo edital e
+resultados saem la; hoje nao ha edital vivo); SECAO 2 — nomear/exonerar/designar no
+comando da SERES ou presidencia do INEP (sinal regulatorio). Sentinela vira linha na
+aba Atos (tipo sentinela_*, dedup por link) e frase destacada no e-mail. Falha de
+do2/do3 so gera log — NUNCA trava o avanco do estado (garantia continua em do1/extra).
+ENAMED: ato citando Enamed com numero de portaria FORA do cautelares_enamed_2026.json
+vira aviso no e-mail pedindo regeneracao do JSON (nada de parse automatico de anexo).
