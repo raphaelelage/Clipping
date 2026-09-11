@@ -384,3 +384,31 @@ revogacao. Achado ao responder "quais checks provam que o total do scraper esta 
 COBERTURA: os 770 dias uteis sem ato NAO sao falha de coleta — amostra de 20 dias checada
 na fonte viva: 19 tem ato do MEC, mas ZERO tem ato de regulacao de curso (nomeacao,
 exoneracao etc. sao corretamente filtrados por `relevante()`).
+
+### v5 (11/set/2026): varredura final + enriquecimento
+CLASSIFICADOR — 3 verbos que faltavam, achados varrendo TODO dispositivo da base:
+"Fica DESATIVADO o curso" caia em reconhecimento (o Art. 2 renova o reconhecimento so
+para emissao de diploma, mas o curso esta FECHANDO) — 22 docs; "extinguir," com virgula
+escapava de "extinguir\s" — 3 atos / 372 linhas; "reduzir de X para Y vagas" e "aplicar
+medida cautelar" idem. Regressao de 23 casos no teste.
+ENRIQUECER (enriquecer.py) — duas camadas: (1) codigo que JA estava no ato ("UFMG(575)",
+campo numerico) = 1.092 cod_ies, NAO pinta (a fonte segue sendo o DOU); (2) cruzamento
+e-MEC + cadastro INEP por nome (variantes seguras, sempre IGUALDADE exata) = 1.471 cod_ies,
+2.428 cod_curso, 221 municipio, 225 uf, 38 vagas — PINTA de amarelo.
+VALIDACAO: cod_ies preenchido por mim diverge do nome oficial em 0,8
+### v5 (11/set/2026): varredura final + enriquecimento
+CLASSIFICADOR — 3 verbos que faltavam, achados varrendo TODO dispositivo da base:
+"Fica DESATIVADO o curso" caia em reconhecimento (o Art. 2 renova o reconhecimento so para
+emissao de diploma, mas o curso esta FECHANDO) — 22 docs; "extinguir," com virgula escapava
+do padrao antigo — 3 atos / 372 linhas; "reduzir de X para Y vagas" e "aplicar medida
+cautelar" idem. Regressao de 23 casos no teste.
+ENRIQUECER (enriquecer.py) — duas camadas: (1) codigo que JA estava no ato ("UFMG(575)",
+campo numerico) = 1.092 cod_ies, NAO pinta (a fonte segue sendo o DOU); (2) cruzamento
+e-MEC + cadastro INEP por nome (variantes seguras, sempre IGUALDADE exata) = 1.471 cod_ies,
+2.428 cod_curso, 221 municipio, 225 uf, 38 vagas — PINTA de amarelo.
+VALIDACAO: cod_ies preenchido pelo cruzamento diverge do nome oficial em 0,8%; os que JA
+vinham do DOU divergem em 6,2% (IES renomeadas: Anhanguera, Uninassau, Afya, Estacio). As
+duas fontes independentes (e-MEC x cadastro INEP) concordam em 2.890 nomes, discordam em 6.
+COLUNAS NOVAS: link_fonte (ultima, 100% preenchida) leva ao ato no DOU; fonte_inep virou
+fonte_externa (carrega INEP e e-MEC). Datas gravadas sem horario em todas as abas.
+situacao_emec: coluna INTEIRA e externa, entao o CABECALHO e amarelo (nao as 23 mil celulas).

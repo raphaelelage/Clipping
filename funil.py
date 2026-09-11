@@ -16,7 +16,7 @@ CRUZAMENTO INEP (Censo da Educacao Superior, cursos_inep.parquet): celulas que o
 informa (vagas, cod_curso, cod_ies, curso, uf, municipio) sao completadas pelo Censo QUANDO
 o cruzamento e inequivoco — por cod_curso, ou por (cod_ies + nome do curso) quando o par e
 UNICO no Censo. Nada e inventado: toda celula preenchida assim sai PINTADA DE AMARELO no
-Excel (regra do dono, 10/09/2026) e a coluna fonte_inep lista quais campos vieram do Censo.
+Excel (regra do dono, 10/09/2026) e a coluna fonte_externa lista quais campos vieram de fora do DOU.
 
 Fonte da verdade e o log Atos: este modulo NUNCA edita Atos, so (re)escreve a aba Funil.
 Uso: python funil.py <arquivo.xlsx>   (ou funil.gerar(caminho) pelo robo)
@@ -30,7 +30,7 @@ import pandas as pd
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 INEP_PARQUET = os.path.join(BASE, "cursos_inep.parquet")
-EMEC_PARQUET = os.path.join(BASE, "situacao_cursos_emec.parquet")
+EMEC_PARQUET = os.path.join(BASE, "cursos_emec.parquet")
 CAUTELARES_JSON = os.path.join(BASE, "cautelares_enamed_2026.json")
 AMARELO = "FFF6C453"          # celula preenchida via INEP (nao consta no ato do DOU)
 
@@ -68,7 +68,7 @@ COLS_FUNIL = ["cod_ies", "ies", "cod_curso", "curso_padrao", "curso", "uf", "mun
               "data_fase", "via",
               "status_regulatorio", "ref_regulatoria", "regime_seres", "vagas",
               "vagas_fonte", "cautelar", "sancionador", "qtd_atos", "ato_da_fase",
-              "mantenedora", "processo_recente", "fonte_inep"]
+              "mantenedora", "processo_recente", "fonte_externa", "link_fonte"]
 
 # o que o numero de VAGAS mede, conforme o ato de onde saiu (o cuidado do dono,
 # 10/09/2026: aumento de vagas NAO e o total da IES; INEP e o total do curso existente)
@@ -123,7 +123,7 @@ def _carregar_emec(log=print):
     fonte que diz se o curso ainda existe: o DOU publica a extincao sem nomear o curso
     (so processo + IES) e o Censo INEP so enxerga curso em atividade."""
     if not os.path.exists(EMEC_PARQUET):
-        log("[funil] situacao_cursos_emec.parquet ausente — situacao e-MEC pulada")
+        log("[funil] cursos_emec.parquet ausente — situacao e-MEC pulada")
         return {}
     e = pd.read_parquet(EMEC_PARQUET)
     out = {str(int(c)): s for c, s in zip(e["cod_curso"], e["situacao_emec"])
@@ -273,8 +273,12 @@ def gerar(caminho, log=print):
             fase, data_fase, ato_fase = (FASE_PENDENTE[top["tipo_decisao"]][1],
                                          top["_data"], top["ato"])
         else:
+            top = ult
             fase, data_fase, ato_fase = ("(sem ato do trilho no periodo)",
                                          ult["_data"], ult["ato"])
+        # link_fonte (dono, 11/09/2026): o DOU do ato que definiu a fase — e por onde
+        # o dono confere/preenche a mao o que o scraper nao conseguiu extrair
+        link_fase = _limpa(top.get("link", "")) or _limpa(ult.get("link", ""))
 
         cod = "" if chave.startswith("S/COD|") else chave
         judicial = _tem_ref_judicial(g["ref_judicial"])
@@ -321,7 +325,7 @@ def gerar(caminho, log=print):
                             if len(sanc) and pd.notna(sanc.iloc[-1]["_data"]) else ""),
             "qtd_atos": len(g), "ato_da_fase": ato_fase,
             "mantenedora": ult["mantenedora"], "processo_recente": ult["processo"],
-            "fonte_inep": "",
+            "fonte_externa": "", "link_fonte": link_fase,
         })
     funil = pd.DataFrame(linhas)
 
@@ -359,9 +363,20 @@ def gerar(caminho, log=print):
                 pintar.append((i, "curso_padrao"))
                 preenchidos.append("curso_padrao")
             if preenchidos:
-                funil.at[i, "fonte_inep"] = "INEP: " + ", ".join(preenchidos)
+                funil.at[i, "fonte_externa"] = "INEP: " + ", ".join(preenchidos)
         log(f"[funil] INEP preencheu {len(pintar)} celulas em "
-            f"{funil['fonte_inep'].ne('').sum()} cursos")
+            f"{funil['fonte_externa'].ne('').sum()} cursos")
+
+    # ------------- varredura profunda: cod_ies / cod_curso / municipio / uf / vagas --
+    # (dono, 11/09/2026) Roda ANTES da situacao e-MEC para que os cod_curso recem
+    # descobertos ja entrem no cruzamento seguinte. Camada 1 le o codigo que ja estava
+    # no ato (sem amarelo); camada 2 cruza com o e-MEC e PINTA. Ver enriquecer.py.
+    stat_enr = {}
+    try:
+        import enriquecer as _enr
+        stat_enr = _enr.enriquecer(funil, pintar, log)
+    except Exception as e:
+        log(f"[funil] enriquecimento pulado ({type(e).__name__}: {e})")
 
     # ------------- situacao do curso pelo Cadastro e-MEC (amarelo: fonte externa) ----
     emec = _carregar_emec(log)
@@ -372,8 +387,11 @@ def gerar(caminho, log=print):
             sit = emec.get(cod) if cod else None
             if sit:
                 funil.at[i, "situacao_emec"] = sit
-                pintar.append((i, "situacao_emec"))
                 n_emec += 1
+                # NAO entra em `pintar`: a coluna INTEIRA vem do e-MEC (nenhum valor dela
+                # sai do DOU), entao quem fica amarelo e o CABECALHO — pintar as 22 mil
+                # celulas diluiria o amarelo das outras colunas, que marca preenchimento
+                # pontual. A nota de cabecalho declara a fonte do mesmo jeito.
         vc = funil["situacao_emec"].value_counts().to_dict()
         log(f"[funil] e-MEC preencheu situacao em {n_emec} cursos: {vc}")
 
@@ -395,7 +413,7 @@ def gerar(caminho, log=print):
     # ---------------- grava: so a aba Funil muda; amarelo nas celulas do INEP -------
     # NOTA no cabecalho (linha 1): de onde veio TODO dado que nao estava no ato do DOU
     # (regra do dono, 10/09/2026 — sempre no cabecalho). Celula amarela = preenchida de
-    # fonte externa; a coluna fonte_inep diz o que veio do Censo em cada linha.
+    # fonte externa; a coluna fonte_externa diz o que veio de fora do DOU em cada linha.
     n_amarelas = len(pintar)
     n_ibge = int((funil["municipio_check"] == "ok").sum())
     NOTA = (
@@ -403,12 +421,20 @@ def gerar(caminho, log=print):
         "ato do DOU: "
         f"(1) INEP Censo da Educacao Superior 2024 (cod_curso, cod_ies, curso, uf, "
         f"municipio, vagas) — {n_amarelas} celulas, so em cruzamento inequivoco (por "
-        "cod_curso, ou IES+nome unico); coluna fonte_inep detalha por linha. "
+        "cod_curso, ou IES+nome unico); coluna fonte_externa detalha por linha. "
         f"(2) Municipios padronizados pela base oficial do IBGE e conferidos contra a UF "
         f"({n_ibge} 'ok' na coluna municipio_check). "
-        f"(3) situacao_emec: Cadastro e-MEC / dados abertos do MEC, arquivo \"Cursos de "
-        f"Graduacao do Brasil\" ({n_emec} cursos) — diz se o curso esta Em atividade, Em "
-        "extincao ou Extinto (o DOU publica a extincao sem nomear o curso). "
+        f"(3) Cadastro e-MEC / dados abertos do MEC, arquivo \"Cursos de Graduacao do "
+        f"Brasil\": a COLUNA situacao_emec inteira ({n_emec} cursos — Em atividade / Em "
+        f"extincao / Extinto; por isso o CABECALHO dela e amarelo, nao cada celula; "
+        f"o DOU publica a extincao sem nomear o curso) e o preenchimento de cod_ies pelo "
+        f"NOME da IES ({stat_enr.get('ies_nome', 0)}) e de cod_curso/municipio/uf/vagas "
+        f"pelo par (IES + curso) quando UNICO no cadastro "
+        f"({stat_enr.get('curso', 0)}/{stat_enr.get('municipio', 0)}/"
+        f"{stat_enr.get('uf', 0)}/{stat_enr.get('vagas', 0)}). "
+        f"NAO amarelo (dado do proprio ato, so estava embutido no texto): "
+        f"{stat_enr.get('campo', 0)} cod_ies lidos de \"NOME(codigo)\" ou do campo numerico. "
+        "link_fonte (ultima coluna) leva ao ato no DOU para conferencia/preenchimento manual. "
         "(4) status_regulatorio/ref_regulatoria: ADC 81 (STF), Portaria MEC 129/2026 "
         "(revogacao do Edital de Chamamento 1/2023) e Portarias SERES 72-76/2026 (Enamed). "
         "ATENCAO vagas: veja a coluna vagas_fonte — vagas do INEP sao o TOTAL ofertado do "
@@ -436,6 +462,10 @@ def gerar(caminho, log=print):
         ws.row_dimensions[1].height = 58
         for i, col in pintar:
             ws.cell(row=pos[i], column=col_x[col]).fill = fill
+        # cabecalho amarelo = COLUNA INTEIRA de fonte externa (nao ha valor do DOU nela)
+        for col in ("situacao_emec",):
+            if col in col_x:
+                ws.cell(row=2, column=col_x[col]).fill = fill
         ws.freeze_panes = "A3"
         ws.auto_filter.ref = "A2:" + ws.cell(row=2, column=len(COLS_FUNIL)).coordinate \
             + str(2 + len(funil))
@@ -443,6 +473,17 @@ def gerar(caminho, log=print):
             w = xw.book[aba]
             w.freeze_panes = "A2"
             w.auto_filter.ref = w.dimensions
+        # DATA SEM HORARIO em TODAS as abas (dono, 11/09/2026): a coluna chega do Excel
+        # como datetime e o formato herdado mostrava "00:00:00" junto. Aqui a celula que
+        # e data/datetime recebe DD/MM/YYYY de forma explicita — o valor nao muda, so a
+        # exibicao (e o horario 00:00 deixa de poluir a leitura).
+        import datetime as _dt
+        for aba in xw.book.sheetnames:
+            w = xw.book[aba]
+            for linha in w.iter_rows():
+                for cel in linha:
+                    if isinstance(cel.value, (_dt.datetime, _dt.date)):
+                        cel.number_format = "DD/MM/YYYY"
     log(f"[funil] {len(funil)} cursos | " + " | ".join(
         f"{k}={v}" for k, v in funil["fase_atual"].value_counts().items()))
     return funil

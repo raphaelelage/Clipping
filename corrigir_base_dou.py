@@ -38,7 +38,7 @@ def _vazio(v):
 # auditoria de verbos: extintos->desativacao, revogacao, sem_efeito, unificacao_mantidas,
 # suspensao de chamada publica. Re-rodar sobre base v2 e idempotente (retipo por link +
 # preenchimento so de celula vazia).
-MARCA = "correcao_v4_aplicada"
+MARCA = "correcao_v5_aplicada"
 
 
 def ja_aplicada(notas):

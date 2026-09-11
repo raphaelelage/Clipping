@@ -82,7 +82,15 @@ _DISPOSITIVOS = [
     # cursos mortos figuravam vivos no Funil; REVOGACAO/SEM EFEITO (reversao de ato)
     # caiam no tipo do ato revertido; "aprovada a UNIFICACAO de mantidas" (ato societario,
     # 206 linhas-curso) inflava autorizacao; suspensao de CHAMADA PUBLICA idem.
-    ("desativacao",              r"fica\w*\s+extint|extinguir\s"),
+    # v5 (11/09/2026, varredura de TODO verbo decisorio nao reconhecido):
+    # "Fica DESATIVADO o curso" caia em reconhecimento (14 docs) porque o Art. 2 diz
+    # "fica reconhecido o curso do art. 1o, exclusivamente para emissao de diploma" —
+    # o curso esta FECHANDO, nao sendo reconhecido. E "extinguir," (com virgula) nao
+    # casava com "extinguir\s": 3 atos, 372 linhas-curso.
+    ("desativacao",              r"fica\w*\s+extint|extinguir\b|fica\w*\s+desativad|"
+                                 r"desativar\b"),
+    ("reducao_vagas",            r"reduzir\b.{0,60}vagas"),
+    ("medida_cautelar",          r"(?:aplicar|fica\w*\s+aplicad).{0,40}cautelar"),
     ("revogacao",                r"fica\w*\s+revogad|revogar\b"),
     ("sem_efeito",               r"torna\w*\s+sem\s+efeito"),
     ("unificacao_mantidas",      r"(?:fica\w*\s+aprovad\w*|aprovar)\s+a\s+unificacao\s+"
@@ -96,7 +104,9 @@ _DISPOSITIVOS = [
     ("recredenciamento",         r"fica\w*\s+recredenciad"),
     ("credenciamento",           r"fica\w*\s+credenciad"),
 ]
-_DISPOSITIVOS_RX = [(t, re.compile(r"^\W{0,4}" + rx)) for t, rx in _DISPOSITIVOS]
+# (?:...) em volta: sem o grupo, o "^\W{0,4}" so valia para a PRIMEIRA alternativa e as
+# demais nao toleravam pontuacao no inicio do dispositivo.
+_DISPOSITIVOS_RX = [(t, re.compile(r"^\W{0,4}(?:" + rx + r")")) for t, rx in _DISPOSITIVOS]
 
 
 def _dispositivo(texto):
