@@ -438,3 +438,22 @@ aba Atos (tipo sentinela_*, dedup por link) e frase destacada no e-mail. Falha d
 do2/do3 so gera log — NUNCA trava o avanco do estado (garantia continua em do1/extra).
 ENAMED: ato citando Enamed com numero de portaria FORA do cautelares_enamed_2026.json
 vira aviso no e-mail pedindo regeneracao do JSON (nada de parse automatico de anexo).
+
+### Manutencao das bases estaticas — TUDO por script, sem IA (11/set/2026)
+Vulnerabilidade fechada a pedido do dono (migracao Max->Pro): as bases estaticas eram
+construidas em sessao de IA; agora cada uma tem script commitado e VALIDADO
+(reconstrucao comparada valor a valor com a base original):
+
+| base                        | script                    | gatilho                | passo manual |
+|-----------------------------|---------------------------|------------------------|--------------|
+| cautelares_enamed_2026.json | atualizar_cautelares.py   | aviso ENAMED no e-mail | colar os links das portarias |
+| cursos_emec/ies_emec        | atualizar_emec.py         | 1-2x/ano               | baixar CSV no navegador (CAPTCHA) |
+| cursos_inep.parquet         | atualizar_inep.py         | novo Censo (anual)     | baixar zip de microdados |
+
+CORRECAO de bonus achada na validacao do INEP: o parquet da 1a geracao gravava o
+PRIMEIRO polo (ordem do arquivo!) como municipio de curso EAD — polo arbitrario. A
+regra agora e a mesma do e-MEC: municipio so quando inequivoco; EAD multi-polo = vazio.
+O que AINDA exigiria sessao de IA: (1) mudanca de formato na API leiturajornal do
+in.gov.br (quebra RUIDOSA: aviso + job vermelho, nunca silenciosa); (2) nova planilha
+de pendentes da SERES (PDF -> tabela, parada em 06/2024); (3) evolucao de features.
+Rotina diaria e varredura: ZERO tokens de IA por construcao.
