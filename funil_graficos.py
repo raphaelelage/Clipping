@@ -58,6 +58,14 @@ def _formatar_eixos(ch, eixo_y, rot_x, n_cat, decimal=False, n_series=1):
     ch.y_axis.numFmt = "#,##0.0" if decimal else "#,##0"
     ch.y_axis.majorTickMark = "out"
 
+    # VALOR em cima da barra quando ha poucas categorias e 1 serie: le-se o numero
+    # sem cacar a grade; barras mais largas (gapWidth menor) preenchem melhor
+    if getattr(ch, "gapWidth", None) is not None:
+        ch.gapWidth = 60
+    if n_series == 1 and n_cat <= 12 and not decimal:
+        from openpyxl.chart.label import DataLabelList
+        ch.dataLabels = DataLabelList(showVal=True, numFmt="#,##0")
+
     ch.x_axis.title = rot_x
     ch.x_axis.delete = False
     ch.x_axis.majorTickMark = "out"
@@ -226,7 +234,18 @@ def gerar(caminho, log=print):
                    "medicina='Sim', contagem por uf", t6, "bar", "cursos"))
 
     t7 = aut[aut["_med"]].copy()
+    # mesma mantenedora com 2+ grafias ("SER EDUCACIONAL S.A." x "Ser Educacional
+    # S.A.") dividia a contagem do top-15: agrupa por grafia normalizada e exibe a
+    # grafia mais frequente do grupo
+    def _nmant(x):
+        import unicodedata as _u
+        x = _u.normalize("NFKD", str(x or ""))
+        x = "".join(c for c in x if not _u.combining(c)).upper()
+        return " ".join(x.replace(".", "").replace(",", "").split())
     t7["mantenedora"] = t7["mantenedora"].astype(str).str.strip()
+    _rep = (t7.groupby(_nmant := t7["mantenedora"].map(_nmant))["mantenedora"]
+            .agg(lambda x: x.value_counts().index[0]))
+    t7["mantenedora"] = _nmant.map(_rep)
     t7 = t7[~t7["mantenedora"].str.lower().isin(["", "nan", "nao consta na fonte"])]
     t7 = (t7.groupby("mantenedora").size().rename("autorizacoes").reset_index()
             .sort_values("autorizacoes", ascending=False).head(15))

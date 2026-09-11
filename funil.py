@@ -139,9 +139,18 @@ def _padronizar_municipios(funil, log=print):
         funil["municipio_check"] = ""
         return funil
     ibge = pd.read_parquet(MUNICIPIOS_IBGE)
+
+    def _nmun(x):
+        # apostrofo tipografico e crase viravam nao-encontro: d´Oeste vs d'Oeste
+        return _norm(x).replace(chr(180), "'").replace(chr(8217), "'")             .replace(chr(96), "'")
     oficial = {}
     for m, u in zip(ibge["municipio"], ibge["uf"]):
-        oficial[(u, _norm(m))] = m
+        oficial[(u, _nmun(m))] = m
+    # renomeacoes oficiais do IBGE que os atos antigos ainda usam (alvo EXISTE na
+    # nossa tabela — validado em 11/09/2026); nada aqui e chute
+    ALIAS = {("RN", "ACU"): "ASSU",
+             ("SP", "EMBU"): "EMBU DAS ARTES",
+             ("PE", "BELEM DE SAO FRANCISCO"): "BELEM DO SAO FRANCISCO"}
     novos, checks, corrigidos = [], [], 0
     RX_MUN_UF = re.compile(r"^(.*?)\s*/\s*([A-Za-z]{2})$")
     for m, u in zip(funil["municipio"], funil["uf"]):
@@ -156,7 +165,26 @@ def _padronizar_municipios(funil, log=print):
             novos.append(m0); checks.append("sem municipio"); continue
         if not u0:
             novos.append(m0); checks.append("sem UF para checar"); continue
-        of = oficial.get((u0, _norm(m0)))
+        of = oficial.get((u0, _nmun(m0)))
+        if of is None:                       # renomeacao oficial (Acu->Assu...)
+            ali = ALIAS.get((u0, _nmun(m0)))
+            if ali:
+                of = oficial.get((u0, ali))
+        if of is None:
+            # "Efapi Chapeco" / "Barra da Tijuca. Rio de Janeiro": bairro grudado na
+            # frente. Tenta o SUFIXO (apos ponto, ou 1-3 ultimas palavras) contra o
+            # IBGE da PROPRIA UF — so casa se existir exatamente la, nada inventado.
+            cands = []
+            if "." in m0:
+                cands.append(m0.split(".")[-1])
+            pal = m0.split()
+            for k in (3, 2, 1):
+                if len(pal) > k:
+                    cands.append(" ".join(pal[-k:]))
+            for c in cands:
+                of = oficial.get((u0, _nmun(c)))
+                if of:
+                    break
         if of is None:
             novos.append(m0); checks.append("nao encontrado na UF")
         else:
@@ -608,7 +636,11 @@ def gerar(caminho, log=print):
         "curso EXISTENTE (nunca o numero de um pedido pendente nem o acrescimo de um "
         "aumento de vagas). CELULAS VERDES = correcao manual do dono via aba Ajustes (link do ato + campo + valor) - preencha LA, nunca direto no Funil: o Funil e regenerado pelo robo e edicoes diretas se perdem. Nada e estimado por IA.")
 
-    abas = {n: xl.parse(n) for n in xl.sheet_names if n != "Funil"}
+    # Graficos/Graf_Dados NUNCA sao reescritos aqui: parse+to_excel transforma os
+    # DESENHOS em aba de dados morta (foi assim que uma regeneracao so-funil abriu
+    # sem nenhum grafico em 11/09/2026). Quem os recria e funil_graficos.gerar.
+    abas = {n: xl.parse(n) for n in xl.sheet_names
+            if n not in ("Funil", "Graficos", "Graf_Dados")}
     if "Ajustes" not in abas:      # cria vazia com instrucao na 1a linha de dados
         abas["Ajustes"] = pd.DataFrame(
             [{"link": "(cole aqui o link_fonte da linha do Funil)",
@@ -739,4 +771,7 @@ def gerar(caminho, log=print):
 
 
 if __name__ == "__main__":
-    gerar(sys.argv[1] if len(sys.argv) > 1 else "Regulacao_Cursos.xlsx")
+    _arq = sys.argv[1] if len(sys.argv) > 1 else "Regulacao_Cursos.xlsx"
+    gerar(_arq)
+    import funil_graficos                    # funil sem graficos = arquivo capenga
+    funil_graficos.gerar(_arq)
