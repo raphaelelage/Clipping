@@ -140,6 +140,12 @@ def gerar(caminho, log=print):
     # a aba Funil tem a NOTA DE FONTES na linha 1; o cabecalho real esta na linha 2
     funil = pd.read_excel(caminho, sheet_name="Funil", header=1)
     atos = pd.read_excel(caminho, sheet_name="Atos")
+    # mesma regra do funil: original superada por retificacao (*) nao conta 2x
+    _tit = atos["ato"].astype(str).str.strip().str.replace(r"\s+", " ", regex=True)
+    _bases = set(_tit[_tit.str.contains(r"\(\*\)\s*$", regex=True)]
+                 .str.replace(r"\s*\(\*\)\s*$", "", regex=True))
+    atos = atos[~(_tit.isin(_bases)
+                  & ~_tit.str.contains(r"\(\*\)\s*$", regex=True))]
     med = funil[funil["curso"].map(_eh_med)]   # coluna medicina saiu (11/09/2026)
     aut = atos[atos["tipo_decisao"].astype(str) == "autorizacao"].copy()
     aut["_ano"] = _ano(aut["data_decisao"])

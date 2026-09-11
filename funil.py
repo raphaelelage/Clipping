@@ -41,7 +41,10 @@ VERDE_MANUAL = "FFE2EFDA"    # celula corrigida A MAO pelo dono (aba Ajustes)   
 # (ref_regulatoria) — pedido do dono. "Sem via administrativa" substituiu o apelido
 # "sem trilho": sao pedidos do Edital de Chamamento 1/2023, revogado pela Portaria MEC
 # 129/2026 — e a ADC 81 firmou que chamamento e o UNICO caminho administrativo.
-ST_SOBRESTADO = ("Sobrestado", "MC na ADC 81 (STF) — suspenso ate o transito em julgado")
+ST_SOBRESTADO = ("Sobrestado",
+                 "ADC 81 (STF): sobrestado pela MC; merito julgado em 04/06/2024 "
+                 "(chamamento publico e constitucional; embargos pendentes) — "
+                 "planilha SERES, foto de 06/2024")
 ST_JUDICIAL = ("Tramita por decisao judicial",
                "Portaria SERES 531/2023 (padrao decisorio p/ judicializados)")
 ST_SEM_VIA = ("Sem via administrativa (edital revogado)",
@@ -291,9 +294,17 @@ def _consolidar_por_cod(funil, pintar, pintar_manual, log=print):
         funil.at[win, "qtd_atos"] = soma
         if (funil.loc[idx, "via"] == "Judicial").any():
             funil.at[win, "via"] = "Judicial"
+        fase_win = str(funil.at[win, "fase_atual"])
         for i in perde:
             for col in funil.columns:
                 if col in ("qtd_atos", "via"):
+                    continue
+                # status/ref sao ESTADO ATUAL do pedido pendente: curso ja DECIDIDO
+                # nao herda ("Sem via administrativa" num autorizado e contradicao —
+                # bug pego na auditoria de 11/09/2026). regime_seres herda: e a
+                # historia de como o pedido tramitou, continua verdadeira.
+                if col in ("status_regulatorio", "ref_regulatoria") \
+                        and not fase_win.startswith("0."):
                     continue
                 if _limpa(funil.at[win, col]) == "" and _limpa(funil.at[i, col]) != "":
                     funil.at[win, col] = funil.at[i, col]
@@ -350,6 +361,17 @@ def gerar(caminho, log=print):
     for c in atos.columns:
         if atos[c].dtype == object or str(atos[c].dtype) in ("str", "string"):
             atos[c] = atos[c].map(_limpa)
+    # ato RETIFICADO '(*)': quando a republicacao esta na base, a versao ORIGINAL
+    # e superada — sai das contagens (29 pares em 11/09/2026 dobravam qtd_atos e os
+    # graficos por ano). A aba Atos continua com as duas, como historico.
+    _tit = atos["ato"].astype(str).str.strip().str.replace(r"\s+", " ", regex=True)
+    _bases_ret = set(_tit[_tit.str.contains(r"\(\*\)\s*$", regex=True)]
+                     .str.replace(r"\s*\(\*\)\s*$", "", regex=True))
+    _superado = _tit.isin(_bases_ret) & ~_tit.str.contains(r"\(\*\)\s*$", regex=True)
+    if _superado.any():
+        log(f"[funil] {int(_superado.sum())} linha(s) de versao ORIGINAL superada por "
+            f"retificacao (*) fora das contagens")
+        atos = atos[~_superado]
     atos["_data"] = pd.to_datetime(atos["data_decisao"], errors="coerce")
     atos.loc[atos["_data"].isna(), "_data"] = pd.to_datetime(
         atos.loc[atos["_data"].isna(), "data_pedido"], errors="coerce")
@@ -652,7 +674,8 @@ def gerar(caminho, log=print):
                          "dele no DOU desde 2018). A soma da coluna e MENOR que o total "
                          "da aba Atos de proposito: atos sem nome nem codigo de curso "
                          "(extincoes que so citam processo, credenciamento de IES, "
-                         "CEBAS, sancionador de instituicao) nao viram linha aqui."),
+                         "CEBAS, sancionador de instituicao) nao viram linha aqui. Ato retificado (*) "
+                         "conta UMA vez: a versao original superada fica fora."),
             "link_fonte": ("Link da FONTE da fase atual. Ato no DOU: in.gov.br. Linhas "
                            "PENDENTES (fase 0.x) apontam para a pagina da SERES/MEC: "
                            "pedido pendente NAO tem ato no DOU — a fonte e a planilha "
