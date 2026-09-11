@@ -18,6 +18,51 @@ from openpyxl.styles import Font
 
 RX_MED = re.compile(r"\bMEDICINA\b", re.I)
 
+# nome da 1a coluna do bloco -> rotulo legivel do eixo X (dono, 11/09/2026)
+_ROTULO_X = {
+    "ano": "ano da decisao (publicacao no DOU)",
+    "fase_atual": "fase atual do curso",
+    "status_regulatorio": "status regulatorio do pedido",
+    "uf": "UF",
+    "mantenedora": "mantenedora (grupo)",
+}
+
+
+def _rotulo_x(coluna):
+    return _ROTULO_X.get(str(coluna), str(coluna).replace("_", " "))
+
+
+def _formatar_eixos(ch, eixo_y, rot_x, n_cat, decimal=False):
+    """Eixos legiveis (dono, 11/09/2026: "o eixo y de para ver melhor e quero ver o
+    eixo x com o que quer dizer"). Pontos que importam no openpyxl:
+      - delete=False: sem isso o Excel/WPS pode ESCONDER o eixo inteiro;
+      - majorGridlines no Y: sem a grade nao da para ler a altura da barra;
+      - numFmt com separador de milhar: 15712 vira 15.712;
+      - rotulo do X rotacionado quando a categoria e texto longo (fase, mantenedora),
+        senao o Excel corta ou sobrepoe os nomes."""
+    from openpyxl.chart.axis import ChartLines
+    from openpyxl.chart.text import RichText
+    from openpyxl.drawing.text import (Paragraph, ParagraphProperties,
+                                       CharacterProperties, RichTextProperties)
+
+    ch.y_axis.title = eixo_y
+    ch.y_axis.delete = False
+    ch.y_axis.majorGridlines = ChartLines()
+    ch.y_axis.numFmt = "#,##0.0" if decimal else "#,##0"
+    ch.y_axis.majorTickMark = "out"
+
+    ch.x_axis.title = rot_x
+    ch.x_axis.delete = False
+    ch.x_axis.majorTickMark = "out"
+    ch.x_axis.tickLblPos = "low"       # rotulos embaixo, longe das barras
+    # texto longo (fases, UF, mantenedoras) na diagonal para nao sobrepor
+    if rot_x not in ("ano da decisao (publicacao no DOU)", "UF") or n_cat > 12:
+        ch.x_axis.txPr = RichText(
+            p=[Paragraph(pPr=ParagraphProperties(defRPr=CharacterProperties(sz=900)),
+                         endParaRPr=CharacterProperties(sz=900))],
+            bodyPr=RichTextProperties(rot="-2700000", vert="horz"))   # -45 graus
+    ch.legend.position = "b" if ch.legend else "b"
+
 
 def _eh_med(s):
     s = str(s or "")
@@ -181,20 +226,25 @@ def gerar(caminho, log=print):
                 wsd.cell(row=head + i, column=j,
                          value=(None if pd.isna(v) else
                                 (float(v) if isinstance(v, (int, float)) else str(v))))
-        ancoras.append((titulo, tipo, eixo_y, head, head + len(df), df.shape[1]))
+        # a 1a coluna do bloco E a categoria do eixo X — o rotulo sai dela (dono,
+        # 11/09/2026: "quero ver o eixo x com o que quer dizer no eixo x")
+        # valor fracionario (ex.: fila mediana de 4,5 anos) nao pode usar formato de
+        # inteiro no eixo — "#,##0" exibiria 5 e mentiria sobre a mediana
+        vals = pd.to_numeric(df.iloc[:, 1:].stack(), errors="coerce").dropna()
+        decimal = bool(len(vals)) and not bool((vals % 1 == 0).all())
+        ancoras.append((titulo, tipo, eixo_y, head, head + len(df), df.shape[1],
+                        _rotulo_x(df.columns[0]), len(df), decimal))
         linha = head + len(df) + 3
 
     pos = ["A1", "J1", "A20", "J20", "A39", "J39", "A58", "J58", "A77", "J77",
            "A96", "J96"]
-    for k, (titulo, tipo, eixo_y, h0, h1, ncols) in enumerate(ancoras):
+    for k, (titulo, tipo, eixo_y, h0, h1, ncols, rot_x, n_cat, dec) in enumerate(ancoras):
         ch = LineChart() if tipo == "line" else BarChart()
         if tipo == "bar_stack":
             ch.type, ch.grouping, ch.overlap = "col", "stacked", 100
         elif tipo == "bar":
             ch.type = "col"
         ch.title = titulo.split(" | ")[0]
-        ch.y_axis.title = eixo_y
-        ch.height, ch.width = 8.5, 16
         # sem "variar cores por ponto": com 1 serie so, o Excel/WPS pinta cada barra de
         # uma cor e joga as CATEGORIAS na legenda (parecia que os anos eram as series)
         ch.varyColors = False
@@ -202,6 +252,7 @@ def gerar(caminho, log=print):
         cats = Reference(wsd, min_col=1, min_row=h0 + 1, max_row=h1)
         ch.add_data(dados, titles_from_data=True)
         ch.set_categories(cats)
+        _formatar_eixos(ch, eixo_y, rot_x, n_cat, dec)
         wsg.add_chart(ch, pos[k])
 
     wsd.freeze_panes = "A2"
