@@ -25,6 +25,8 @@ vestibular
 escola
 professor
 piso salarial
+PNLD
+Semesp
 
 # --- reguladores, programas e exames
 mec
@@ -86,3 +88,5 @@ IPCA
 +ICMS
 +beneficio fiscal
 +medida provisória
+
+
