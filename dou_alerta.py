@@ -65,7 +65,7 @@ _VERBO = {
     "sentinela_chamamento_s3": "SENTINELA S3 — movimento de CHAMAMENTO PUBLICO de "
                                "medicina (edital/resultado na Secao 3):",
     "sentinela_comando_s2": "SENTINELA S2 — mudanca no comando regulatorio "
-                            "(SERES/INEP):",
+                            "(MEC/SERES/INEP/ANS/ANVISA):",
 }
 
 
@@ -124,10 +124,15 @@ def coletar_novidades(dias=3, log=print):
     # ---------------- SENTINELAS S2/S3 (camada de alerta; falha NAO trava estado) ---
     RX_S3 = re.compile(r"chamamento\s+p[uú]blico|edital", re.I)
     RX_S3_MED = re.compile(r"medicin", re.I)
-    RX_S2 = re.compile(r"(nomear|exonerar|designar|dispensar)", re.I)
-    RX_S2_ALVO = re.compile(r"regula[cç][aã]o e supervis[aã]o da educa[cç][aã]o superior|"
-                            r"\bSERES\b|presidente do (INEP|Instituto Nacional de "
-                            r"Estudos e Pesquisas)", re.I)
+    RX_S2 = re.compile(r"(nomear|exonerar|designar|dispensar|conduzir)", re.I)
+    # CARGO provido (nao basta citar a agencia: "chefe de gabinete do diretor-
+    # presidente nomear servidor X" e rotina diaria e viraria spam — medido 11/09)
+    RX_S2_ALVO = re.compile(
+        r"cargo de (?:Secret[aá]ri[oa] de Regula[cç][aã]o e Supervis[aã]o da "
+        r"Educa[cç][aã]o Superior|Presidente do (?:INEP|Instituto Nacional de Estudos"
+        r"[^,;.]{0,60})|Diretor(?:a)?(?:-Presidente)? da (?:ANS|Ag[eê]ncia Nacional "
+        r"de Sa[uú]de Suplementar|ANVISA|Ag[eê]ncia Nacional de Vigil[aâ]ncia "
+        r"Sanit[aá]ria)|Ministro de Estado da (?:Educa[cç][aã]o|Sa[uú]de))", re.I)
     sentinelas = []
     for d in _dias_uteis_recentes(dias):
         for sec, filtro in (("do3", "chamamento"), ("do2", "comando")):
@@ -139,13 +144,17 @@ def coletar_novidades(dias=3, log=print):
                 log(f"[radar] sentinela {sec} {d}: inacessivel (so alerta; nao trava)")
                 continue
             for a_ in arr:
-                if not str(a_.get("hierarchyStr", "")).startswith("Ministério da Educação"):
-                    continue
                 blob = (str(a_.get("title", "")) + " " + str(a_.get("content", "") or ""))
                 if filtro == "chamamento":
+                    # S3 e enorme (licitacoes): so MEC + edital/chamamento + medicina
+                    if not str(a_.get("hierarchyStr", "")).startswith(
+                            "Ministério da Educação"):
+                        continue
                     ok = RX_S3.search(blob) and RX_S3_MED.search(blob)
                     tipo = "sentinela_chamamento_s3"
                 else:
+                    # S2: SEM trava de hierarquia — nomeacao de cupula sai pela
+                    # Presidencia/Casa Civil, nao sob o MEC (sondagem 11/09/2026)
                     ok = RX_S2.search(blob) and RX_S2_ALVO.search(blob)
                     tipo = "sentinela_comando_s2"
                 if ok:
