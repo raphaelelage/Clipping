@@ -1,13 +1,12 @@
 {
- "fonte": "Portarias SERES/MEC 72-76 de 16/03/2026 (DOU) — medidas valem ate o resultado do Enamed 2026; restabelecidas pelo STJ em ago/2026",
+ "fonte": "Portarias SERES/MEC (cautelares do Enamed) lidas do DOU por atualizar_cautelares.py — deterministico, sem IA",
  "portarias": {
   "72": {
    "url": "https://www.in.gov.br/web/dou/-/portaria-seres/mec-n-72-de-16-de-marco-de-2026-*-693446231",
    "medidas": [
     "suspensao de ingresso",
     "veto a aumento de vagas",
-    "veto a novos Fies",
-    "processo de supervisao"
+    "suspensao de FIES/financiamento"
    ],
    "cursos": [
     {
@@ -51,8 +50,7 @@
    "url": "https://www.in.gov.br/web/dou/-/portaria-seres/mec-n-73-de-16-de-marco-de-2026-*-693464457",
    "medidas": [
     "veto a aumento de vagas",
-    "veto a novos Fies",
-    "processo de supervisao"
+    "suspensao de FIES/financiamento"
    ],
    "cursos": [
     {
@@ -111,8 +109,7 @@
    "url": "https://www.in.gov.br/web/dou/-/portaria-seres/mec-n-74-de-16-de-marco-de-2026-*-693450617",
    "medidas": [
     "veto a aumento de vagas",
-    "veto a novos Fies",
-    "processo de supervisao"
+    "suspensao de FIES/financiamento"
    ],
    "cursos": [
     {
@@ -279,9 +276,7 @@
   },
   "75": {
    "url": "https://www.in.gov.br/web/dou/-/portaria-seres/mec-n-75-de-16-de-marco-de-2026-*-693441949",
-   "medidas": [
-    "processo de supervisao"
-   ],
+   "medidas": [],
    "cursos": [
     {
      "cod_curso": "7105",
@@ -488,8 +483,7 @@
   "76": {
    "url": "https://www.in.gov.br/web/dou/-/portaria-seres/mec-n-76-de-16-de-marco-de-2026-693111839",
    "medidas": [
-    "veto a aumento de vagas",
-    "processo de supervisao"
+    "veto a aumento de vagas"
    ],
    "cursos": [
     {
@@ -511,16 +505,6 @@
      "cod_curso": "1292917",
      "cod_ies": "18812",
      "ies": "Universidade Federal do Sul da Bahia"
-    },
-    {
-     "cod_curso": "1202539",
-     "cod_ies": "569",
-     "ies": "Universidade Federal do Pará"
-    },
-    {
-     "cod_curso": "1202539",
-     "cod_ies": "569",
-     "ies": "Universidade Federal do Pará"
     }
    ]
   }
