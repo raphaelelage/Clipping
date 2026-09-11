@@ -118,8 +118,8 @@ def montar(parquet, saida, oficial_parquet=None, log=print):
         if oficial is not None:
             oficial.to_excel(xw, sheet_name="Medicina_SERES", index=False)
         notas.to_excel(xw, sheet_name="Notas", index=False)
-        for aba in (("Atos", "Medicina", "Medicina_SERES") if oficial is not None
-                    else ("Atos", "Medicina")):
+        for aba in (("Atos", "Medicina_SERES") if oficial is not None
+                    else ("Atos",)):
             ws = xw.book[aba]
             ws.freeze_panes = "A2"
             ws.auto_filter.ref = ws.dimensions

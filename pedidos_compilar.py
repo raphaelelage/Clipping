@@ -471,10 +471,9 @@ def montar(parquet_dou, parquet_seres, saida, inep_ies=(), inep_cursos=(), log=p
     with pd.ExcelWriter(saida, engine="openpyxl",
                         date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY") as xw:
         corpo.to_excel(xw, sheet_name="Atos", index=False)
-        med.to_excel(xw, sheet_name="Medicina", index=False)
         seres.to_excel(xw, sheet_name="Medicina_SERES", index=False)
         notas.to_excel(xw, sheet_name="Notas", index=False)
-        for aba in ("Atos", "Medicina", "Medicina_SERES"):
+        for aba in ("Atos", "Medicina_SERES"):
             ws = xw.book[aba]
             ws.freeze_panes = "A2"
             ws.auto_filter.ref = ws.dimensions

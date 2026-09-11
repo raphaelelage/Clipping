@@ -164,7 +164,7 @@ def _fundir(novas, caminho, manifesto, inicio, fim, log):
         todas.to_excel(xw, sheet_name="Atos", index=False)
         for n, df in outras.items():
             df.to_excel(xw, sheet_name=n, index=False)
-        for aba in ["Atos", "Medicina"] + list(outras):
+        for aba in ["Atos"] + list(outras):
             w = xw.book[aba]
             w.freeze_panes = "A2"
             w.auto_filter.ref = w.dimensions
