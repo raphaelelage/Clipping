@@ -32,7 +32,8 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 INEP_PARQUET = os.path.join(BASE, "cursos_inep.parquet")
 EMEC_PARQUET = os.path.join(BASE, "cursos_emec.parquet")
 CAUTELARES_JSON = os.path.join(BASE, "cautelares_enamed_2026.json")
-AMARELO = "FFF6C453"          # celula preenchida via INEP (nao consta no ato do DOU)
+AMARELO = "FFF6C453"
+VERDE_MANUAL = "FFE2EFDA"    # celula corrigida A MAO pelo dono (aba Ajustes)          # celula preenchida via INEP (nao consta no ato do DOU)
 
 # status_regulatorio (dono, 10/09/2026): responde "quantos podem de fato entrar no
 # mercado". Regras deterministas sobre campos ja existentes + a base oficial de
@@ -64,10 +65,10 @@ FASE_PENDENTE = {
 
 # ordem das colunas da aba Funil — pensada para virar grafico (codigos primeiro)
 COLS_FUNIL = ["cod_ies", "ies", "cod_curso", "curso_padrao", "curso", "uf", "municipio",
-              "municipio_check", "medicina", "fase_atual", "situacao_emec",
+              "municipio_check", "fase_atual", "situacao_emec",
               "data_fase", "via",
               "status_regulatorio", "ref_regulatoria", "regime_seres", "vagas",
-              "vagas_fonte", "cautelar", "sancionador", "qtd_atos", "ato_da_fase",
+              "vagas_fonte", "sancionador", "qtd_atos", "ato_da_fase",
               "mantenedora", "processo_recente", "fonte_externa", "link_fonte"]
 
 # o que o numero de VAGAS mede, conforme o ato de onde saiu (o cuidado do dono,
@@ -81,6 +82,49 @@ _VAGAS_FONTE = {
     "renovacao_reconhecimento": "DOU — renovacao de reconhecimento (vagas do ato)",
 }
 VAGAS_FONTE_INEP = "INEP Censo 2024 — vagas TOTAIS ofertadas do curso existente (nao e o pedido)"
+
+
+_CAMPOS_AJUSTE = ("cod_ies", "cod_curso", "curso", "curso_padrao", "ies",
+                  "mantenedora", "uf", "municipio", "vagas")
+
+
+def _aplicar_ajustes(funil, xl, pintar_manual, log=print):
+    """Aba AJUSTES (dono, 11/09/2026): o Funil e REGENERADO a cada rodada do robo,
+    entao correcao feita direto nele evapora. O dono registra a correcao na aba
+    Ajustes (link do ato + campo + valor; curso opcional para desambiguar ato com
+    varios cursos) e ela e reaplicada AQUI em toda regeneracao — celula VERDE.
+    Aplicada ANTES dos cruzamentos: o valor manual tem prioridade sobre tudo
+    (nenhum preenchimento automatico sobrescreve celula ja preenchida)."""
+    if "Ajustes" not in xl.sheet_names:
+        return 0
+    aj = xl.parse("Ajustes")
+    aj.columns = [str(c).strip().lower() for c in aj.columns]
+    if not {"link", "campo", "valor"}.issubset(aj.columns):
+        log("[funil] aba Ajustes sem as colunas link/campo/valor — ignorada")
+        return 0
+    n = 0
+    liga = funil["link_fonte"].astype(str).str.strip()
+    for _, r in aj.iterrows():
+        link = str(r.get("link") or "").strip()
+        campo = str(r.get("campo") or "").strip().lower()
+        valor = _limpa(r.get("valor"))
+        if not (link and valor and campo in _CAMPOS_AJUSTE):
+            continue
+        sel = liga == link
+        curso_f = _limpa(r.get("curso") if "curso" in aj.columns else "")
+        if curso_f:
+            sel = sel & funil["curso"].map(lambda c: _norm(curso_f) in _norm(c))
+        for i in funil.index[sel]:
+            funil.at[i, campo] = valor
+            pintar_manual.append((i, campo))
+            atual = str(funil.at[i, "fonte_externa"] or "")
+            if "manual:" not in atual or campo not in atual:
+                funil.at[i, "fonte_externa"] = ((atual + " | " if atual else "")
+                                                + "manual: " + campo)                     if "manual:" not in atual else atual + ", " + campo
+            n += 1
+    if n:
+        log(f"[funil] Ajustes manuais aplicados: {n} celula(s) (verde)")
+    return n
 
 
 def _padronizar_municipios(funil, log=print):
@@ -248,6 +292,16 @@ def gerar(caminho, log=print):
                 regime_por_proc[_norm(ref)] = _limpa(reg)
 
     atos["_cod"] = atos["cod_curso"].map(_int_ou_vazio)
+    # "curso" que e SO NUMERO (5-8 digitos) e o CODIGO e-MEC que a tabela do ato
+    # pos na coluna de nome (592/602 existem no cadastro — 11/09/2026). Vira
+    # cod_curso; o NOME vem do cruzamento e-MEC/INEP (amarelo), nao fica numero.
+    # 4 a 8 digitos (ha codigo e-MEC de 4 digitos: 9582, 6242...), MENOS o que
+    # parece ANO (1900-2099) — "2019" como nome seria lixo, nao codigo
+    so_numero = (atos["curso"].str.fullmatch(r"\d{4,8}").fillna(False)
+                 & ~atos["curso"].str.fullmatch(r"(19|20)\d{2}").fillna(False))
+    soh_sem_cod = so_numero & (atos["_cod"] == "")
+    atos.loc[soh_sem_cod, "_cod"] = atos.loc[soh_sem_cod, "curso"]
+    atos.loc[so_numero, "curso"] = ""   # numero NUNCA fica como nome de curso
     atos["_chave"] = atos["_cod"]
     vazio = atos["_chave"] == ""
     atos.loc[vazio, "_chave"] = ("S/COD|" + atos.loc[vazio, "ies"].map(_norm) + "|"
@@ -272,6 +326,8 @@ def gerar(caminho, log=print):
             top = pend.iloc[-1]
             fase, data_fase, ato_fase = (FASE_PENDENTE[top["tipo_decisao"]][1],
                                          top["_data"], top["ato"])
+            if not _limpa(ato_fase):   # pendente vem da planilha SERES, nao do DOU
+                ato_fase = "Planilha oficial SERES (processos e-MEC em tramitacao)"
         else:
             top = ult
             fase, data_fase, ato_fase = ("(sem ato do trilho no periodo)",
@@ -301,7 +357,6 @@ def gerar(caminho, log=print):
                 t = str(rr["tipo_decisao"])
                 vagas_fonte = _VAGAS_FONTE.get(t, f"DOU — {t}")
                 break
-        cautelar = g[g["tipo_decisao"] == "medida_cautelar"]
         sanc = g[g["tipo_decisao"] == "sancionador_supervisao"]
         nome_raw = ult["curso"]
         cnorm = _norm(nome_raw)
@@ -309,8 +364,6 @@ def gerar(caminho, log=print):
             "cod_ies": _int_ou_vazio(ult["cod_ies"]), "ies": ult["ies"],
             "cod_curso": cod, "curso_padrao": curso_padrao(nome_raw),
             "curso": nome_raw, "uf": ult["uf"], "municipio": ult["municipio"],
-            "medicina": "Sim" if (re.search(r"\bMEDICINA\b", cnorm)
-                                  and "VETERIN" not in cnorm) else "",
             "fase_atual": fase, "situacao_emec": "",
             "data_fase": data_fase.date() if pd.notna(data_fase) else None,
             "via": via, "status_regulatorio": status, "ref_regulatoria": ref_reg,
@@ -319,8 +372,6 @@ def gerar(caminho, log=print):
                                   g["processo"].map(lambda x: _norm(_limpa(x)))
                                   if p and p in regime_por_proc), ""),
             "vagas": vagas,
-            "cautelar": (cautelar.iloc[-1]["_data"].strftime("%d/%m/%Y")
-                         if len(cautelar) and pd.notna(cautelar.iloc[-1]["_data"]) else ""),
             "sancionador": (sanc.iloc[-1]["_data"].strftime("%d/%m/%Y")
                             if len(sanc) and pd.notna(sanc.iloc[-1]["_data"]) else ""),
             "qtd_atos": len(g), "ato_da_fase": ato_fase,
@@ -328,6 +379,10 @@ def gerar(caminho, log=print):
             "fonte_externa": "", "link_fonte": link_fase,
         })
     funil = pd.DataFrame(linhas)
+
+    # ---------------- ajustes MANUAIS do dono (celulas verdes; prioridade maxima) ----
+    pintar_manual = []
+    _aplicar_ajustes(funil, xl, pintar_manual, log)
 
     # ---------------- cruzamento INEP (celulas amarelas; nada inventado) ------------
     por_codigo, por_ies_nome, por_ies_nome_mun = _carregar_inep(log)
@@ -407,8 +462,15 @@ def gerar(caminho, log=print):
 
     funil = _padronizar_municipios(funil, log)
 
-    funil = funil[COLS_FUNIL].sort_values(
-        ["medicina", "fase_atual", "data_fase"], ascending=[False, True, False])
+    # Medicina continua NO TOPO da aba, so que sem coluna dedicada (dono,
+    # 11/09/2026: redundante — filtre curso_padrao = "Medicina")
+    _med_topo = funil["curso"].map(
+        lambda c: bool(re.search(r"\bMEDICINA\b", _norm(c)))
+        and "VETERIN" not in _norm(c))
+    funil = (funil.assign(_m=_med_topo)
+             .sort_values(["_m", "fase_atual", "data_fase"],
+                          ascending=[False, True, False])
+             .drop(columns="_m"))[COLS_FUNIL]
 
     # ---------------- grava: so a aba Funil muda; amarelo nas celulas do INEP -------
     # NOTA no cabecalho (linha 1): de onde veio TODO dado que nao estava no ato do DOU
@@ -439,9 +501,15 @@ def gerar(caminho, log=print):
         "(revogacao do Edital de Chamamento 1/2023) e Portarias SERES 72-76/2026 (Enamed). "
         "ATENCAO vagas: veja a coluna vagas_fonte — vagas do INEP sao o TOTAL ofertado do "
         "curso EXISTENTE (nunca o numero de um pedido pendente nem o acrescimo de um "
-        "aumento de vagas). Nada e estimado por IA.")
+        "aumento de vagas). CELULAS VERDES = correcao manual do dono via aba Ajustes (link do ato + campo + valor) - preencha LA, nunca direto no Funil: o Funil e regenerado pelo robo e edicoes diretas se perdem. Nada e estimado por IA.")
 
     abas = {n: xl.parse(n) for n in xl.sheet_names if n != "Funil"}
+    if "Ajustes" not in abas:      # cria vazia com instrucao na 1a linha de dados
+        abas["Ajustes"] = pd.DataFrame(
+            [{"link": "(cole aqui o link_fonte da linha do Funil)",
+              "curso": "(opcional: nome do curso p/ ato com varios)",
+              "campo": "(um de: " + ", ".join(_CAMPOS_AJUSTE) + ")",
+              "valor": "(o valor correto)"}])
     from openpyxl.styles import PatternFill, Font, Alignment
     fill = PatternFill(start_color=AMARELO, end_color=AMARELO, fill_type="solid")
     # nota na linha 1, cabecalho na 2, dados da 3 em diante
@@ -460,6 +528,42 @@ def gerar(caminho, log=print):
         c.alignment = Alignment(wrap_text=True, vertical="top")
         c.fill = PatternFill(start_color="FFFDF3D6", end_color="FFFDF3D6", fill_type="solid")
         ws.row_dimensions[1].height = 58
+        # notas de celula nos cabecalhos (dono, 11/09/2026: Shift+F2 explicando
+        # cada output de fase_atual e status_regulatorio)
+        from openpyxl.comments import Comment
+        _c_fase = Comment(
+            "FASE ATUAL = ato mais recente do trilho regulatorio no DOU:\n"
+            "0. Protocolado (em tramitacao) - pedido de Medicina ainda sem decisao "
+            "(fonte: planilha oficial SERES, nao ha ato no DOU)\n"
+            "0. Sobrestado (ADC 81) - pedido suspenso pela medida cautelar do STF\n"
+            "1. Autorizado - curso autorizado a iniciar turmas\n"
+            "2. Reconhecido - curso reconhecido (pode emitir diploma)\n"
+            "3. Renovacao de reconhecimento - ciclo regular de revalidacao\n"
+            "F. Indeferido (pedido negado) - pedido rejeitado pela SERES/MEC\n"
+            "F. Desativado - curso extinto ou desativado\n"
+            "(sem ato do trilho no periodo) - desde 2018 o curso so apareceu em atos "
+            "transversais (vagas, supervisao, cautelar), nunca num ato de "
+            "autorizacao/reconhecimento/renovacao", "Robo Clipping", 240, 420)
+        ws.cell(row=2, column=col_x["fase_atual"]).comment = _c_fase
+        _c_status = Comment(
+            "STATUS REGULATORIO - so para pendentes de Medicina e cursos com "
+            "restricao vigente:\n"
+            "Sobrestado - MC na ADC 81 (STF): parado ate o transito em julgado\n"
+            "Tramita por decisao judicial - anda por forca de liminar/sentenca "
+            "(padrao decisorio da Portaria SERES 531/2023)\n"
+            "Sem via administrativa (edital revogado) - pedido do Edital de "
+            "Chamamento 1/2023, revogado pela Portaria MEC 129/2026: hoje nao ha "
+            "caminho administrativo\n"
+            "Restrito - Enamed - curso EXISTENTE sob medidas cautelares das "
+            "Portarias SERES 72-76/2026 (reducao/suspensao de ingressos)\n"
+            "(vazio) - curso decidido, sem restricao vigente conhecida",
+            "Robo Clipping", 220, 400)
+        ws.cell(row=2, column=col_x["status_regulatorio"]).comment = _c_status
+        fill_manual = PatternFill(start_color=VERDE_MANUAL, end_color=VERDE_MANUAL,
+                                  fill_type="solid")
+        for i, col in pintar_manual:
+            if col in col_x and i in pos:
+                ws.cell(row=pos[i], column=col_x[col]).fill = fill_manual
         for i, col in pintar:
             ws.cell(row=pos[i], column=col_x[col]).fill = fill
         # cabecalho amarelo = COLUNA INTEIRA de fonte externa (nao ha valor do DOU nela)

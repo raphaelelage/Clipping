@@ -140,7 +140,7 @@ def gerar(caminho, log=print):
     # a aba Funil tem a NOTA DE FONTES na linha 1; o cabecalho real esta na linha 2
     funil = pd.read_excel(caminho, sheet_name="Funil", header=1)
     atos = pd.read_excel(caminho, sheet_name="Atos")
-    med = funil[funil["medicina"].astype(str) == "Sim"]
+    med = funil[funil["curso"].map(_eh_med)]   # coluna medicina saiu (11/09/2026)
     aut = atos[atos["tipo_decisao"].astype(str) == "autorizacao"].copy()
     aut["_ano"] = _ano(aut["data_decisao"])
     aut["_med"] = aut["curso"].map(_eh_med)

@@ -412,3 +412,19 @@ duas fontes independentes (e-MEC x cadastro INEP) concordam em 2.890 nomes, disc
 COLUNAS NOVAS: link_fonte (ultima, 100% preenchida) leva ao ato no DOU; fonte_inep virou
 fonte_externa (carrega INEP e e-MEC). Datas gravadas sem horario em todas as abas.
 situacao_emec: coluna INTEIRA e externa, entao o CABECALHO e amarelo (nao as 23 mil celulas).
+
+### Varredura completa por periodo (11/set/2026) — dou_varredura.py
+Pipeline INTEIRO do zero, sem IA, para um intervalo [inicio, fim]: coleta dia a dia
+(dias uteis = do1 + do1_extra; fds/feriado = so extra), retentativa de dia falho e
+FALHA NOMINAL no relatorio se persistir (garantia: nenhuma decisao passa em silencio);
+extracao completa (dx.extrair: texto integral, tabelas, prosa, classificador v5);
+fusao no Excel pela chave completa link+processo+curso+ies+municipio+vagas (nao
+duplica nem sobrescreve enriquecimento); cobertura registrada na aba Notas
+("varredura_cobertura"); estado do radar adiantado quando a varredura chega em hoje
+sem falha; Funil+graficos regenerados; relatorio por e-mail ([INCOMPLETO] se houver
+dia nao coberto). MEDIDO: ~2,6s/dia util + ~4 min de Funil — 1 mes ~5 min, 1 ano
+~15 min, 2018-hoje ~105 min (cabe no PC e no limite de 6h do Actions).
+Camadas: varredura_ci.py (Drive download/upload + e-mail, usado pelo workflow
+varredura.yml — PC-primeiro via RUNNER_PAT, concurrency para nao rodarem duas juntas)
+e aba "Varredura DOU" no streamlit_app.py (datas com fim=hoje, e-mail, rodar agora +
+agendamento cron-job.org com dias_retro). No PC: "Varredura DOU.bat" (arquivo local).

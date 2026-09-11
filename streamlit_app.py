@@ -729,3 +729,121 @@ with tab_debug:
                     st.code(txt)
             else:
                 st.error(f"Sem logs (HTTP {code}). A execução pode não ter terminado.")
+
+
+# ======================================================================================
+# VARREDURA DOU — base Regulacao_Cursos (dono, 11/09/2026)
+# Dispara/agenda o workflow varredura.yml: varre o DOU dia a dia num periodo (do1 +
+# edicao extra, cobertura garantida), funde na planilha do Drive e manda relatorio.
+# PC-primeiro: se o runner local estiver online o job roda nele; senao, GitHub.
+# ======================================================================================
+st.divider()
+st.header("📜 Varredura DOU — Regulação de Cursos")
+st.caption("Reconstrói/complementa a base `Regulacao_Cursos.xlsx` num período: coleta "
+           "dia a dia (edição regular + extra), extração completa (tabelas + prosa + "
+           "classificação pelo dispositivo), fusão sem duplicar e Funil/gráficos. "
+           "Dia inacessível é retentado e, se persistir, sai NOMINALMENTE no e-mail. "
+           "~2,6s/dia útil: 1 mês ≈ 5 min · 1 ano ≈ 15 min · 2018–hoje ≈ 105 min.")
+
+WF_VARR = "varredura.yml"
+from datetime import date as _date, timedelta as _td
+
+def dispatch_varredura(inicio, fim, recipients, dias_retro=""):
+    url = f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/{WF_VARR}/dispatches"
+    return _req("post", url, headers=_gh_headers(), timeout=30,
+                json={"ref": BRANCH, "inputs": {
+                    "inicio": inicio, "fim": fim,
+                    "dias_retro": str(dias_retro or ""),
+                    "recipients": recipients}})
+
+def _montar_job_varredura(hours, minutes, wdays, dias_retro, recipients, enabled=True):
+    body = json.dumps({"ref": BRANCH, "inputs": {
+        "inicio": "", "fim": "", "dias_retro": str(dias_retro),
+        "recipients": recipients}})
+    return {
+        "url": f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/{WF_VARR}/dispatches",
+        "enabled": enabled,
+        "title": (f"{CRON_PREFIX} [varredura] {hours[0]:02d}:{minutes[0]:02d} "
+                  f"{dias_retro}d retro"),
+        "requestMethod": 1, "requestTimeout": 60, "saveResponses": True,
+        "schedule": {"timezone": "America/Sao_Paulo", "expiresAt": 0,
+                     "hours": hours, "minutes": minutes, "mdays": [-1],
+                     "months": [-1], "wdays": wdays},
+        "extendedData": {"headers": {
+            "Authorization": f"Bearer {PAT}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json"}, "body": body},
+    }
+
+c1, c2, c3 = st.columns([2, 2, 3])
+v_ini = c1.date_input("Data início", value=_date.today() - _td(days=30),
+                      min_value=_date(2018, 1, 1), max_value=_date.today(),
+                      format="DD/MM/YYYY", key="varr_ini")
+v_fim = c2.date_input("Data fim", value=_date.today(),
+                      min_value=_date(2018, 1, 1), max_value=_date.today(),
+                      format="DD/MM/YYYY", key="varr_fim")
+v_mail = c3.text_input("E-mail do relatório (vírgula p/ vários)", value=DEFAULT_TO,
+                       key="varr_mail")
+
+_du = sum(1 for i in range((v_fim - v_ini).days + 1)
+          if (v_ini + _td(days=i)).weekday() < 5)
+st.caption(f"≈ {_du} dias úteis → estimativa **{max(1, round(_du * 2.6 / 60)) + 4} min** "
+           f"(coleta + Funil/gráficos).")
+
+if st.button("▶️ Rodar varredura agora", type="primary", key="varr_go"):
+    if v_ini > v_fim:
+        st.error("Data início depois da data fim.")
+    else:
+        r = dispatch_varredura(v_ini.isoformat(), v_fim.isoformat(), v_mail.strip())
+        if r.status_code == 204:
+            st.success("✅ Varredura disparada — acompanhe em **Últimas execuções** "
+                       "(workflow `varredura-dou`) ou aguarde o e-mail do relatório.")
+        else:
+            st.error(f"Falhou (HTTP {r.status_code}): {getattr(r, 'text', '')[:200]}")
+
+with st.expander("⏰ Agendar varredura recorrente (rede de segurança)"):
+    st.caption("Revarre os últimos N dias no horário marcado — pega retificação, edição "
+               "extra atrasada e qualquer coisa que o radar diário tenha perdido. O "
+               "dedup garante que nada duplica. Sugestão: semanal, 30 dias retro.")
+    a1, a2, a3, a4 = st.columns([2, 2, 2, 3])
+    ag_hora = a1.time_input("Horário", value=None, key="varr_ag_hora")
+    ag_dias = a2.multiselect("Dias da semana", ["seg", "ter", "qua", "qui", "sex",
+                                                "sáb", "dom"], default=["sáb"],
+                             key="varr_ag_wd")
+    ag_retro = a3.number_input("Dias retro", 7, 3650, 30, key="varr_ag_retro")
+    ag_mail = a4.text_input("E-mail", value=DEFAULT_TO, key="varr_ag_mail")
+    _WD = {"dom": 0, "seg": 1, "ter": 2, "qua": 3, "qui": 4, "sex": 5, "sáb": 6}
+    if st.button("💾 Criar agendamento", key="varr_ag_go"):
+        if not S.get("cronjob_api_key"):
+            st.error("Falta o secret `cronjob_api_key` (veja SETUP_APP.md).")
+        elif not ag_hora or not ag_dias:
+            st.error("Escolha horário e pelo menos um dia da semana.")
+        else:
+            job = _montar_job_varredura([ag_hora.hour], [ag_hora.minute],
+                                        [_WD[d] for d in ag_dias], int(ag_retro),
+                                        ag_mail.strip())
+            r = _req("put", f"{CRON_API}/jobs", headers=_cron_headers(),
+                     json={"job": job}, timeout=30)
+            if r.status_code == 200:
+                cron_invalidar()
+                st.success("✅ Agendamento criado no cron-job.org.")
+            else:
+                st.error(f"Falhou (HTTP {r.status_code}): {getattr(r, 'text', '')[:200]}")
+
+    # agendamentos existentes de varredura
+    try:
+        _jobs = _cron_jobs()
+        _meus = [j for j in _jobs if "[varredura]" in str(j.get("title", ""))]
+    except Exception:
+        _meus = []
+    if _meus:
+        st.markdown("**Agendamentos ativos:**")
+        for j in _meus:
+            b1, b2 = st.columns([5, 1])
+            b1.write(f"• `{j.get('title')}` — "
+                     f"{'ativo ✅' if j.get('enabled') else 'pausado ⏸️'}")
+            if b2.button("🗑️", key=f"varr_del_{j.get('jobId')}"):
+                cron_delete(j.get("jobId"))
+                cron_invalidar()
+                st.rerun()

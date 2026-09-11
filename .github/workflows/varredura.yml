@@ -1,0 +1,79 @@
+name: varredura-dou
+
+# Roda dou_varredura.py: baixa a planilha do Drive, varre o DOU dia a dia no periodo
+# (do1 + edicao extra, com garantia de cobertura — dia falho e retentado e, se persistir,
+# sai NOMINALMENTE no e-mail com [INCOMPLETO]), funde as linhas ineditas, regenera
+# Funil/graficos e sobe de volta. Tempo medido: ~2,6s/dia util + ~4min de Funil.
+# PC-primeiro: se o runner do PC estiver online, roda nele; senao, GitHub (gratis em
+# repo publico; cabe no limite de 6h ate para 2018-hoje ~ 105 min).
+
+on:
+  workflow_dispatch:
+    inputs:
+      inicio:
+        description: "Data inicio (AAAA-MM-DD). Vazio = usa dias_retro"
+        required: false
+        default: ""
+      fim:
+        description: "Data fim (AAAA-MM-DD). Vazio = hoje"
+        required: false
+        default: ""
+      dias_retro:
+        description: "Alternativa ao inicio: varrer os ultimos N dias (p/ agendamento)"
+        required: false
+        default: "30"
+      recipients:
+        description: "E-mails do relatorio (virgula). Vazio = sem e-mail"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: varredura-dou        # duas varreduras juntas = corrida no arquivo do Drive
+  cancel-in-progress: false
+
+jobs:
+  escolher:
+    runs-on: ubuntu-latest
+    outputs:
+      maquina: ${{ steps.decidir.outputs.maquina }}
+    steps:
+      - id: decidir
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_PAT || github.token }}
+        run: |
+          ONLINE=$(gh api "repos/${{ github.repository }}/actions/runners" \
+                     --jq '[.runners[] | select(.status=="online" and (.busy|not))] | length' \
+                   2>/dev/null || echo 0)
+          if [ "${ONLINE:-0}" -gt 0 ]; then
+            echo "PC ligado -> varredura roda no runner local"
+            echo "maquina=self-hosted" >> "$GITHUB_OUTPUT"
+          else
+            echo "PC indisponivel -> varredura roda no GitHub"
+            echo "maquina=ubuntu-latest" >> "$GITHUB_OUTPUT"
+          fi
+
+  varrer:
+    needs: escolher
+    runs-on: ${{ needs.escolher.outputs.maquina }}
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Varredura DOU
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          EMAIL_REMETENTE: ${{ secrets.EMAIL_REMETENTE }}
+          EMAIL_SENHA: ${{ secrets.EMAIL_SENHA }}
+          VARR_INICIO: ${{ inputs.inicio }}
+          VARR_FIM: ${{ inputs.fim }}
+          VARR_DIAS_RETRO: ${{ inputs.dias_retro }}
+          VARR_RECIPIENTS: ${{ inputs.recipients }}
+        run: python varredura_ci.py
