@@ -237,7 +237,8 @@ Pedido: todos os atos que autorizam/barram cursos superiores desde 2018, foco em
   de ato e marca referência judicial.
 - `medicina_mec_pdfs.py` — planilhas oficiais da SERES (tramitação + sobrestados ADC 81).
   O caminho no site é `assuntos/es/cursos-de-medicina/...` (o antigo `areas-de-atuacao/...` dá 404).
-- `dou_montar.py` — junta tudo no Excel de 4 abas (Atos, Medicina, Medicina_SERES, Notas).
+- `dou_montar.py` — junta tudo no Excel de 3 abas (Atos, Medicina_SERES, Notas).
+  (a aba Medicina saiu em 11/09/2026: era vista filtrada de Atos)
 
 ## Radar DOU (alerta de regulação de cursos no e-mail + Excel no Drive)
 Nas verticais educação e saúde_educação, cada rodada lê a **edição diária** do DOU dos

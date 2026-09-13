@@ -132,8 +132,9 @@ def _aplicar_ajustes(funil, xl, pintar_manual, log=print):
 
 def _padronizar_municipios(funil, log=print):
     """Nome do municipio -> grafia OFICIAL do IBGE, validada contra a UF da linha.
-    municipio_check: 'ok' (casou na UF), 'nao encontrado na UF' (mantem o original,
-    nada e inventado), 'sem UF para checar' ou 'sem municipio'."""
+    Grafia que nao casa com nenhum municipio da UF fica COMO VEIO (nada e inventado);
+    o resultado da checagem virou so LOG — a coluna municipio_check saiu do Funil
+    (dono, 11/09/2026)."""
     if not os.path.exists(MUNICIPIOS_IBGE):
         log("[funil] municipios_ibge.parquet ausente — padronizacao pulada")
         return funil
@@ -593,7 +594,14 @@ def gerar(caminho, log=print):
                 pintar.append((i, "curso_padrao"))
                 preenchidos.append("curso_padrao")
             if preenchidos:
-                funil.at[i, "fonte_externa"] = "INEP: " + ", ".join(preenchidos)
+                # CONCATENA, nao sobrescreve: a aba Ajustes pode ter carimbado
+                # "manual: campo" nesta linha antes dos cruzamentos. Sobrescrever
+                # apagava a trilha da correcao do dono (o valor e a cor verde
+                # sobreviviam, mas fonte_externa mentia). Mesmo padrao de
+                # enriquecer._marca_fonte.
+                atual = str(funil.at[i, "fonte_externa"] or "")
+                funil.at[i, "fonte_externa"] = ((atual + " | " if atual else "")
+                                                + "INEP: " + ", ".join(preenchidos))
         log(f"[funil] INEP preencheu {len(pintar)} celulas em "
             f"{funil['fonte_externa'].ne('').sum()} cursos")
 
