@@ -293,7 +293,9 @@ def gerar(caminho, log=print):
                 t10[col] = 0
         t10 = _completa(t10[["ano", "Autorizado", "Indeferido"]])
         blocos.append(("G10. MEDICINA: pedidos AUTORIZADOS x INDEFERIDOS por ano | fonte: "
-                       "aba Atos, tipo_decisao autorizacao vs indeferimento, curso Medicina",
+                       "aba Atos, tipo_decisao autorizacao vs indeferimento, curso Medicina "
+                       "(indeferimento de AUMENTO DE VAGAS fica fora: e pedido acessorio "
+                       "de curso existente, tipo indeferimento_aditamento)",
                        t10, "bar", "atos"))
 
     aut["_fila"] = aut["_ano"] - aut["_ano_pedido"]

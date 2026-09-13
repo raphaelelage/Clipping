@@ -126,6 +126,29 @@ _RX_PROCEDIMENTAL = re.compile(
     r"^\W{0,4}(anular|fica\w*\s+anulad|fica\w*\s+revogad|revogar|torna\w*\s+sem\s+efeito)")
 
 
+# ADITAMENTO: "Indeferir o pedido de aumento de vagas, sob a forma de aditamento ao
+# ato autorizativo, para o curso de Medicina (1419799)". Nega um pedido ACESSORIO de um
+# curso que JA EXISTE — nao e evento do trilho e nao pode virar a fase do curso
+# (auditoria 13/09/2026: 23 atos, 32 linhas, 20 de Medicina; a UNIEURO aparecia como
+# "pedido negado" com o curso reconhecido e 100 vagas em operacao).
+_RX_ADITAMENTO = re.compile(r"aumento\s+de\s+vagas|aditamento", re.I)
+# no texto solto exige PROXIMIDADE do verbo: um ato que nega um CURSO pode citar
+# "aditamento" em outro paragrafo e seria classificado errado.
+_RX_IND_ADIT = re.compile(r"indefer\w*[^.]{0,300}?(?:aumento\s+de\s+vagas|aditamento)",
+                          re.I)
+
+
+def _refina_indef(tipo, dispositivo, texto):
+    """So mexe em indeferimento: separa o que nega o CURSO do que nega um ADITAMENTO."""
+    if tipo != "indeferimento":
+        return tipo
+    if dispositivo and _RX_ADITAMENTO.search(dispositivo):
+        return "indeferimento_aditamento"
+    if not dispositivo and _RX_IND_ADIT.search((texto or "")[:2500]):
+        return "indeferimento_aditamento"
+    return tipo
+
+
 def classificar(titulo, texto):
     disp = _norm(_dispositivo(texto)).strip()
     if disp and _RX_PROCEDIMENTAL.match(disp):
@@ -134,15 +157,16 @@ def classificar(titulo, texto):
             d2 = _norm(m.group(1)).strip()
             for tipo, rx in _DISPOSITIVOS_RX:
                 if rx.match(d2):
-                    return tipo                # decisao real mora no Art. 2
+                    # decisao real mora no Art. 2
+                    return _refina_indef(tipo, d2, texto)
     if disp:
         for tipo, rx in _DISPOSITIVOS_RX:      # verbo claro no inicio do Art. 1: manda
             if rx.match(disp):
-                return tipo
+                return _refina_indef(tipo, disp, texto)
     t = _norm(titulo) + " " + _norm((texto or "")[:2500])     # regra classica, intacta
     for tipo, rx in _TIPOS_RX:
         if rx.search(t):
-            return tipo
+            return _refina_indef(tipo, "", texto)
     return "outro"
 
 

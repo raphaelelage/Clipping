@@ -38,7 +38,7 @@ def _vazio(v):
 # auditoria de verbos: extintos->desativacao, revogacao, sem_efeito, unificacao_mantidas,
 # suspensao de chamada publica. Re-rodar sobre base v2 e idempotente (retipo por link +
 # preenchimento so de celula vazia).
-MARCA = "correcao_v6_aplicada"
+MARCA = "correcao_v7_aplicada"
 
 
 def ja_aplicada(notas):
@@ -54,7 +54,8 @@ def linha_marca():
             "Descricao": (f"{date.today().isoformat()} — base reclassificada pelo verbo do "
                           f"Art. 1 (indeferimento, extincao, revogacao, sem efeito, "
                           f"unificacao de mantidas), campos lidos da prosa e "
-                          f"duplicatas do suplemento v3 removidas (v6). "
+                          f"duplicatas do suplemento v3 removidas e indeferimento "
+                          f"de aditamento separado do indeferimento de curso (v7). "
                           f"NAO apagar: evita reprocessar.")}
 
 
@@ -63,6 +64,7 @@ def aplicar_em_df(atos, log=print):
     v2 = pd.read_parquet(PARQUET_V2)
     atos = _limpar_duplicatas_suplemento(atos, log)
     atos = _corrigir_df(v2, atos, log)
+    atos = _retipar_aditamento(v2, atos, log)
     return _suplementar(v2, atos, log)
 
 
@@ -89,6 +91,28 @@ def _nies(v):
     (694 linhas em 16 atos, medido na auditoria de 13/09/2026)."""
     import re
     return _nkey(re.sub(r"\s*\(\d{2,7}\)\s*$", "", str(v or "")))
+
+
+def _retipar_aditamento(v2, atos, log=print):
+    """Migracao OFFLINE: reetiqueta os indeferimentos que na verdade negam um ADITAMENTO
+    (aumento de vagas de curso existente). Usa texto_inicio do parquet v2 — conferido em
+    13/09/2026: cobre 23 de 23 atos, sem precisar rebaixar nada do DOU."""
+    import re
+    rx = re.compile(r"indefer\w*[^.]{0,300}?(?:aumento\s+de\s+vagas|aditamento)", re.I)
+    if "texto_inicio" not in v2.columns:
+        return atos
+    alvo = set(v2.loc[v2["texto_inicio"].astype(str).map(lambda t: bool(rx.search(t))),
+                      "link"].astype(str))
+    if not alvo:
+        return atos
+    sel = (atos["tipo_decisao"].astype(str) == "indeferimento") & \
+        atos["link"].astype(str).isin(alvo)
+    if sel.any():
+        atos.loc[sel, "tipo_decisao"] = "indeferimento_aditamento"
+        log(f"[corrigir] indeferimentos de ADITAMENTO reetiquetados: {int(sel.sum())} "
+            f"linha(s) em {atos.loc[sel, 'link'].nunique()} ato(s) — deixam de virar "
+            f"fase do curso")
+    return atos
 
 
 def _limpar_duplicatas_suplemento(atos, log=print):
@@ -175,6 +199,7 @@ def corrigir(caminho, aplicar=False, log=print):
     log(f"[corrigir] Atos: {len(atos)} linhas | parquet v2: {len(v2)} linhas")
     atos = _limpar_duplicatas_suplemento(atos, log)
     atos = _corrigir_df(v2, atos, log)
+    atos = _retipar_aditamento(v2, atos, log)
     atos = _suplementar(v2, atos, log)
     return _gravar(caminho, xl, atos, log) if aplicar else atos
 

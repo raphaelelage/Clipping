@@ -525,6 +525,22 @@ def gerar(caminho, log=print):
                 t = str(rr["tipo_decisao"])
                 vagas_fonte = _VAGAS_FONTE.get(t, f"DOU — {t}")
                 break
+        # ADITAMENTO indeferido (dono, 13/09/2026): nao muda a fase do curso — fica
+        # declarado aqui, com a portaria e, quando o DOU informa, o numero do processo
+        # (em 22 das 32 linhas o ato nao cita processo, por isso a separacao vem do
+        # OBJETO do ato, nunca so do processo).
+        adit = g[g["tipo_decisao"] == "indeferimento_aditamento"]
+        if len(adit):
+            _a = adit.iloc[-1]
+            _proc = _limpa(_a.get("processo", ""))
+            _quando = (_a["_data"].strftime("%d/%m/%Y")
+                       if pd.notna(_a["_data"]) else "data nao informada")
+            _txt = ("aumento de vagas indeferido em " + _quando + " ("
+                    + _limpa(_a["ato"])
+                    + (", processo " + _proc if _proc and "nao consta" not in _proc.lower()
+                       else ", processo nao informado no DOU") + ")")
+            status = (status + " | " + _txt) if status else _txt
+
         sanc = g[g["tipo_decisao"] == "sancionador_supervisao"]
         nome_raw = ult["curso"]
         cnorm = _norm(nome_raw)
@@ -758,7 +774,10 @@ def gerar(caminho, log=print):
             "1. Autorizado - curso autorizado a iniciar turmas\n"
             "2. Reconhecido - curso reconhecido (pode emitir diploma)\n"
             "3. Renovacao de reconhecimento - ciclo regular de revalidacao\n"
-            "F. Indeferido (pedido negado) - pedido rejeitado pela SERES/MEC\n"
+            "F. Indeferido (pedido negado) - pedido do CURSO rejeitado pela SERES/MEC. "
+            "Indeferimento de AUMENTO DE VAGAS nao entra aqui: e pedido acessorio de "
+            "curso que ja existe, nao muda a etapa do trilho, e aparece em "
+            "status_regulatorio\n"
             "F. Desativado - curso extinto ou desativado\n"
             "(sem ato do trilho no periodo) - desde 2018 o curso so apareceu em atos "
             "transversais (vagas, supervisao, cautelar), nunca num ato de "
@@ -784,6 +803,10 @@ def gerar(caminho, log=print):
             "caminho administrativo\n"
             "Restrito - Enamed - curso EXISTENTE sob medidas cautelares das "
             "Portarias SERES 72-76/2026 (reducao/suspensao de ingressos)\n"
+            "aumento de vagas indeferido (data, portaria, processo) - a IES pediu mais "
+            "vagas para um curso que ja existe e a SERES negou; o curso segue na fase "
+            "que tinha. Processos diferentes da mesma IES/curso aparecem separados na "
+            "aba Atos, uma linha por ato\n"
             "divergencia: e-MEC diz Em atividade / Em extincao - o ato do DOU "
             "encerrou o curso (indeferido ou desativado) mas o Cadastro e-MEC ainda o "
             "registra em operacao. As duas fontes OFICIAIS discordam e a base nao "
