@@ -652,6 +652,22 @@ def gerar(caminho, log=print):
     # como linha INTEGRAL do Cadastro e-MEC, com fase propria e fonte declarada.
     funil = _acrescentar_estaduais(funil, log)
 
+    # ---- DIVERGENCIA DECLARADA (auditoria 13/09/2026): o ato do DOU encerrou o curso
+    # (indeferido/desativado) mas o Cadastro e-MEC ainda o registra em operacao — 117
+    # casos, 20 de Medicina, alguns com vagas ativas. Em vez de escolher uma fonte no
+    # escuro, a base DECLARA o conflito: filtre status_regulatorio por "divergencia".
+    # Concatena, NUNCA sobrescreve o que ja estiver na coluna.
+    _fim = funil["fase_atual"].astype(str).str.startswith(("F. Indeferido", "F. Desativado"))
+    _vivo = funil["situacao_emec"].astype(str).isin(["Em atividade", "Em extinção"])
+    _div = _fim & _vivo
+    if _div.any():
+        _pre = (funil.loc[_div, "status_regulatorio"].astype(str)
+                .replace({"nan": "", "None": "", "<NA>": ""}).str.strip())
+        funil.loc[_div, "status_regulatorio"] = (
+            _pre.mask(_pre != "", _pre + " | ") + 'divergencia: e-MEC diz "'
+            + funil.loc[_div, "situacao_emec"].astype(str) + '"')
+        log(f"[funil] divergencia DOU x e-MEC declarada em {int(_div.sum())} curso(s)")
+
     # Medicina continua NO TOPO da aba, so que sem coluna dedicada (dono,
     # 11/09/2026: redundante — filtre curso_padrao = "Medicina")
     _med_topo = funil["curso"].map(
@@ -729,6 +745,11 @@ def gerar(caminho, log=print):
         # notas de celula nos cabecalhos (dono, 11/09/2026: Shift+F2 explicando
         # cada output de fase_atual e status_regulatorio)
         from openpyxl.comments import Comment
+        _est = funil["fase_atual"].astype(str).str.startswith("(sistema estadual")
+        _est_n = int(_est.sum())
+        _est_k = int((funil.loc[_est, "ies"].astype(str).str.upper() + "|"
+                      + funil.loc[_est, "curso"].astype(str).str.upper() + "|"
+                      + funil.loc[_est, "municipio"].astype(str).str.upper()).nunique())
         _c_fase = Comment(
             "FASE ATUAL = ato mais recente do trilho regulatorio no DOU:\n"
             "0. Protocolado (em tramitacao) - pedido de Medicina ainda sem decisao "
@@ -744,7 +765,13 @@ def gerar(caminho, log=print):
             "autorizacao/reconhecimento/renovacao\n"
             "(sistema estadual/municipal) - IES publica estadual/municipal: quem "
             "regula e o Conselho Estadual (diario do estado); linha integral do "
-            "e-MEC, sem atos do DOU", "Robo Clipping", 260, 440)
+            "e-MEC, sem atos do DOU.\n"
+            f"ATENCAO na contagem dessa fase: o Cadastro e-MEC registra cada "
+            f"HABILITACAO/entrada como curso proprio (a UNICAMP aparece com 72 "
+            f"registros de Musica em Campinas), entao as {_est_n} linhas equivalem a "
+            f"{_est_k} combinacoes IES+curso+municipio. Do lado do DOU a contagem e por "
+            f"ATO, nao por habilitacao: nao compare os dois lados sem saber disso.",
+            "Robo Clipping", 300, 440)
         ws.cell(row=2, column=col_x["fase_atual"]).comment = _c_fase
         _c_status = Comment(
             "STATUS REGULATORIO - so para pendentes de Medicina e cursos com "
@@ -757,6 +784,10 @@ def gerar(caminho, log=print):
             "caminho administrativo\n"
             "Restrito - Enamed - curso EXISTENTE sob medidas cautelares das "
             "Portarias SERES 72-76/2026 (reducao/suspensao de ingressos)\n"
+            "divergencia: e-MEC diz Em atividade / Em extincao - o ato do DOU "
+            "encerrou o curso (indeferido ou desativado) mas o Cadastro e-MEC ainda o "
+            "registra em operacao. As duas fontes OFICIAIS discordam e a base nao "
+            "escolhe por voce: confira no link_fonte antes de usar a linha\n"
             "(vazio) - curso decidido, sem restricao vigente conhecida",
             "Robo Clipping", 220, 400)
         ws.cell(row=2, column=col_x["status_regulatorio"]).comment = _c_status

@@ -38,7 +38,7 @@ def _vazio(v):
 # auditoria de verbos: extintos->desativacao, revogacao, sem_efeito, unificacao_mantidas,
 # suspensao de chamada publica. Re-rodar sobre base v2 e idempotente (retipo por link +
 # preenchimento so de celula vazia).
-MARCA = "correcao_v5_aplicada"
+MARCA = "correcao_v6_aplicada"
 
 
 def ja_aplicada(notas):
@@ -53,13 +53,15 @@ def linha_marca():
     return {"Assunto": MARCA,
             "Descricao": (f"{date.today().isoformat()} — base reclassificada pelo verbo do "
                           f"Art. 1 (indeferimento, extincao, revogacao, sem efeito, "
-                          f"unificacao de mantidas) e campos lidos da prosa. "
+                          f"unificacao de mantidas), campos lidos da prosa e "
+                          f"duplicatas do suplemento v3 removidas (v6). "
                           f"NAO apagar: evita reprocessar.")}
 
 
 def aplicar_em_df(atos, log=print):
     """Mesma correcao, sobre o DataFrame da aba Atos ja carregado (usada pelo robo)."""
     v2 = pd.read_parquet(PARQUET_V2)
+    atos = _limpar_duplicatas_suplemento(atos, log)
     atos = _corrigir_df(v2, atos, log)
     return _suplementar(v2, atos, log)
 
@@ -80,6 +82,36 @@ def _col(df, nome):
     return df[nome] if nome in df.columns else pd.Series([""] * len(df), index=df.index)
 
 
+def _nies(v):
+    """Nome da IES SEM o codigo que o parquet cola no fim: "ABEU - CENTRO
+    UNIVERSITARIO (2565)" e "ABEU - CENTRO UNIVERSITARIO" sao a MESMA IES. Sem isto a
+    chave do suplemento nunca casava e ele devolvia COPIA de linha que ja existia
+    (694 linhas em 16 atos, medido na auditoria de 13/09/2026)."""
+    import re
+    return _nkey(re.sub(r"\s*\(\d{2,7}\)\s*$", "", str(v or "")))
+
+
+def _limpar_duplicatas_suplemento(atos, log=print):
+    """Remove a COPIA criada pelo suplemento antigo: linha marcada "recuperada" cuja
+    chave (ato+processo+curso+IES+municipio+vagas) ja existe numa linha normal.
+    Idempotente e conservadora: so apaga linha de suplemento, nunca a original."""
+    if "fonte_detalhe" not in atos.columns or not len(atos):
+        return atos
+    rec = atos["fonte_detalhe"].astype(str).str.contains("recuperada", case=False, na=False)
+    if not rec.any():
+        return atos
+    k = (atos["link"].map(_nkey) + "|" + _col(atos, "processo").map(_nkey) + "|"
+         + _col(atos, "curso").map(_nkey) + "|" + _col(atos, "ies").map(_nies) + "|"
+         + _col(atos, "municipio").map(_nkey) + "|"
+         + _col(atos, "numero_vagas").map(_nkey))
+    sobra = rec & k.isin(set(k[~rec]))
+    if sobra.any():
+        log(f"[corrigir] duplicatas do suplemento removidas: {int(sobra.sum())} linha(s) "
+            f"em {atos.loc[sobra, 'link'].nunique()} ato(s)")
+        atos = atos[~sobra].reset_index(drop=True)
+    return atos
+
+
 def _suplementar(v2, atos, log=print):
     """Devolve ao Excel as linhas-curso que a 1a carga PERDEU: o dedup antigo
     (ato+processo+curso+IES, sem municipio/vagas) colapsou o mesmo curso ofertado em
@@ -91,10 +123,10 @@ def _suplementar(v2, atos, log=print):
     from collections import Counter
 
     def trio(link, curso, ies):
-        return _nkey(link) + "|" + _nkey(curso) + "|" + _nkey(ies)
+        return _nkey(link) + "|" + _nkey(curso) + "|" + _nies(ies)
 
     def chave6(link, proc, curso, ies, municipio, vagas):
-        return "|".join((_nkey(link), _nkey(proc), _nkey(curso), _nkey(ies),
+        return "|".join((_nkey(link), _nkey(proc), _nkey(curso), _nies(ies),
                          _nkey(municipio), _nkey(vagas)))
 
     tem6 = set(chave6(*t) for t in zip(
@@ -141,6 +173,7 @@ def corrigir(caminho, aplicar=False, log=print):
     xl = pd.ExcelFile(caminho)
     atos = xl.parse("Atos")
     log(f"[corrigir] Atos: {len(atos)} linhas | parquet v2: {len(v2)} linhas")
+    atos = _limpar_duplicatas_suplemento(atos, log)
     atos = _corrigir_df(v2, atos, log)
     atos = _suplementar(v2, atos, log)
     return _gravar(caminho, xl, atos, log) if aplicar else atos

@@ -1,0 +1,121 @@
+<title>Fluxo de dados — Regulação de Cursos</title>
+<style>
+  :root{
+    --bg:#faf9f7; --card:#fff; --ink:#1c1c1a; --muted:#6b6862; --line:#ddd8ce;
+    --dou:#b3261e; --apoio:#1f6f4a; --proc:#1d4e89; --base:#7a4b12; --saida:#5b3a86;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif;padding:28px 22px 60px}
+  h1{font-size:21px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 26px;max-width:78ch}
+  h2{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+     margin:34px 0 12px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  .fluxo{display:flex;gap:10px;align-items:stretch;overflow-x:auto;padding-bottom:8px}
+  .lane{flex:1 1 0;min-width:188px;display:flex;flex-direction:column;gap:8px}
+  .lane-h{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
+          color:var(--muted);padding:0 2px 2px}
+  .seta{display:flex;align-items:center;color:var(--line);font-size:26px;flex:0 0 14px}
+  .box{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--c,#999);
+       border-radius:7px;padding:9px 11px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .box b{display:block;font:600 12.5px/1.35 ui-monospace,"Cascadia Mono",Consolas,monospace}
+  .box span{display:block;color:var(--muted);font-size:12px;margin-top:3px}
+  .dou{--c:var(--dou)} .apoio{--c:var(--apoio)} .proc{--c:var(--proc)}
+  .base{--c:var(--base)} .saida{--c:var(--saida)}
+  .tag{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:99px;
+       background:#f0ece4;color:var(--muted);margin-top:5px}
+  table{border-collapse:collapse;width:100%;font-size:13px;background:var(--card);
+        border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  th,td{text-align:left;padding:8px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#f3f0ea;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  tr:last-child td{border-bottom:0}
+  code{font:600 12px ui-monospace,Consolas,monospace;background:#f0ece4;padding:1px 5px;border-radius:4px}
+  .regras{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+  .regra{background:var(--card);border:1px solid var(--line);border-radius:7px;padding:11px 13px}
+  .regra b{display:block;margin-bottom:3px;font-size:13px}
+  .regra span{color:var(--muted);font-size:12.5px}
+  footer{margin-top:34px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:12px}
+</style>
+
+<h1>Fluxo de dados — da coleta à base de Regulação de Cursos</h1>
+<p class="sub">Tudo é determinístico: nenhum dado é estimado por IA. Cada caixa é um arquivo do repositório
+<code>raphaelelage/Clipping</code>. A cor indica de onde o dado vem: vermelho = DOU (fonte primária),
+verde = bases oficiais de apoio (cruzamento), azul = processamento, marrom = a planilha, roxo = o que você recebe.</p>
+
+<h2>1. Do scraper à planilha</h2>
+<div class="fluxo">
+  <div class="lane">
+    <div class="lane-h">Fontes oficiais</div>
+    <div class="box dou"><b>in.gov.br (DOU)</b><span>Seção 1, edição extra e retificações. Atos do MEC/SERES.</span><span class="tag">diário</span></div>
+    <div class="box dou"><b>Planilhas SERES (PDF)</b><span>Pedidos de Medicina em tramitação e sobrestados (ADC 81).</span><span class="tag">quando o MEC republica</span></div>
+    <div class="box apoio"><b>Cadastro e-MEC</b><span>Cursos de Graduação do Brasil: situação, vagas, categoria da IES.</span><span class="tag">anual</span></div>
+    <div class="box apoio"><b>Censo INEP</b><span>Códigos de curso/IES, município, vagas totais ofertadas.</span><span class="tag">anual</span></div>
+    <div class="box apoio"><b>IBGE + Portarias Enamed</b><span>Grafia oficial de municípios; cautelares 72-76/2026.</span><span class="tag">eventual</span></div>
+  </div>
+
+  <div class="seta">▸</div>
+
+  <div class="lane">
+    <div class="lane-h">Coleta</div>
+    <div class="box dou"><b>dou_alerta.py</b><span>Radar diário: varre do estado salvo até hoje, mínimo 3 dias úteis.</span></div>
+    <div class="box dou"><b>dou_varredura.py</b><span>Varredura por período (backfill), dia a dia, com manifesto de falhas.</span></div>
+    <div class="box dou"><b>dou_extrair.py</b><span>Lê tabela e prosa do ato e devolve uma linha por curso.</span></div>
+    <div class="box apoio"><b>atualizar_emec / inep /<br>cautelares / seres</b><span>Kit de manutenção: baixa a fonte e grava os parquets. Roda sozinho, sem IA.</span></div>
+  </div>
+
+  <div class="seta">▸</div>
+
+  <div class="lane">
+    <div class="lane-h">Classificação e dedup</div>
+    <div class="box proc"><b>classificar()</b><span>Tipo do ato pelo VERBO do Art. 1 (Art. 2 quando o 1º é procedimental): autorização, reconhecimento, renovação, indeferimento, desativação, revogação, sem efeito, cautelar.</span></div>
+    <div class="box proc"><b>chave de dedup</b><span><code>link | processo | curso | ies | municipio | vagas</code> — normalizada. É o que permite varrer o mesmo dia várias vezes sem duplicar.</span></div>
+    <div class="box proc"><b>corrigir_base_dou.py</b><span>Migração única por versão: reclassifica, preenche da prosa, devolve linha perdida e remove cópia do suplemento.</span></div>
+  </div>
+
+  <div class="seta">▸</div>
+
+  <div class="lane">
+    <div class="lane-h">Montagem da base</div>
+    <div class="box base"><b>aba Atos</b><span>Registro bruto: um ato pode gerar várias linhas. Nada é apagado — retificação convive com o original.</span></div>
+    <div class="box base"><b>funil.py</b><span>Estado atual por curso, nesta ordem: Ajustes manuais (verde) › INEP (amarelo) › situação e-MEC › cautelares › municípios IBGE › consolidação por cod_curso › cursos estaduais › divergências declaradas.</span></div>
+    <div class="box base"><b>enriquecer.py</b><span>Duas camadas: código lido do próprio ato (sem amarelo) e cruzamento por nome inequívoco (amarelo).</span></div>
+    <div class="box base"><b>funil_graficos.py</b><span>10 gráficos nativos + aba Graf_Dados com os números auditáveis.</span></div>
+  </div>
+
+  <div class="seta">▸</div>
+
+  <div class="lane">
+    <div class="lane-h">Saídas</div>
+    <div class="box saida"><b>Regulacao_Cursos.xlsx</b><span>No Drive, pasta Saúde e Educação. Abas: Atos, Funil, Gráficos, Graf_Dados, Medicina_SERES, Ajustes, Notas.</span></div>
+    <div class="box saida"><b>E-mail diário</b><span>Clipping + radar do DOU + sentinelas (chamamento público de Medicina, troca de cúpula MEC/INEP/ANS/ANVISA).</span></div>
+    <div class="box saida"><b>App Streamlit</b><span>Aba Varredura DOU: período, e-mail, rodar agora e agendamento.</span></div>
+  </div>
+</div>
+
+<h2>2. O que roda quando</h2>
+<table>
+  <tr><th>Quando</th><th>O que dispara</th><th>O que acontece</th></tr>
+  <tr><td>Todo dia</td><td>cron-job.org → <code>clipping.yml</code></td>
+      <td>Baixa o Excel do Drive, varre o DOU do <code>radar_ultima_checagem</code> até hoje, funde só as linhas inéditas, regenera Funil e gráficos, sobe de volta e manda o e-mail. Dia inacessível não avança o estado: é revarrido amanhã.</td></tr>
+  <tr><td>Sob demanda</td><td>App Streamlit → <code>varredura.yml</code></td>
+      <td>Varredura por período (backfill). Roda primeiro no seu PC; se ele estiver desligado, cai para o GitHub. Grava a cobertura na aba Notas.</td></tr>
+  <tr><td>Quando você corrige algo</td><td>aba <b>Ajustes</b></td>
+      <td>Uma linha com link + campo + valor. É reaplicada em toda regeneração e a célula fica verde. Editar o Funil direto não adianta: ele é reconstruído.</td></tr>
+  <tr><td>1× por ano</td><td><code>atualizar_emec/inep/cautelares</code></td>
+      <td>Atualiza os parquets de cruzamento. Determinístico, sem IA.</td></tr>
+  <tr><td>Quando o MEC republica</td><td><code>atualizar_seres.py</code></td>
+      <td>Troca a foto dos pendentes de Medicina. Única etapa que usa IA, e só para converter o PDF em tabela — com conferência de totais.</td></tr>
+</table>
+
+<h2>3. Regras que a base nunca quebra</h2>
+<div class="regras">
+  <div class="regra"><b>Nada é inventado</b><span>Todo dado que não estava no ato do DOU tem a fonte declarada na nota do cabeçalho e a célula fica amarela.</span></div>
+  <div class="regra"><b>Verde é seu</b><span>Correção manual via aba Ajustes tem prioridade sobre qualquer cruzamento automático.</span></div>
+  <div class="regra"><b>Overlap sem dupla contagem</b><span>A janela sempre se sobrepõe à anterior; a chave de dedup garante que revarrer não duplica.</span></div>
+  <div class="regra"><b>Fontes que discordam são declaradas</b><span>Quando o DOU encerra um curso e o e-MEC o mantém ativo, a linha diz <code>divergencia</code> em status_regulatorio em vez de escolher um lado.</span></div>
+  <div class="regra"><b>Vagas são do curso, não do pedido</b><span>Vagas do INEP são o total ofertado pelo curso existente — nunca o número pedido num processo.</span></div>
+  <div class="regra"><b>Estadual entra pelo e-MEC</b><span>IES estadual/municipal é regulada por Conselho Estadual e não sai no DOU; a linha vem íntegra do cadastro, com fase própria.</span></div>
+</div>
+
+<footer>Gerado em 13/09/2026 · referência rápida do repositório <code>raphaelelage/Clipping</code> ·
+o passo a passo de operação está em <code>COMO_ATUALIZAR.md</code> e o detalhe técnico em <code>ARCHITECTURE.md</code>.</footer>
