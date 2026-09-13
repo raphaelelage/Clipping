@@ -294,6 +294,42 @@ def _limpa(s):
 _SEM_REF = {"NAO CONSTA NA FONTE", "NAO SE APLICA", ""}
 
 
+_GRAU_TOKENS = {"BACHARELADO", "LICENCIATURA", "TECNOLOGICO", "GRADUACAO", "SUPERIOR",
+                "CURSO", "EM", "DE", "DA", "DO", "E"}
+
+
+def _chk_mun(x):
+    """Municipio so com letras, sem a UF colada ("Sao Paulo/SP" -> "SAO PAULO")."""
+    return re.sub(r"[^A-Z ]", "", _norm(str(x).split("/")[0]).upper()).strip()
+
+
+def _chk_curso(x):
+    """Conjunto de palavras do nome do curso, sem grau nem ordem: "Bacharelado em
+    Servico Social" e "SERVICO SOCIAL (Bacharelado)" viram o mesmo conjunto."""
+    t = re.sub(r"[^A-Z ]", " ", _norm(curso_padrao(str(x))).upper()).split()
+    return frozenset(w for w in t if w not in _GRAU_TOKENS)
+
+
+def _conferir_juncao(g):
+    """CAMADA DE CONFERENCIA — nao decide nada, so aponta. Os atos de um mesmo cod_curso
+    sao de PROCESSOS diferentes; se citarem municipio ou curso diferentes, a juncao pode
+    estar errada (codigo digitado errado no DOU). Devolve o aviso ou "".
+    Curso: so acusa quando os nomes nao sao um subconjunto do outro (evita acusar
+    "Gastronomia" x "Gastronomia - graduacao"). Vagas NAO entram: variam de um ato para
+    outro legitimamente."""
+    muns = {m for m in (_chk_mun(x) for x in g["municipio"] if _limpa(x)) if m}
+    curs = [c for c in (_chk_curso(x) for x in g["curso"] if _limpa(x)) if c]
+    dif_cur = any(not (a <= b or b <= a) for a in curs for b in curs)
+    if len(muns) > 1:
+        return ("conferir: atos deste cod_curso citam municipios diferentes ("
+                + " / ".join(sorted(muns))[:70] + ") — a juncao pode misturar processos")
+    if dif_cur:
+        nomes = sorted({" ".join(sorted(c)) for c in curs})
+        return ("conferir: atos deste cod_curso citam cursos diferentes ("
+                + " / ".join(nomes)[:70] + ") — a juncao pode misturar processos")
+    return ""
+
+
 def _tem_ref_judicial(serie):
     return serie.map(lambda v: _norm(v) not in _SEM_REF).any()
 
@@ -540,6 +576,10 @@ def gerar(caminho, log=print):
                     + (", processo " + _proc if _proc and "nao consta" not in _proc.lower()
                        else ", processo nao informado no DOU") + ")")
             status = (status + " | " + _txt) if status else _txt
+
+        _conf = _conferir_juncao(g)
+        if _conf:
+            status = (status + " | " + _conf) if status else _conf
 
         sanc = g[g["tipo_decisao"] == "sancionador_supervisao"]
         nome_raw = ult["curso"]
@@ -803,6 +843,10 @@ def gerar(caminho, log=print):
             "caminho administrativo\n"
             "Restrito - Enamed - curso EXISTENTE sob medidas cautelares das "
             "Portarias SERES 72-76/2026 (reducao/suspensao de ingressos)\n"
+            "conferir: ... - CAMADA DE CONFERENCIA, nao e erro confirmado: os atos "
+            "juntados por este cod_curso citam municipio ou curso diferentes, entao o "
+            "codigo pode ter vindo errado do DOU e a linha misturar processos. Abra o "
+            "link_fonte e a aba Atos (uma linha por ato) antes de usar\n"
             "aumento de vagas indeferido (data, portaria, processo) - a IES pediu mais "
             "vagas para um curso que ja existe e a SERES negou; o curso segue na fase "
             "que tinha. Processos diferentes da mesma IES/curso aparecem separados na "
