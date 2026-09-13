@@ -133,7 +133,8 @@ def _fundir(novas, caminho, manifesto, inicio, fim, log):
 
 
     outras = {n: xl.parse(n) for n in xl.sheet_names
-              if n not in ("Atos", "Medicina", "Funil", "Graficos", "Graf_Dados")}
+              if n not in ("Atos", "Medicina", "Funil", "Graficos",
+                          "Graf_Dados", "Conferir")}
     notas = outras.get("Notas")
     n_falha = sum(1 for v in manifesto.values() if v == "FALHA")
     falhos = sorted(d.isoformat() for d, v in manifesto.items() if v == "FALHA")

@@ -336,7 +336,8 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
     # Funil/Graficos/Graf_Dados sao DERIVADOS (regenerados abaixo por funil.py):
     # nao entram em abas_extra — re-salva-los como dataframe mataria os graficos
     # nativos e a nota de cabecalho do Funil.
-    DERIVADAS = ("Atos", "Medicina", "Funil", "Graficos", "Graf_Dados")
+    DERIVADAS = ("Atos", "Medicina", "Funil", "Graficos", "Graf_Dados",
+                 "Conferir")
     if download_file(RADAR_DRIVE_NOME, local):
         try:
             xl = pd.ExcelFile(local)

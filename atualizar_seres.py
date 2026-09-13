@@ -103,8 +103,8 @@ def main(arquivo, data_foto, tram_csv, sobr_csv):
     aba["fonte"] = f"planilha oficial SERES ({data_foto}) — {LINK_SERES}"
 
     outras = {n: xl.parse(n) for n in xl.sheet_names
-              if n not in ("Atos", "Medicina", "Medicina_SERES",
-                           "Funil", "Graficos", "Graf_Dados")}
+              if n not in ("Atos", "Medicina", "Medicina_SERES", "Funil",
+                           "Graficos", "Graf_Dados", "Conferir")}
     with pd.ExcelWriter(arquivo, engine="openpyxl", date_format="DD/MM/YYYY",
                         datetime_format="DD/MM/YYYY") as xw:
         atos.to_excel(xw, sheet_name="Atos", index=False)

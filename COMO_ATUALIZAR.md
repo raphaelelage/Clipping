@@ -20,6 +20,7 @@ sentinelas (S2 comando / S3 chamamento) → classifica pelo dispositivo → fund
 | `[AVISO] ENAMED: portaria nova...` | cautelares novas fora do JSON | rodar `python atualizar_cautelares.py <links do aviso>` e commitar |
 | `[INCOMPLETO]` no assunto | dia do DOU inacessível | nada: o estado não avança e o dia é revarrido sozinho |
 | linha "edições de X a Y verificadas" | período coberto na rodada | conferência visual |
+| (sempre que abrir a planilha) | aba **Conferir** lista o que precisa de olho humano | ver §2b |
 
 ---
 
@@ -34,11 +35,47 @@ A cobertura fica gravada na aba **Notas** (`varredura_cobertura`).
 
 ## 2. Correção manual de dados (cod_ies, município, vagas...)
 
-**NUNCA edite o Funil direto** — ele é regenerado e a edição evapora.
-Aba **Ajustes**: uma linha com `link` (copie da coluna link_fonte) + `campo` +
-`valor` (+ `curso` se o ato tiver vários). Vira célula **VERDE** para sempre.
+**NUNCA edite o Funil direto** — ele é regenerado a cada rodada e a edição evapora.
+A correção vai na aba **Ajustes**, uma linha por correção:
+
+| coluna | o que preencher |
+|---|---|
+| `cod_curso` | **prefira este** — copie da coluna cod_curso do Funil |
+| `link` | alternativa, quando a linha não tem código: copie de link_fonte |
+| `curso` | opcional, só para desambiguar ato com vários cursos |
+| `campo` | cod_ies, cod_curso, curso, curso_padrao, ies, mantenedora, uf, municipio, vagas |
+| `valor` | o valor correto |
+
+Ela é reaplicada em **toda** regeneração, antes de qualquer cruzamento automático, e a
+célula fica **VERDE** para sempre. Prefira `cod_curso`: o link do ato muda quando sai
+ato novo para o curso (a fase passa a apontar para outro ato) e o ajuste por link
+deixa de casar.
+
+**Ajuste que não entrar você fica sabendo**: ele aparece na aba **Conferir** com o
+motivo (chave não encontrada, campo inválido, valor em branco). Nada some em silêncio.
+
 Onde pesquisar o valor certo: o próprio ato (link_fonte), o CSV do e-MEC na pasta
 (Ctrl+F/PROCV) ou emec.mec.gov.br.
+
+**Linha de ato que faltou:** dá para acrescentar à mão na aba **Atos** — ela é um log,
+o robô só anexa, nunca reconstrói. A única coluna que ele reescreve é `tipo_decisao`
+(vem do classificador, pelo link).
+
+## 2b. A aba Conferir — o que o robô NÃO decide sozinho
+
+Gerada a cada rodada a partir do Funil. Uma linha por pendência, com o problema
+explicado em português e o que fazer. Nada nela foi alterado na base.
+
+| problema | o que significa |
+|---|---|
+| Município divergente entre os atos | atos do mesmo cod_curso citam cidades diferentes: erro de digitação no DOU, mudança de campus, ou código trocado juntando dois cursos |
+| Curso divergente entre os atos | mesmo código com nomes de curso incompatíveis — algum ato veio com código errado |
+| DOU encerrou, e-MEC diz que existe | as duas fontes oficiais discordam (recurso deferido depois, ou cadastro desatualizado) |
+| Curso aparece dos dois lados (estadual + DOU) | IES estadual/municipal com ato no DOU: o curso conta em dobro |
+| Ajuste manual não aplicado | sua correção na aba Ajustes não casou com nenhuma linha |
+
+Resolveu? Registre na aba **Ajustes**. A pendência sai da lista sozinha quando a causa
+deixar de existir.
 
 ## 3. Manutenção periódica (bases de cruzamento)
 

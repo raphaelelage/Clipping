@@ -94,40 +94,77 @@ _CAMPOS_AJUSTE = ("cod_ies", "cod_curso", "curso", "curso_padrao", "ies",
 def _aplicar_ajustes(funil, xl, pintar_manual, log=print):
     """Aba AJUSTES (dono, 11/09/2026): o Funil e REGENERADO a cada rodada do robo,
     entao correcao feita direto nele evapora. O dono registra a correcao na aba
-    Ajustes (link do ato + campo + valor; curso opcional para desambiguar ato com
-    varios cursos) e ela e reaplicada AQUI em toda regeneracao — celula VERDE.
-    Aplicada ANTES dos cruzamentos: o valor manual tem prioridade sobre tudo
-    (nenhum preenchimento automatico sobrescreve celula ja preenchida)."""
+    Ajustes e ela e reaplicada AQUI em toda regeneracao — celula VERDE.
+
+    CHAVE (dono, 13/09/2026): `cod_curso` OU `link`. Prefira cod_curso — e a
+    identidade estavel do curso; o link muda quando sai um ato novo (a fase passa a
+    apontar para outro ato) e o ajuste por link para de casar. `curso` e opcional,
+    para desambiguar ato com varios cursos.
+
+    Aplicada ANTES dos cruzamentos: o valor manual tem prioridade sobre tudo.
+    Devolve (n_celulas, relatorio) — relatorio traz UMA entrada por linha da aba
+    Ajustes, aplicada ou nao, para a aba Conferir cobrar o que ficou pelo caminho."""
     if "Ajustes" not in xl.sheet_names:
-        return 0
+        return 0, []
     aj = xl.parse("Ajustes")
     aj.columns = [str(c).strip().lower() for c in aj.columns]
-    if not {"link", "campo", "valor"}.issubset(aj.columns):
-        log("[funil] aba Ajustes sem as colunas link/campo/valor — ignorada")
-        return 0
-    n = 0
+    if not {"campo", "valor"}.issubset(aj.columns) or not (
+            {"link", "cod_curso"} & set(aj.columns)):
+        log("[funil] aba Ajustes sem as colunas (cod_curso ou link) + campo + valor "
+            "— ignorada")
+        return 0, []
+    n, relatorio = 0, []
     liga = funil["link_fonte"].astype(str).str.strip()
-    for _, r in aj.iterrows():
+    cods = funil["cod_curso"].map(lambda c: str(c).strip().removesuffix(".0"))
+
+    def _rel(linha, chave, campo, valor, resultado):
+        relatorio.append({"linha": linha, "chave": chave, "campo": campo,
+                          "valor": valor, "resultado": resultado})
+
+    for pos, (_, r) in enumerate(aj.iterrows(), start=3):   # linha real no Excel
         link = str(r.get("link") or "").strip()
+        cod = str(r.get("cod_curso") or "").strip().removesuffix(".0")
         campo = str(r.get("campo") or "").strip().lower()
         valor = _limpa(r.get("valor"))
-        if not (link and valor and campo in _CAMPOS_AJUSTE):
+        chave = ("cod_curso " + cod) if cod else ("link " + link[:60]) if link else ""
+        if link.startswith("(") or cod.startswith("(") or campo.startswith("("):
+            continue                      # linha-modelo criada pelo proprio robo
+        if not (link or cod):
+            if campo or valor:
+                _rel(pos, "", campo, valor, "sem chave: preencha cod_curso ou link")
             continue
-        sel = liga == link
+        if campo not in _CAMPOS_AJUSTE:
+            _rel(pos, chave, campo, valor,
+                 "campo invalido — use um de: " + ", ".join(_CAMPOS_AJUSTE))
+            continue
+        if not valor:
+            _rel(pos, chave, campo, valor, "valor em branco")
+            continue
+        sel = (cods == cod) if cod else (liga == link)
         curso_f = _limpa(r.get("curso") if "curso" in aj.columns else "")
         if curso_f:
             sel = sel & funil["curso"].map(lambda c: _norm(curso_f) in _norm(c))
-        for i in funil.index[sel]:
+        alvo = list(funil.index[sel])
+        if not alvo:
+            _rel(pos, chave, campo, valor,
+                 "NAO APLICADO: nenhuma linha do Funil bate com essa chave"
+                 + (" + curso '" + curso_f + "'" if curso_f else ""))
+            continue
+        for i in alvo:
             funil.at[i, campo] = valor
             pintar_manual.append((i, campo))
             atual = str(funil.at[i, "fonte_externa"] or "")
             if "manual:" not in atual or campo not in atual:
                 funil.at[i, "fonte_externa"] = ((atual + " | " if atual else "")
-                                                + "manual: " + campo)                     if "manual:" not in atual else atual + ", " + campo
+                                                + "manual: " + campo) \
+                    if "manual:" not in atual else atual + ", " + campo
             n += 1
-    if n:
-        log(f"[funil] Ajustes manuais aplicados: {n} celula(s) (verde)")
-    return n
+        _rel(pos, chave, campo, valor, f"aplicado em {len(alvo)} linha(s)")
+    nao = [x for x in relatorio if not x["resultado"].startswith("aplicado")]
+    if n or nao:
+        log(f"[funil] Ajustes manuais: {n} celula(s) aplicada(s) (verde)"
+            + (f" | {len(nao)} ajuste(s) NAO aplicado(s) — ver aba Conferir" if nao else ""))
+    return n, relatorio
 
 
 def _padronizar_municipios(funil, log=print):
@@ -328,6 +365,110 @@ def _conferir_juncao(g):
         return ("conferir: atos deste cod_curso citam cursos diferentes ("
                 + " / ".join(nomes)[:70] + ") — a juncao pode misturar processos")
     return ""
+
+
+COLS_CONFERIR = ["problema", "o_que_acontece", "como_conferir", "cod_curso", "ies",
+                 "curso", "municipio", "uf", "fase_atual", "vagas", "qtd_atos",
+                 "link_fonte"]
+
+NOTA_CONFERIR = (
+    "O QUE CONFERIR — lista gerada a cada rodada do robô a partir da aba Funil. Cada "
+    "linha é uma pendência que o código NÃO resolve sozinho porque depende de julgamento "
+    "humano: nada aqui foi alterado na base. Resolveu? Registre a correção na aba "
+    "Ajustes (link do ato + campo + valor) — ela é reaplicada em toda regeneração e a "
+    "célula fica verde. A pendência some da lista quando a causa deixar de existir.")
+
+
+def _aba_conferir(funil, rel_ajustes=(), log=print):
+    """Monta a aba Conferir a partir dos carimbos de status_regulatorio e do cruzamento
+    estadual x DOU. Só descreve — nunca altera valor."""
+    linhas = []
+
+    def _add(problema, o_que, como, r):
+        linhas.append({
+            "problema": problema, "o_que_acontece": o_que, "como_conferir": como,
+            "cod_curso": r.get("cod_curso", ""), "ies": r.get("ies", ""),
+            "curso": r.get("curso", ""), "municipio": r.get("municipio", ""),
+            "uf": r.get("uf", ""), "fase_atual": r.get("fase_atual", ""),
+            "vagas": r.get("vagas", ""), "qtd_atos": r.get("qtd_atos", ""),
+            "link_fonte": r.get("link_fonte", "")})
+
+    for _, r in funil.iterrows():
+        for parte in str(r.get("status_regulatorio") or "").split(" | "):
+            p = parte.strip()
+            if p.startswith("conferir:") and "municipios diferentes" in p:
+                cidades = p[p.find("(") + 1:p.find(")")] if "(" in p else "?"
+                _add("Município divergente entre os atos",
+                     "Os atos com este mesmo código de curso citam cidades diferentes: "
+                     + cidades + ". Ou um deles tem erro de digitação no DOU, ou o curso "
+                     "mudou de campus, ou o código está errado num dos atos e a linha "
+                     "está juntando dois cursos distintos.",
+                     "Abra o link_fonte e veja qual cidade o ato cita. Os atos deste "
+                     "código estão na aba Atos (uma linha por ato). Se for erro do DOU, "
+                     "corrija o município pela aba Ajustes.", r)
+            elif p.startswith("conferir:") and "cursos diferentes" in p:
+                nomes = p[p.find("(") + 1:p.find(")")] if "(" in p else "?"
+                _add("Curso divergente entre os atos",
+                     "Os atos com este mesmo código citam cursos de nomes incompatíveis: "
+                     + nomes + ". Um código de curso só pode ter um nome, então algum ato "
+                     "veio com o código trocado e esta linha pode misturar dois cursos.",
+                     "Compare os atos deste código na aba Atos e confirme no e-MEC a que "
+                     "curso o código pertence. O ato com código errado deve ser "
+                     "desconsiderado na leitura da linha.", r)
+            elif p.startswith("divergencia:"):
+                sit = p.split("diz", 1)[-1].strip(' "')
+                _add("DOU encerrou, e-MEC diz que existe",
+                     "O ato do DOU encerrou este curso (" + str(r.get("fase_atual", ""))
+                     + ") mas o Cadastro e-MEC ainda o registra como \"" + sit
+                     + "\". As duas fontes oficiais discordam e a base não escolhe por "
+                     "você. Causas comuns: recurso deferido depois da negativa, ou "
+                     "cadastro do e-MEC desatualizado.",
+                     "Leia o ato no link_fonte e confira a situação atual do curso no "
+                     "e-MEC. Se o curso está mesmo ativo, o dado do DOU é só histórico.",
+                     r)
+
+    # cruzamento estadual x DOU: o mesmo curso entrando pelos dois lados
+    est = funil["fase_atual"].astype(str).str.startswith("(sistema estadual")
+    chave = (funil["ies"].map(_norm) + "|" + funil["curso_padrao"].map(_norm) + "|"
+             + funil["municipio"].map(_norm))
+    comuns = (set(chave[est]) & set(chave[~est])) - {"||"}
+    if comuns:
+        for _, r in funil[chave.isin(comuns)].iterrows():
+            lado = ("linha do e-MEC (sistema estadual)"
+                    if str(r["fase_atual"]).startswith("(sistema estadual")
+                    else "linha de ato do DOU")
+            _add("Curso aparece dos dois lados (estadual + DOU)",
+                 "Esta IES é estadual/municipal, então em regra não é regulada pelo DOU — "
+                 "mas há ato dela no DOU. O mesmo curso entra duas vezes: uma como " + lado
+                 + " e outra pelo outro lado, com códigos de curso diferentes. Conta em "
+                 "dobro em qualquer soma por IES.",
+                 "Decida qual lado vale para esta IES: ou os cursos dela saem do "
+                 "bloco estadual, ou os atos do DOU dela é que são ignorados. São 19 "
+                 "IES nessa situação e 7 cursos com nome idêntico dos dois lados; "
+                 "enquanto não decidir, não some por IES sem tirar um dos lados.", r)
+
+    # ajustes manuais que NAO entraram: o dono precisa saber, senao a correcao
+    # some em silencio (furo fechado em 13/09/2026)
+    for a in rel_ajustes or ():
+        if str(a.get("resultado", "")).startswith("aplicado"):
+            continue
+        _add("Ajuste manual nao aplicado",
+             "A linha " + str(a.get("linha")) + " da aba Ajustes pede "
+             + str(a.get("campo")) + " = \"" + str(a.get("valor")) + "\" para "
+             + (str(a.get("chave")) or "(sem chave)") + ", mas " + str(a.get("resultado"))
+             + ". A correcao NAO esta na base.",
+             "Abra a aba Ajustes na linha indicada. Prefira preencher cod_curso (copie "
+             "da coluna cod_curso do Funil) em vez do link: o link do ato muda quando "
+             "sai ato novo para o curso e o ajuste para de casar.",
+             {"cod_curso": "", "ies": "", "curso": "", "municipio": "", "uf": "",
+              "fase_atual": "", "vagas": "", "qtd_atos": "", "link_fonte": ""})
+
+    df = pd.DataFrame(linhas, columns=COLS_CONFERIR)
+    if len(df):
+        df = df.sort_values(["problema", "ies"]).reset_index(drop=True)
+    log(f"[funil] aba Conferir: {len(df)} pendencia(s) — "
+        + str(df["problema"].value_counts().to_dict() if len(df) else {}))
+    return df
 
 
 def _tem_ref_judicial(serie):
@@ -614,7 +755,7 @@ def gerar(caminho, log=print):
 
     # ---------------- ajustes MANUAIS do dono (celulas verdes; prioridade maxima) ----
     pintar_manual = []
-    _aplicar_ajustes(funil, xl, pintar_manual, log)
+    _n_aj, _rel_ajustes = _aplicar_ajustes(funil, xl, pintar_manual, log)
 
     # ---------------- cruzamento INEP (celulas amarelas; nada inventado) ------------
     por_codigo, por_ies_nome, por_ies_nome_mun = _carregar_inep(log)
@@ -773,10 +914,11 @@ def gerar(caminho, log=print):
     # "Medicina" saiu do arquivo (dono, 11/09/2026): era vista filtrada de Atos;
     # deixa-la fora da preservacao faz a regeneracao REMOVE-la de arquivos antigos
     abas = {n: xl.parse(n) for n in xl.sheet_names
-            if n not in ("Funil", "Graficos", "Graf_Dados", "Medicina")}
+            if n not in ("Funil", "Graficos", "Graf_Dados", "Medicina", "Conferir")}
     if "Ajustes" not in abas:      # cria vazia com instrucao na 1a linha de dados
         abas["Ajustes"] = pd.DataFrame(
-            [{"link": "(cole aqui o link_fonte da linha do Funil)",
+            [{"cod_curso": "(PREFIRA ESTE: copie da coluna cod_curso do Funil)",
+              "link": "(alternativa: link_fonte; muda quando sai ato novo)",
               "curso": "(opcional: nome do curso p/ ato com varios)",
               "campo": "(um de: " + ", ".join(_CAMPOS_AJUSTE) + ")",
               "valor": "(o valor correto)"}])
@@ -789,6 +931,28 @@ def gerar(caminho, log=print):
                         date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY") as xw:
         for n, df in abas.items():
             df.to_excel(xw, sheet_name=n, index=False)
+        conferir = _aba_conferir(funil, _rel_ajustes, log)
+        conferir.to_excel(xw, sheet_name="Conferir", index=False, startrow=1)
+        wsc = xw.book["Conferir"]
+        wsc.cell(row=1, column=1, value=NOTA_CONFERIR)
+        wsc.merge_cells(start_row=1, start_column=1, end_row=1,
+                        end_column=len(COLS_CONFERIR))
+        _cc = wsc.cell(row=1, column=1)
+        _cc.font = Font(italic=True, size=9, color="663300")
+        _cc.alignment = Alignment(wrap_text=True, vertical="top")
+        _cc.fill = PatternFill(start_color="FFFDF3D6", end_color="FFFDF3D6",
+                               fill_type="solid")
+        wsc.row_dimensions[1].height = 42
+        for _col, _larg in (("A", 34), ("B", 62), ("C", 52), ("D", 11), ("E", 38),
+                            ("F", 30), ("G", 18), ("H", 6), ("I", 26), ("J", 8),
+                            ("K", 9), ("L", 44)):
+            wsc.column_dimensions[_col].width = _larg
+        for _r in wsc.iter_rows(min_row=2, max_row=wsc.max_row):
+            for _cel in _r:
+                _cel.alignment = Alignment(wrap_text=True, vertical="top")
+        wsc.freeze_panes = "A3"
+        wsc.auto_filter.ref = "A2:" + chr(64 + len(COLS_CONFERIR)) + str(wsc.max_row)
+
         funil.to_excel(xw, sheet_name="Funil", index=False, startrow=1)
         ws = xw.book["Funil"]
         ws.cell(row=1, column=1, value=NOTA)

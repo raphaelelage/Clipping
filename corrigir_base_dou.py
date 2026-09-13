@@ -261,7 +261,8 @@ def _corrigir_df(v2, atos, log=print):
 
 def _gravar(caminho, xl, atos, log=print):
     outras = {n: xl.parse(n) for n in xl.sheet_names
-              if n not in ("Atos", "Medicina", "Funil", "Graficos", "Graf_Dados")}
+              if n not in ("Atos", "Medicina", "Funil", "Graficos",
+                          "Graf_Dados", "Conferir")}
     notas = outras.get("Notas")
     if notas is not None and not ja_aplicada(notas):
         outras["Notas"] = pd.concat([notas, pd.DataFrame([linha_marca()])],
