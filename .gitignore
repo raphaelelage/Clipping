@@ -8,3 +8,6 @@ google_news_*.csv
 .streamlit/secrets.toml
 bbg_snapshot.json
 valuation_cache.json
+
+# cache local do backfill (214 MB, regeneravel): nunca vai para o repo
+backfill_cache.parquet

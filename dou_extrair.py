@@ -296,6 +296,11 @@ def _mapear_colunas(row):
 # diploma, Art. 3 reduz o ingresso em 50%) — sem isto, o tipo do ato inteiro ia para
 # todas as linhas. So sobrescreve quando o verbo da tabela e INEQUIVOCO.
 _RX_CTX = [
+    # ADITAMENTO antes de INDEFERIMENTO: "Indeferir o pedido de aumento de vagas" e
+    # negativa de pedido acessorio, nao do curso — sem esta ordem o backfill de
+    # 14/09/2026 desfez a separacao em 21 linhas.
+    ("indeferimento_aditamento",
+     re.compile(r"indefer\w*[^.]{0,200}?(?:aumento\s+de\s+vagas|aditamento)", re.I)),
     ("desativacao", re.compile(r"extin[cç][aã]o\s+d|fica\w*\s+extint|"
                                r"desativa[cç][aã]o\s+d|fica\w*\s+desativad", re.I)),
     ("reducao_ingresso", re.compile(r"reduzir\s+o\s+ingresso|"

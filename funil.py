@@ -72,7 +72,8 @@ COLS_FUNIL = ["cod_ies", "ies", "cod_curso", "curso_padrao", "curso", "uf", "mun
               "data_fase", "via",
               "status_regulatorio", "ref_regulatoria", "regime_seres", "vagas",
               "vagas_fonte", "sancionador", "qtd_atos", "ato_da_fase",
-              "mantenedora", "processo_recente", "fonte_externa", "link_fonte"]
+              "mantenedora", "processo_recente", "fonte_externa", "modalidade",
+              "link_fonte"]
 
 # o que o numero de VAGAS mede, conforme o ato de onde saiu (o cuidado do dono,
 # 10/09/2026: aumento de vagas NAO e o total da IES; INEP e o total do curso existente)
@@ -319,6 +320,11 @@ def _acrescentar_estaduais(funil, log=print):
             "ato_da_fase": "Cadastro e-MEC (IES publica estadual/municipal)",
             "mantenedora": "", "processo_recente": "",
             "fonte_externa": "e-MEC: linha integral (IES estadual/municipal)",
+            # normaliza para o mesmo vocabulario do resto da coluna: o parquet do
+            # e-MEC guarda "Educacao Presencial"/"Educacao a Distancia"
+            "modalidade": (("EAD" if "DIST" in _norm(r.modalidade) else "Presencial")
+                           if hasattr(r, "modalidade") and pd.notna(r.modalidade)
+                           and str(r.modalidade).strip() else ""),
             "link_fonte": "https://emec.mec.gov.br/",
         })
     if linhas:
@@ -609,6 +615,36 @@ _RX_RABO_LOCAL = re.compile(
     r"\s+(?:n[oa]|d[oa]|em|para\s+[oa])\s+munic[ií]pio\s+d[eoa]\s+.*$"
     r"|\s+d[oa]\s+campus\s+.*$"
     r"|\s+(?:n[oa]|em)\s+[A-ZÀ-Ÿ][^,]{2,40}/[A-Za-z]{2}\s*$", re.I)
+
+
+def _modalidade_pelo_emec(funil, log=print):
+    """Presencial x EAD por curso (dono, 14/09/2026). O Cadastro e-MEC manda, por
+    cod_curso; onde nao ha codigo fica o que o proprio ato disse (o backfill gravou na
+    aba Atos). Serve tambem para ler a divergencia de municipio: em curso EAD o endereco
+    do ato e a SEDE administrativa e muda de um ato para outro — nao e erro."""
+    if "modalidade" not in funil.columns:
+        funil["modalidade"] = ""
+    if not os.path.exists(EMEC_PARQUET):
+        return funil
+    try:
+        e = pd.read_parquet(EMEC_PARQUET)
+    except Exception:
+        return funil
+    if "modalidade" not in e.columns:
+        return funil
+    mapa = {str(int(c)): ("EAD" if "DIST" in _norm(m) else "Presencial")
+            for c, m in zip(e["cod_curso"], e["modalidade"])
+            if pd.notna(c) and str(m).strip()}
+    n = 0
+    for i in funil.index:
+        cod = _limpa(funil.at[i, "cod_curso"]).replace(".0", "")
+        novo = mapa.get(cod, "")
+        if novo and novo != _limpa(funil.at[i, "modalidade"]):
+            funil.at[i, "modalidade"] = novo
+            n += 1
+    vc = funil["modalidade"].astype(str).replace("", "(nao informada)").value_counts()
+    log(f"[funil] modalidade: {n} preenchida(s) pelo e-MEC | {vc.to_dict()}")
+    return funil
 
 
 def _padronizar_curso_pelo_emec(funil, log=print):
@@ -968,6 +1004,9 @@ def gerar(caminho, log=print):
             "vagas": vagas,
             "sancionador": (sanc.iloc[-1]["_data"].strftime("%d/%m/%Y")
                             if len(sanc) and pd.notna(sanc.iloc[-1]["_data"]) else ""),
+            "modalidade": next((m for m in g["modalidade"].astype(str)
+                                if m and m.strip() and m != "nan"), "")
+            if "modalidade" in g.columns else "",
             "qtd_atos": len(g), "ato_da_fase": ato_fase,
             "mantenedora": ult["mantenedora"], "processo_recente": ult["processo"],
             "fonte_externa": "", "link_fonte": link_fase,
@@ -1078,6 +1117,7 @@ def gerar(caminho, log=print):
     # sem isto, 58 Medicinas ativas (UERJ, UPE, UEPA...) ficavam invisiveis. Entram
     # como linha INTEGRAL do Cadastro e-MEC, com fase propria e fonte declarada.
     global PENDENTES_CURSO
+    funil = _modalidade_pelo_emec(funil, log)
     funil, _pendentes_curso = _padronizar_curso_pelo_emec(funil, log)
     PENDENTES_CURSO = list(_pendentes_curso)
     funil = _sinalizar_curso_fora_do_catalogo(funil, log)
@@ -1296,6 +1336,12 @@ def gerar(caminho, log=print):
                            "PENDENTES (fase 0.x) apontam para a pagina da SERES/MEC: "
                            "pedido pendente NAO tem ato no DOU — a fonte e a planilha "
                            "oficial de processos em tramitacao."),
+            "modalidade": ("Presencial ou EAD. Fonte: Cadastro e-MEC pelo codigo do "
+                           "curso; onde nao ha codigo, o que o proprio ato disse. "
+                           "IMPORTANTE para ler a coluna municipio: em curso EAD o "
+                           "endereco que o ato cita e a SEDE administrativa e muda "
+                           "de um ato para outro — divergencia de municipio ali "
+                           "costuma ser mudanca de sede, nao erro."),
             "situacao_emec": ("Situacao no Cadastro e-MEC (coluna INTEIRA de fonte "
                               "externa — por isso o cabecalho amarelo): Em atividade / "
                               "Em extincao / Extinto. E o unico lugar que diz se o curso "
