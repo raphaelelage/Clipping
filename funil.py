@@ -361,8 +361,35 @@ def _carregar_cautelares(log=print):
 # O clipping.py le daqui para montar o bloco de copiar-e-colar do e-mail.
 PENDENTES_CURSO: list = []
 
+# Toda celula que o robo alterou sozinho nesta rodada, para a aba "Ajustes - IA":
+# (cod_curso, ies, curso, campo, antes, depois, regra). E prestacao de contas — o dono
+# discorda registrando o contrario na aba Ajustes, que tem prioridade sobre tudo.
+AJUSTES_IA: list = []
+COLS_IA = ["cod_curso", "ies", "curso", "campo", "valor_antes", "valor_depois", "regra"]
+NOTA_IA = (
+    "AJUSTES FEITOS PELO ROBO — uma linha por célula que o código alterou sozinho nesta "
+    "rodada, com o valor de antes, o de depois e a regra que decidiu. É o espelho da aba "
+    "Ajustes: lá você manda, aqui o robô presta contas. Discordou? Registre o valor "
+    "correto na aba Ajustes — ela é aplicada antes de tudo e vence qualquer regra "
+    "automática. Só entra alteração de valor que JÁ EXISTIA; preenchimento de célula "
+    "vazia (modalidade, situação do e-MEC, cruzamento do INEP) aparece como célula "
+    "amarela e na coluna fonte_externa, não aqui.")
+
+
+def _log_ia(funil, i, campo, antes, depois, regra):
+    """Registra uma alteracao automatica. So chama quem de fato mudou valor existente."""
+    if str(antes or "").strip() == str(depois or "").strip():
+        return
+    AJUSTES_IA.append({
+        "cod_curso": _limpa(funil.at[i, "cod_curso"]).replace(".0", ""),
+        "ies": _limpa(funil.at[i, "ies"])[:60],
+        "curso": _limpa(funil.at[i, "curso"])[:60],
+        "campo": campo, "valor_antes": str(antes or "")[:80],
+        "valor_depois": str(depois or "")[:80], "regra": regra})
+
 ORDEM_ABAS = ("Atos", "Funil", "Conferir", "Conferir - Listadas", "Ajustes",
-               "Listadas - IES", "Graf_Dados", "Graficos", "Medicina_SERES", "Notas")
+               "Listadas - IES", "Graf_Dados", "Graficos",
+               "Medicina_SERES", "Notas")
 
 
 def ordenar_abas(wb):
@@ -677,11 +704,16 @@ def _padronizar_curso_pelo_emec(funil, log=print):
         cod = _limpa(funil.at[i, "cod_curso"]).replace(".0", "")
         oficial = nome_por_cod.get(cod, "")
         if oficial:
+            _log_ia(funil, i, "curso_padrao", atual, oficial,
+                    "nome oficial do curso no Cadastro e-MEC, pelo cod_curso " + cod)
             funil.at[i, "curso_padrao"] = oficial
             n_cod += 1
             continue
         cortado = _RX_RABO_LOCAL.sub("", atual).strip(" -–,")
         if cortado and _norm(cortado) in catalogo:
+            _log_ia(funil, i, "curso_padrao", atual, catalogo[_norm(cortado)],
+                    "cortado o trecho de localizacao do nome; o que sobrou existe no "
+                    "catalogo do e-MEC")
             funil.at[i, "curso_padrao"] = catalogo[_norm(cortado)]
             n_corte += 1
             continue
@@ -750,6 +782,10 @@ def _validar_cod_por_municipio(funil, log=print):
         ci = _limpa(funil.at[i, "cod_ies"]).replace(".0", "")
         tem_proprio = (ci, _norm(funil.at[i, "curso_padrao"]), mun) in trio
         if tem_proprio:
+            _log_ia(funil, i, "cod_curso", cod, "(apagado)",
+                    "o e-MEC diz que este codigo e do curso de " + mun_emec.title()
+                    + " e o ato e de " + mun.title() + ", onde a mesma IES tem o mesmo "
+                    "curso com codigo proprio")
             funil.at[i, "cod_curso"] = ""
             n_apag += 1
             txt = ("conferir: codigo do curso trocado — o cod_curso " + cod + " e do "
@@ -858,6 +894,10 @@ def _carregar_inep(log=print):
 
 
 def gerar(caminho, log=print):
+    # zera o registro de alteracoes automaticas ANTES de qualquer regra rodar: a
+    # validacao de cod_curso x municipio acontece bem antes do fim e tambem registra
+    global AJUSTES_IA
+    AJUSTES_IA = []
     xl = pd.ExcelFile(caminho)
     atos = xl.parse("Atos")
     seres = xl.parse("Medicina_SERES") if "Medicina_SERES" in xl.sheet_names \
@@ -1201,14 +1241,30 @@ def gerar(caminho, log=print):
     # "Medicina" saiu do arquivo (dono, 11/09/2026): era vista filtrada de Atos;
     # deixa-la fora da preservacao faz a regeneracao REMOVE-la de arquivos antigos
     abas = {n: xl.parse(n) for n in xl.sheet_names
-            if n not in ("Funil", "Graficos", "Graf_Dados", "Medicina", "Conferir")}
+            if n not in ("Funil", "Graficos", "Graf_Dados", "Medicina", "Conferir",
+                         "Ajustes - IA", "Funil - backup", "Atos - backup")}
     if "Ajustes" not in abas:      # cria vazia com instrucao na 1a linha de dados
         abas["Ajustes"] = pd.DataFrame(
             [{"cod_curso": "(PREFIRA ESTE: copie da coluna cod_curso do Funil)",
-              "link": "(alternativa: link_fonte; muda quando sai ato novo)",
               "curso": "(opcional: nome do curso p/ ato com varios)",
               "campo": "(um de: " + ", ".join(_CAMPOS_AJUSTE) + ")",
-              "valor": "(o valor correto)"}])
+              "valor": "(o valor correto)",
+              "ajuste_feito": "(marque sim quando ja tiver preenchido)",
+              "link": "(alternativa ao cod_curso; muda quando sai ato novo)"}])
+    # ORDEM da aba Ajustes (dono, 14/09/2026): link por ultimo, ajuste_feito antes dele.
+    # Reordena sem perder conteudo nem coluna extra que o dono tenha criado.
+    if "Ajustes" in abas:
+        _aj = abas["Ajustes"]
+        _aj.columns = [str(c).strip().lower() for c in _aj.columns]
+        if "ajuste_feito" not in _aj.columns:
+            _aj["ajuste_feito"] = ""
+        _canon = ["cod_curso", "curso", "campo", "valor", "ajuste_feito", "link"]
+        _extras = [c for c in _aj.columns if c not in _canon]
+        for c in _canon:
+            if c not in _aj.columns:
+                _aj[c] = ""
+        abas["Ajustes"] = _aj[_canon + _extras]
+
     from openpyxl.styles import PatternFill, Font, Alignment
     fill = PatternFill(start_color=AMARELO, end_color=AMARELO, fill_type="solid")
     # nota na linha 1, cabecalho na 2, dados da 3 em diante
@@ -1223,6 +1279,14 @@ def gerar(caminho, log=print):
                         .sort_values("_d", ascending=False, na_position="last")
                         .drop(columns="_d"))
             df.to_excel(xw, sheet_name=n, index=False)
+        if AJUSTES_IA:
+            _por_campo = {}
+            for _a in AJUSTES_IA:
+                _por_campo[_a["campo"]] = _por_campo.get(_a["campo"], 0) + 1
+            log(f"[funil] alteracoes automaticas nesta rodada: {_por_campo} "
+                f"(codigo apagado aparece na aba Conferir; nome de curso trocado pelo "
+                f"oficial do e-MEC fica so neste log, a pedido do dono)")
+
         conferir = _aba_conferir(funil, _rel_ajustes, log)
         conferir.to_excel(xw, sheet_name="Conferir", index=False, startrow=1)
         wsc = xw.book["Conferir"]
