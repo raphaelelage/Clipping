@@ -41,6 +41,13 @@ LISTADAS = {"YDUQS": "YDUQS", "COGNA": "COGNA", "SER EDUCACIONAL": "SER EDUCACIO
 # MANTENEDORA (entidade juridica) -> grupo listado. O nome e usado SO aqui, uma vez, e
 # sobre a razao social; o resto do caminho e por codigo: cod_mantenedora -> cod_ies ->
 # curso. Padroes ancorados, sem marca de faculdade (ver docstring do modulo).
+# Tabela oficial do dono: cod_ies -> grupo listado (arquivo no repo, ao lado do codigo).
+# E a FONTE do grupo; o casamento por razao social abaixo so completa o que faltar nela.
+GRUPO_IES_CSV = "grupo_ies.csv"
+SIGLA_GRUPO = {"YDUQ": "YDUQS", "COGN": "COGNA", "CSED": "CRUZEIRO DO SUL",
+               "SEER": "SER EDUCACIONAL", "VTRU": "VITRU", "ANIM": "ANIMA",
+               "AFYA": "AFYA"}
+
 MANTENEDORAS = {
     "YDUQS": r"ESTACIO DE SA|IREP SOCIEDADE DE ENSINO SUPERIOR",
     "COGNA": r"KROTON|ANHANGUERA EDUCACIONAL PARTICIPAC|"
@@ -82,7 +89,7 @@ NOTA = (
     "base tem. Fonte dos comunicados: dataset IPE da CVM (link na ultima coluna leva ao "
     "PDF original). O cruzamento e pelo NUMERO DA PORTARIA que o proprio comunicado cita. "
     "Regerar com: python conferir_listadas.py <arquivo>. ATENCAO: Afya e Vitru sao "
-    "listadas na Nasdaq e nao protocolam IPE na CVM — os 6-K delas NAO entram aqui. No bloco 2, o grupo e atribuido por CODIGO (cod_mantenedora -> cod_ies), nunca por nome de faculdade; mantenedora que a base nao identifica fica de fora do bloco.")
+    "listadas na Nasdaq e nao protocolam IPE na CVM — os 6-K delas NAO entram aqui. No bloco 2, o grupo vem da tabela grupo_ies.csv (cod_ies -> grupo, mantida pelo dono) e, para IES fora dela, do cod_mantenedora. Nunca por nome de faculdade.")
 
 
 def nm(s):
@@ -142,7 +149,7 @@ def _add_b2(linhas, c, recente):
             if recente else
             "A base cobre o DOU de 2018 em diante; curso autorizado antes disso so "
             "aparece quando tiver um ato novo (renovacao, vagas). Sem acao."),
-        "fonte": "Cadastro e-MEC (cursos_emec.parquet), grupo pelo cod_mantenedora"})
+        "fonte": "Cadastro e-MEC (cursos_emec.parquet); grupo por cod_ies (grupo_ies.csv)"})
 
 
 def gerar(caminho="Regulacao_Cursos.xlsx", log=print):
@@ -255,10 +262,23 @@ def gerar(caminho="Regulacao_Cursos.xlsx", log=print):
         # 2) cod_mantenedora -> cod_ies
         cadastro["cm"] = v(cadastro["cod_mantenedora"]).str.replace(r"\.0$", "", regex=True)
         cadastro["ci"] = v(cadastro["cod_ies"]).str.replace(r"\.0$", "", regex=True)
-        ies_grupo = {r.ci: cod_grupo[r.cm] for r in cadastro.itertuples()
-                     if r.cm in cod_grupo and r.ci}
-        log(f"[listadas] grupos por codigo: {len(cod_grupo)} mantenedora(s) -> "
-            f"{len(ies_grupo)} IES")
+        por_mantenedora = {r.ci: cod_grupo[r.cm] for r in cadastro.itertuples()
+                           if r.cm in cod_grupo and r.ci}
+        # a TABELA do dono manda; a mantenedora so completa quem ela nao lista
+        ies_grupo, n_tab = dict(por_mantenedora), 0
+        tab = os.path.join(base_dir, GRUPO_IES_CSV)
+        if os.path.exists(tab):
+            t = pd.read_csv(tab, dtype=str).dropna(subset=["CO_IES"])
+            for r3 in t.itertuples():
+                ies_grupo[str(r3.CO_IES).strip()] = SIGLA_GRUPO.get(
+                    str(r3.Grupo).strip(), str(r3.Grupo).strip())
+                n_tab += 1
+            log(f"[listadas] grupo por codigo: {n_tab} IES da tabela grupo_ies.csv + "
+                f"{len(set(por_mantenedora) - set(t['CO_IES'].astype(str)))} pela "
+                f"mantenedora = {len(ies_grupo)} IES")
+        else:
+            log(f"[listadas] grupo_ies.csv ausente — usando so a mantenedora "
+                f"({len(ies_grupo)} IES)")
         # 3) curso -> grupo pelo cod_ies
         med = emec[emec["curso"].map(nm).str.contains(RX_MED, na=False, regex=True)
                    & ~emec["curso"].map(nm).str.contains("VETERIN", na=False)
