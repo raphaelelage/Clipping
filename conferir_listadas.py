@@ -82,13 +82,14 @@ MESES = {"janeiro": 1, "fevereiro": 2, "marco": 3, "abril": 4, "maio": 5, "junho
 # foi autorizado ANTES de 2018 — fora da janela da base, nao e buraco de cobertura.
 COD_RECENTE = 1_400_000
 COLS = ["bloco", "grupo", "data", "assunto_ou_curso", "portaria_citada", "vagas_citadas",
-        "municipio_citado", "o_que_a_base_tem", "situacao", "o_que_conferir", "fonte"]
+        "municipio_citado", "o_que_a_base_tem", "situacao", "ajuste_no_funil",
+        "o_que_conferir", "fonte"]
 NOTA = (
     "CONFERIR - LISTADAS: fatos relevantes e comunicados ao mercado das empresas ABERTAS "
     "de educacao sobre autorizacao/aumento de vagas, cruzados com os atos do DOU que a "
     "base tem. Fonte dos comunicados: dataset IPE da CVM (link na ultima coluna leva ao "
     "PDF original). O cruzamento e pelo NUMERO DA PORTARIA que o proprio comunicado cita. "
-    "Regerar com: python conferir_listadas.py <arquivo>. ATENCAO: Afya e Vitru sao "
+    "A coluna ajuste_no_funil diz, por linha, se o achado exige mexer no Funil e por onde: VARREDURA quando falta o ATO (a linha do Funil nasce com ele) ou ABA AJUSTES quando a linha existe e o valor e que esta errado. Regerar com: python conferir_listadas.py <arquivo>. ATENCAO: Afya e Vitru sao "
     "listadas na Nasdaq e nao protocolam IPE na CVM — os 6-K delas NAO entram aqui. No bloco 2, o grupo vem da tabela grupo_ies.csv (cod_ies -> grupo, mantida pelo dono) e, para IES fora dela, do cod_mantenedora. Nunca por nome de faculdade.")
 
 
@@ -134,7 +135,7 @@ def _texto(link):
         return " ".join(" ".join((p.extract_text() or "") for p in pdf.pages).split())
 
 
-def _add_b2(linhas, c, recente):
+def _add_b2(linhas, c, recente, no_funil=False):
     linhas.append({
         "bloco": "2. Curso ativo sem ato na base", "grupo": c["_grupo"], "data": "",
         "assunto_ou_curso": f"{c['curso']} — {c['ies']} ({c['municipio']}/{c['uf']})",
@@ -143,6 +144,15 @@ def _add_b2(linhas, c, recente):
         "o_que_a_base_tem": f"nenhum ato com o cod_curso {c['_cod']} (cod_ies {c['_ci']})",
         "situacao": ("CODIGO RECENTE — conferir" if recente
                      else "provavelmente anterior a 2018 (fora da janela da base)"),
+        "ajuste_no_funil": (
+            ("SIM - VARREDURA: o Funil ja tem uma linha deste curso (veio de cruzamento), "
+             "mas sem nenhum ato. Ache o ato no DOU e rode a varredura do periodo."
+             if no_funil else
+             "SIM - VARREDURA: o Funil NAO tem linha para este curso. Ache o ato de "
+             "autorizacao no DOU e rode a varredura daquele periodo; a linha nasce com o "
+             "ato. Se o ato for anterior a 2018, esta fora da cobertura da base.")
+            if recente else
+            "nao — curso provavelmente autorizado antes de 2018, fora da janela da base"),
         "o_que_conferir": (
             "Curso ativo no e-MEC sem nenhum ato no DOU desde 2018. Codigo alto sugere "
             "autorizacao recente: procure o ato no DOU e rode a varredura do periodo."
@@ -205,19 +215,30 @@ def gerar(caminho="Regulacao_Cursos.xlsx", log=print):
         tem = len(cand) > 0
         if not num:
             sit = "nao se aplica (o comunicado nao cita portaria de autorizacao)"
+            ajuste = "nao"
             fazer = ("Comunicado sobre outro assunto (decisao do STF, aquisicao, decisao "
                      "judicial). Nao ha ato do DOU para cruzar.")
         elif not tem:
             sit = "ATO NAO ENCONTRADO NA BASE"
+            ajuste = ("SIM - VARREDURA: o Funil nao tem a linha porque falta o ATO. "
+                      "Rode a varredura do periodo da portaria pelo app (aba Varredura "
+                      "DOU); a linha do Funil nasce sozinha com o ato. Nao adianta mexer "
+                      "na aba Ajustes: ela corrige valor de linha existente, nao cria "
+                      "linha.")
             fazer = ("O comunicado cita uma portaria que a base nao tem. Confira no DOU "
                      "(in.gov.br) pela data citada; se o ato existir, rode a varredura "
                      "do periodo pelo app.")
         elif vagas and vagas_base and vagas not in [x.replace(".0", "") for x in vagas_base]:
             sit = "VAGAS DIVERGENTES"
+            ajuste = ("SIM - ABA AJUSTES (so se o ato estiver certo e o Funil errado): "
+                      "confira a coluna vagas da linha no Funil e, se precisar, registre "
+                      "cod_curso + campo 'vagas' + valor na aba Ajustes. Lembre que vagas "
+                      "no Funil e o TOTAL do curso, nunca o acrescimo do pedido.")
             fazer = ("O numero de vagas do comunicado nao bate com o do ato. Leia o ato "
                      "no DOU: costuma ser vagas TOTAIS x ACRESCIMO.")
         else:
             sit = "confere"
+            ajuste = "nao"
             fazer = ""
         linhas.append({
             "bloco": "1. Comunicado x base", "grupo": grupo,
@@ -227,7 +248,8 @@ def gerar(caminho="Regulacao_Cursos.xlsx", log=print):
             "o_que_a_base_tem": (" | ".join(sorted(set(v(cand["ato"])))[:1])
                                  + (f" | tipo: {', '.join(sorted(set(v(cand['tipo_decisao']))))}" if tem else "")
                                  + (f" | vagas: {', '.join(vagas_base)}" if vagas_base else "")) if tem else "nada",
-            "situacao": sit, "o_que_conferir": fazer, "fonte": r["Link_Download"]})
+            "situacao": sit, "ajuste_no_funil": ajuste,
+            "o_que_conferir": fazer, "fonte": r["Link_Download"]})
 
     # ---- bloco 2: Medicina ativa no e-MEC das listadas SEM nenhum ato na base.
     # Atribuicao do grupo POR CODIGO (dono, 14/09/2026): nome so para achar o
@@ -287,11 +309,16 @@ def gerar(caminho="Regulacao_Cursos.xlsx", log=print):
         med["_ci"] = med["cod_ies"].astype(str).str.replace(r"\.0$", "", regex=True)
         med["_grupo"] = med["_ci"].map(ies_grupo).fillna("")
         cods = set(v(atos["cod_curso"]).str.replace(r"\.0$", "", regex=True)) - {""}
+        try:      # o Funil pode ja ter a linha do curso mesmo sem ato (veio de cruzamento)
+            _f = xl.parse("Funil", skiprows=1)
+            cods_funil = set(v(_f["cod_curso"]).str.replace(r"\.0$", "", regex=True)) - {""}
+        except Exception:
+            cods_funil = set()
         falta = med[(med["_grupo"] != "") & (~med["_cod"].isin(cods))].copy()
         falta["_n"] = pd.to_numeric(falta["_cod"], errors="coerce")
         for _, c in falta.sort_values("_n", ascending=False).iterrows():
             recente = pd.notna(c["_n"]) and c["_n"] >= COD_RECENTE
-            _add_b2(linhas, c, recente)
+            _add_b2(linhas, c, recente, c["_cod"] in cods_funil)
 
     df = pd.DataFrame(linhas, columns=COLS)
     log("[listadas] " + str(len(df)) + " linha(s): "
@@ -324,7 +351,8 @@ def _gravar(caminho, xl, df, log=print):
         for j, col in enumerate(COLS, start=1):
             ws.cell(row=i, column=j, value=("" if pd.isna(r[col]) else str(r[col])))
     for col, larg in (("A", 24), ("B", 16), ("C", 11), ("D", 58), ("E", 20),
-                      ("F", 9), ("G", 18), ("H", 52), ("I", 30), ("J", 52), ("K", 40)):
+                      ("F", 9), ("G", 18), ("H", 46), ("I", 28), ("J", 56), ("K", 52),
+                      ("L", 40)):
         ws.column_dimensions[col].width = larg
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
         for cel in row:
