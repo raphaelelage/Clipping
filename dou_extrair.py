@@ -291,32 +291,59 @@ def _mapear_colunas(row):
     return [_MAPA_COL.get(re.sub(r"[^a-z]", "", _norm(c)), None) for c in row]
 
 
+# Dispositivo que introduz CADA tabela do ato. Um ato pode decidir coisas diferentes
+# para listas diferentes (Portaria 78/2019: Art. 1 extingue, Art. 2 reconhece so para
+# diploma, Art. 3 reduz o ingresso em 50%) — sem isto, o tipo do ato inteiro ia para
+# todas as linhas. So sobrescreve quando o verbo da tabela e INEQUIVOCO.
+_RX_CTX = [
+    ("desativacao", re.compile(r"extin[cç][aã]o\s+d|fica\w*\s+extint|"
+                               r"desativa[cç][aã]o\s+d|fica\w*\s+desativad", re.I)),
+    ("reducao_ingresso", re.compile(r"reduzir\s+o\s+ingresso|"
+                                    r"redu[cç][aã]o\s+d[oe]\s+ingresso", re.I)),
+    ("indeferimento", re.compile(r"\bindeferi", re.I)),
+]
+
+
+def tipo_da_tabela(contexto):
+    """Tipo lido do artigo que introduz a tabela; None quando nao ha verbo claro."""
+    c = _norm(contexto or "")
+    for tipo, rx in _RX_CTX:
+        if rx.search(c):
+            return tipo
+    return None
+
+
 def linhas_da_tabela(html):
     """Explode as tabelas do ato em linhas por curso. Cabecalho vem na PRIMEIRA LINHA de
     dados (as tabelas do DOU nao usam <th>). Tabela sem coluna reconhecivel e ignorada —
-    e o rodape de estatisticas do site, nao dados."""
-    try:
-        tabelas = pd.read_html(io.StringIO(html))
-    except Exception:
-        return []
+    e o rodape de estatisticas do site, nao dados. Cada linha leva em `_contexto` o texto
+    do artigo que introduz a SUA tabela (ver tipo_da_tabela)."""
     out = []
-    for t in tabelas:
-        if t.empty or len(t) < 2:
+    for m in re.finditer(r"<table[^>]*>.*?</table>", html or "", re.S | re.I):
+        ctx = re.sub(r"<[^>]+>", " ", (html or "")[max(0, m.start() - 700):m.start()])
+        ctx = " ".join(ctx.split())[-300:]
+        try:
+            tabelas = pd.read_html(io.StringIO(m.group(0)))
+        except Exception:
             continue
-        cab = _mapear_colunas(t.iloc[0].tolist())
-        if not any(c in ("processo_emec", "curso", "ies") for c in cab):
-            continue
-        for _, row in t.iloc[1:].iterrows():
-            d = {}
-            for col, val in zip(cab, row.tolist()):
-                if col and col != "_ordem" and pd.notna(val):
-                    d[col] = str(val).strip()
-            if d.get("endereco") and not d.get("municipio"):
-                m = RX_MUN_UF.search(d["endereco"])
-                if m:
-                    d["municipio"], d["uf"] = m.group(1).strip(), m.group(2)
-            if d.get("curso") or d.get("processo_emec") or d.get("ies"):
-                out.append(d)
+        for t in tabelas:
+            if t.empty or len(t) < 2:
+                continue
+            cab = _mapear_colunas(t.iloc[0].tolist())
+            if not any(c in ("processo_emec", "curso", "ies") for c in cab):
+                continue
+            for _, row in t.iloc[1:].iterrows():
+                d = {}
+                for col, val in zip(cab, row.tolist()):
+                    if col and col != "_ordem" and pd.notna(val):
+                        d[col] = str(val).strip()
+                if d.get("endereco") and not d.get("municipio"):
+                    mm = RX_MUN_UF.search(d["endereco"])
+                    if mm:
+                        d["municipio"], d["uf"] = mm.group(1).strip(), mm.group(2)
+                if d.get("curso") or d.get("processo_emec") or d.get("ies"):
+                    d["_contexto"] = ctx
+                    out.append(d)
     return out
 
 
@@ -372,9 +399,17 @@ def extrair(atos, workers=6, log=print):
             cursos = linhas_da_tabela(html) if html else []
             if cursos:
                 for c in cursos:
-                    linhas.append({**base, **c,
-                                   "vagas_num": _so_numero_vagas(c.get("vagas")),
-                                   "fonte_detalhe": "tabela do ato"})
+                    ctx = c.pop("_contexto", "")
+                    t_linha = tipo_da_tabela(ctx)
+                    reg = {**base, **c,
+                           "vagas_num": _so_numero_vagas(c.get("vagas")),
+                           "fonte_detalhe": "tabela do ato"}
+                    # o artigo da PROPRIA tabela manda quando diz outra coisa que o ato
+                    if t_linha and t_linha != tipo:
+                        reg["tipo_ato"] = t_linha
+                        reg["fonte_detalhe"] = ("tabela do ato (dispositivo proprio: "
+                                                + ctx[:60].strip() + ")")
+                    linhas.append(reg)
             else:
                 # texto corrido: le curso/vagas/IES/mantenedora/municipio do Art. 1
                 proc = RX_PROCESSO.search(texto)

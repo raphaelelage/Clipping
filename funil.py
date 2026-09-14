@@ -436,6 +436,20 @@ def _aba_conferir(funil, rel_ajustes=(), log=print):
                      "processos diferentes = cursos diferentes. Confirme no e-MEC de quem "
                      "é o código e corrija pela aba Ajustes (campo cod_curso) na linha "
                      "que estiver errada.", r)
+            elif p.startswith("conferir:") and "codigo do curso trocado" in p:
+                _add("Código do curso trocado (código apagado)",
+                     p.split("—", 1)[-1].strip().capitalize()
+                     + " A linha ficou SEM cod_curso de propósito: com ele, esta linha e "
+                     "a do outro campus virariam uma só.",
+                     "Confirme no e-MEC qual é o código do curso desta cidade e registre "
+                     "na aba Ajustes (campo cod_curso). Enquanto não registrar, a linha "
+                     "fica sem cruzamento de situação e vagas do e-MEC.", r)
+            elif p.startswith("conferir:") and "erro de digitacao do municipio" in p:
+                _add("Município do ato diverge do e-MEC",
+                     p.split(":", 1)[-1].strip().capitalize(),
+                     "Abra o link_fonte e veja a cidade que o ato cita. Se o DOU errou, "
+                     "corrija o município pela aba Ajustes; se o ato estiver certo, o "
+                     "código é que está errado.", r)
             elif p.startswith("divergencia:"):
                 sit = p.split("diz", 1)[-1].strip(' "')
                 _add("DOU encerrou, e-MEC diz que existe",
@@ -537,6 +551,55 @@ _ORDEM_FASE = {"F. Desativado": 6, "F. Indeferido (pedido negado)": 5,
                "3. Renovacao de reconhecimento": 4, "2. Reconhecido": 3,
                "1. Autorizado": 2, "0. Sobrestado (ADC 81)": 1,
                "0. Protocolado (em tramitacao)": 1}
+
+
+def _validar_cod_por_municipio(funil, log=print):
+    """cod_curso x municipio do e-MEC — ver docstring do patch de 14/09/2026."""
+    if not os.path.exists(EMEC_PARQUET):
+        return funil
+    try:
+        e = pd.read_parquet(EMEC_PARQUET)
+    except Exception as exc:
+        log(f"[funil] validacao cod x municipio pulada ({type(exc).__name__})")
+        return funil
+    mun_do_cod, trio = {}, set()
+    for r in e.itertuples():
+        m = _norm(r.municipio)
+        if pd.notna(r.cod_curso):
+            mun_do_cod[str(int(r.cod_curso))] = m
+        if pd.notna(r.cod_ies):
+            trio.add((str(int(r.cod_ies)), _norm(curso_padrao(r.curso)), m))
+    n_apag = n_flag = 0
+    for i in funil.index:
+        cod = _limpa(funil.at[i, "cod_curso"]).replace(".0", "")
+        mun = _norm(funil.at[i, "municipio"])
+        if not cod or not mun:
+            continue
+        mun_emec = mun_do_cod.get(cod, "")
+        if not mun_emec or mun_emec == mun:
+            continue
+        ci = _limpa(funil.at[i, "cod_ies"]).replace(".0", "")
+        tem_proprio = (ci, _norm(funil.at[i, "curso_padrao"]), mun) in trio
+        if tem_proprio:
+            funil.at[i, "cod_curso"] = ""
+            n_apag += 1
+            txt = ("conferir: codigo do curso trocado — o cod_curso " + cod + " e do "
+                   "curso de " + mun_emec.title() + " no e-MEC, mas este ato e de "
+                   + mun.title() + ", onde a mesma IES tem o mesmo curso com codigo "
+                   "proprio. O codigo foi APAGADO nesta linha para nao juntar dois "
+                   "cursos distintos numa linha so")
+        else:
+            n_flag += 1
+            txt = ("conferir: o e-MEC diz que o cod_curso " + cod + " e de "
+                   + mun_emec.title() + " e o ato diz " + mun.title() + ". A IES nao tem "
+                   "este curso em " + mun.title() + " no cadastro, entao o mais provavel "
+                   "e erro de digitacao do municipio no DOU — o codigo foi mantido")
+        atual = _limpa(funil.at[i, "status_regulatorio"])
+        funil.at[i, "status_regulatorio"] = (atual + " | " + txt) if atual else txt
+    if n_apag or n_flag:
+        log(f"[funil] cod_curso x municipio do e-MEC: {n_apag} codigo(s) apagado(s) por "
+            f"estarem trocados, {n_flag} divergencia(s) sinalizada(s)")
+    return funil
 
 
 def _consolidar_por_cod(funil, pintar, pintar_manual, log=print):
@@ -727,6 +790,18 @@ def gerar(caminho, log=print):
         # declarado aqui, com a portaria e, quando o DOU informa, o numero do processo
         # (em 22 das 32 linhas o ato nao cita processo, por isso a separacao vem do
         # OBJETO do ato, nunca so do processo).
+        # REDUCAO DE INGRESSO (dono, 14/09/2026): medida de supervisao que corta a
+        # entrada de novos alunos ate o INEP reavaliar. Nao e etapa do trilho — o curso
+        # continua na fase que tinha — mas muda a oferta, entao vai declarado no status.
+        red = g[g["tipo_decisao"] == "reducao_ingresso"]
+        if len(red):
+            _r = red.iloc[-1]
+            _q = (_r["_data"].strftime("%d/%m/%Y") if pd.notna(_r["_data"])
+                  else "data nao informada")
+            _t = ("ingresso de novos alunos REDUZIDO em " + _q + " ("
+                  + _limpa(_r["ato"]) + ") — medida de supervisao, o curso segue aberto")
+            status = (status + " | " + _t) if status else _t
+
         adit = g[g["tipo_decisao"] == "indeferimento_aditamento"]
         if len(adit):
             _a = adit.iloc[-1]
@@ -862,6 +937,7 @@ def gerar(caminho, log=print):
         log(f"[funil] Enamed: {int(alvo.sum())} cursos decididos marcados como restritos")
 
     funil, n_mun_ok = _padronizar_municipios(funil, log)
+    funil = _validar_cod_por_municipio(funil, log)
     funil, pintar, pintar_manual = _consolidar_por_cod(funil, pintar, pintar_manual, log)
 
     # -------- ESTADUAIS/MUNICIPAIS pelo e-MEC (dono aprovou 11/09/2026) ------------
@@ -1032,6 +1108,9 @@ def gerar(caminho, log=print):
             "juntados por este cod_curso citam municipio ou curso diferentes, entao o "
             "codigo pode ter vindo errado do DOU e a linha misturar processos. Abra o "
             "link_fonte e a aba Atos (uma linha por ato) antes de usar\n"
+            "ingresso de novos alunos REDUZIDO (data, portaria) - supervisao do MEC "
+            "cortou a entrada de novos alunos (tipicamente 50%) ate o INEP reavaliar o "
+            "curso; o curso segue aberto e a fase nao muda\n"
             "aumento de vagas indeferido (data, portaria, processo) - a IES pediu mais "
             "vagas para um curso que ja existe e a SERES negou; o curso segue na fase "
             "que tinha. Processos diferentes da mesma IES/curso aparecem separados na "

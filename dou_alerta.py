@@ -38,6 +38,7 @@ ALARME_SEMPRE = {
     # deferido — antes vinha classificado como "autorizacao" e alertava como aprovacao
     "indeferimento",
     "indeferimento_aditamento",
+    "reducao_ingresso",
     # REVOGACAO/SEM EFEITO (v3): reversao de ato anterior — raro (~5/ano) e material
     "revogacao", "sem_efeito",
     # SENTINELAS (dono, 11/09/2026): eventos raros que merecem alerta imediato
@@ -49,6 +50,7 @@ _VERBO = {
     "autorizacao": "autoriza",
     "indeferimento": "INDEFERE o pedido de autorizacao para",
     "indeferimento_aditamento": "INDEFERE o pedido de AUMENTO DE VAGAS de",
+    "reducao_ingresso": "REDUZ o ingresso de novos alunos em",
     "revogacao": "REVOGA ato referente a",
     "sem_efeito": "TORNA SEM EFEITO ato referente a",
     "unificacao_mantidas": "aprova unificacao de mantidas de",

@@ -38,7 +38,7 @@ def _vazio(v):
 # auditoria de verbos: extintos->desativacao, revogacao, sem_efeito, unificacao_mantidas,
 # suspensao de chamada publica. Re-rodar sobre base v2 e idempotente (retipo por link +
 # preenchimento so de celula vazia).
-MARCA = "correcao_v7_aplicada"
+MARCA = "correcao_v8_aplicada"
 
 
 def ja_aplicada(notas):
@@ -55,7 +55,8 @@ def linha_marca():
                           f"Art. 1 (indeferimento, extincao, revogacao, sem efeito, "
                           f"unificacao de mantidas), campos lidos da prosa e "
                           f"duplicatas do suplemento v3 removidas e indeferimento "
-                          f"de aditamento separado do indeferimento de curso (v7). "
+                          f"de aditamento separado do indeferimento de curso, e tipo "
+                          f"por DISPOSITIVO em ato com varios artigos (v8). "
                           f"NAO apagar: evita reprocessar.")}
 
 
@@ -65,6 +66,7 @@ def aplicar_em_df(atos, log=print):
     atos = _limpar_duplicatas_suplemento(atos, log)
     atos = _corrigir_df(v2, atos, log)
     atos = _retipar_aditamento(v2, atos, log)
+    atos = _retipar_por_dispositivo(v2, atos, log)
     return _suplementar(v2, atos, log)
 
 
@@ -91,6 +93,60 @@ def _nies(v):
     (694 linhas em 16 atos, medido na auditoria de 13/09/2026)."""
     import re
     return _nkey(re.sub(r"\s*\(\d{2,7}\)\s*$", "", str(v or "")))
+
+
+def _retipar_por_dispositivo(v2, atos, log=print):
+    """Ato com MAIS DE UM dispositivo (ex.: Portaria 78/2019 — Art. 1 extingue uma lista,
+    Art. 3 reduz o ingresso de outra) tinha um tipo so para todas as linhas. Aqui cada
+    linha recebe o tipo do ARTIGO que introduz a tabela dela (dou_extrair.tipo_da_tabela).
+    Precisa do HTML do ato: falhar aqui nao derruba a correcao, so deixa como estava."""
+    import re
+    try:
+        import dou_extrair as dx
+        import dou_historico as dh
+    except Exception:
+        return atos
+    if "texto_inicio" not in v2.columns:
+        return atos
+    rx = re.compile(r"reduzir\s+o\s+ingresso|redu[cç][aã]o\s+d[oe]\s+ingresso|"
+                    r"extin[cç][aã]o\s+dos\s+cursos", re.I)
+    alvo = sorted(set(v2.loc[v2["texto_inicio"].astype(str).map(
+        lambda t: bool(rx.search(t))), "link"].astype(str)))
+    alvo = [l for l in alvo if l in set(atos["link"].astype(str))]
+    if not alvo:
+        return atos
+    mudou = 0
+    for link in alvo:
+        try:
+            _, html = dh.texto_integral(link.split("/-/")[-1])
+            linhas = dx.linhas_da_tabela(html)
+        except Exception as e:
+            log(f"[corrigir] dispositivo por linha: {link[-40:]} nao relido "
+                f"({type(e).__name__})")
+            continue
+        # chave da linha dentro do ato: o que a tabela traz (curso ou processo)
+        tipo_por_chave = {}
+        for c in linhas:
+            t = dx.tipo_da_tabela(c.get("_contexto", ""))
+            for campo in ("curso", "processo_emec"):
+                if t and str(c.get(campo, "")).strip():
+                    tipo_por_chave[_nkey(c[campo])] = t
+        if not tipo_por_chave:
+            continue
+        sel = atos["link"].astype(str) == link
+        for i in atos.index[sel]:
+            for campo_xl in ("curso", "processo"):
+                k = _nkey(atos.at[i, campo_xl] if campo_xl in atos.columns else "")
+                if k and k in tipo_por_chave:
+                    novo = tipo_por_chave[k]
+                    if str(atos.at[i, "tipo_decisao"]) != novo:
+                        atos.at[i, "tipo_decisao"] = novo
+                        mudou += 1
+                    break
+    if mudou:
+        log(f"[corrigir] tipo por DISPOSITIVO (ato com varios artigos): {mudou} linha(s) "
+            f"reetiquetadas em {len(alvo)} ato(s)")
+    return atos
 
 
 def _retipar_aditamento(v2, atos, log=print):
@@ -200,6 +256,7 @@ def corrigir(caminho, aplicar=False, log=print):
     atos = _limpar_duplicatas_suplemento(atos, log)
     atos = _corrigir_df(v2, atos, log)
     atos = _retipar_aditamento(v2, atos, log)
+    atos = _retipar_por_dispositivo(v2, atos, log)
     atos = _suplementar(v2, atos, log)
     return _gravar(caminho, xl, atos, log) if aplicar else atos
 
