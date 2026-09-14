@@ -144,6 +144,81 @@ def _ano(serie):
     return pd.to_datetime(serie, errors="coerce").dt.year
 
 
+
+# ----------------------------------------------------------------- formulas do Graf_Dados
+# Dono (14/09/2026): os numeros da aba Graf_Dados sao FORMULAS apontando para as abas de
+# dados — auditaveis com um clique. O criterio de Medicina abaixo foi conferido contra a
+# regra do codigo (\bMEDICINA\b sem VETERIN): bate 1155/1155 na aba Atos e 767/767 no
+# Funil. O "medicinal" exclui QUIMICA MEDICINAL; o "biomedicina", BIOMEDICINA.
+def _med_expr(rng):
+    return (f'ISNUMBER(SEARCH("medicina",{rng}))'
+            f'*(1-ISNUMBER(SEARCH("biomedicina",{rng})))'
+            f'*(1-ISNUMBER(SEARCH("veterin",{rng})))'
+            f'*(1-ISNUMBER(SEARCH("medicinal",{rng})))')
+
+
+def _jud_expr(rng):
+    """via judicial = ref_judicial preenchida e diferente de 'nao consta'/'nao se aplica'"""
+    nao = "".join(f'*(1-ISNUMBER(SEARCH("{t}",{rng})))'
+                  for t in ("nao consta", "não consta", "nao se aplica", "não se aplica"))
+    return f"(LEN(TRIM({rng}))>0)" + nao
+
+
+def _refs(n_funil, n_atos):
+    """Intervalos fixos das abas de dados (Funil tem nota na linha 1, cabecalho na 2)."""
+    f0, f1 = 3, n_funil + 2
+    a0, a1 = 2, n_atos + 1
+    return {
+        "F_CURSO": f"Funil!$E${f0}:$E${f1}", "F_FASE": f"Funil!$H${f0}:$H${f1}",
+        "F_UF": f"Funil!$F${f0}:$F${f1}", "F_STAT": f"Funil!$L${f0}:$L${f1}",
+        "A_DATA": f"Atos!$B${a0}:$B${a1}", "A_TIPO": f"Atos!$C${a0}:$C${a1}",
+        "A_CURSO": f"Atos!$L${a0}:$L${a1}", "A_VAGAS": f"Atos!$M${a0}:$M${a1}",
+        "A_JUD": f"Atos!$P${a0}:$P${a1}", "A_MANT": f"Atos!$G${a0}:$G${a1}",
+    }
+
+
+def _formula(titulo, col_nome, j, r, R, variantes=None):
+    """Formula da celula (coluna j do bloco, linha r do Excel). None = deixa o valor."""
+    if j == 1:
+        return None                      # coluna 1 e a categoria (texto)
+    cat = f"$A{r}"
+    med_f, med_a = _med_expr(R["F_CURSO"]), _med_expr(R["A_CURSO"])
+    ano = f'(YEAR({R["A_DATA"]})={cat})'
+    aut = f'({R["A_TIPO"]}="autorizacao")'
+    if titulo.startswith("G1."):
+        return f'=COUNTIF({R["F_FASE"]},{cat})'
+    if titulo.startswith("G2."):
+        return f'=SUMPRODUCT(({R["F_FASE"]}={cat})*{med_f})'
+    if titulo.startswith("G3."):
+        return (f'=SUMPRODUCT(({R["F_STAT"]}={cat})*{med_f}'
+                f'*(LEFT({R["F_FASE"]},2)="0."))')
+    if titulo.startswith("G4."):
+        return (f'=SUMPRODUCT({ano}*{aut}*{med_a})' if col_nome == "Medicina"
+                else f'=SUMPRODUCT({ano}*{aut}*(1-{med_a}))')
+    if titulo.startswith("G5."):
+        return f'=SUMPRODUCT({ano}*{aut}*{med_a}*IFERROR({R["A_VAGAS"]}*1,0))'
+    if titulo.startswith("G6."):
+        pend = (f'SUMPRODUCT(({R["F_UF"]}={cat})*{med_f}'
+                f'*(LEFT({R["F_FASE"]},2)="0."))')
+        if col_nome == "Pendentes":
+            return "=" + pend
+        return f'=SUMPRODUCT(({R["F_UF"]}={cat})*{med_f})-{pend}'
+    if titulo.startswith("G7."):
+        alvos = (variantes or {}).get(str(r), [])
+        if not alvos:
+            return None
+        ors = "+".join(f'({R["A_MANT"]}="{v}")' for v in alvos)
+        return f'=SUMPRODUCT({aut}*{med_a}*({ors}))'
+    if titulo.startswith("G8."):
+        jud = _jud_expr(R["A_JUD"])
+        return (f'=SUMPRODUCT({ano}*{aut}*{med_a}*{jud})' if col_nome == "Via judicial"
+                else f'=SUMPRODUCT({ano}*{aut}*{med_a}*(1-({jud})))')
+    if titulo.startswith("G10."):
+        tipo = "autorizacao" if col_nome == "Autorizado" else "indeferimento"
+        return f'=SUMPRODUCT({ano}*({R["A_TIPO"]}="{tipo}")*{med_a})'
+    return None                          # G9: mediana condicional fica como valor
+
+
 def gerar(caminho, log=print):
     # a aba Funil tem a NOTA DE FONTES na linha 1; o cabecalho real esta na linha 2
     funil = pd.read_excel(caminho, sheet_name="Funil", header=1)
@@ -169,6 +244,20 @@ def gerar(caminho, log=print):
     aut["_ano_pedido"] = pd.to_numeric(
         aut["processo"].astype(str).str.slice(0, 4), errors="coerce")
     aut.loc[~aut["_ano_pedido"].between(2000, 2026), "_ano_pedido"] = pd.NA
+
+    # quanto a FORMULA contaria a mais por nao saber descontar a retificacao (o calculo
+    # abaixo desconta; a formula na celula nao tem como). Vai declarado no titulo.
+    _t_all = pd.read_excel(caminho, sheet_name="Atos")["ato"].astype(str).str.strip() \
+        .str.replace(r"\s+", " ", regex=True)
+    _bases2 = set(_t_all[_t_all.str.contains(r"\(\*\)\s*$", regex=True)]
+                  .str.replace(r"\s*\(\*\)\s*$", "", regex=True))
+    _sup = _t_all.isin(_bases2) & ~_t_all.str.contains(r"\(\*\)\s*$", regex=True)
+    _n_sup = int(_sup.sum())
+    AVISO_RET = (f" | NOTA DA FORMULA: a formula desta tabela varre a aba Atos inteira e "
+                 f"por isso conta tambem o ato ORIGINAL que depois foi republicado com "
+                 f"correcao (*) — {_n_sup} linha(s) na base. O numero pode ficar "
+                 f"ligeiramente acima do que se ve nos relatorios que descontam a "
+                 f"republicacao.")
 
     blocos = []   # (titulo_com_selecao, DataFrame[categoria, series...], tipo, eixo_y)
 
@@ -257,6 +346,8 @@ def gerar(caminho, log=print):
     t7["mantenedora"] = [_rep.get(_nmant(o), "") if o.lower() not in _vazios else ""
                          for o in _originais]
     t7 = t7[t7["mantenedora"] != ""]
+    _variantes_por_nome = {rep: sorted(c) for k, c in _cont.items()
+                           for rep in [_rep[k]]}
     t7 = (t7.groupby("mantenedora").size().rename("autorizacoes").reset_index()
             .sort_values("autorizacoes", ascending=False).head(15))
     blocos.append(("G7. Top 15 mantenedoras em AUTORIZACOES de Medicina 2018-2026 | "
@@ -314,6 +405,10 @@ def gerar(caminho, log=print):
     for aba in ("Graf_Dados", "Graficos"):
         if aba in wb.sheetnames:
             del wb[aba]
+    _R = _refs(len(funil), len(pd.read_excel(caminho, sheet_name="Atos")))
+    _DA_ATOS = ("G4.", "G5.", "G7.", "G8.", "G9.", "G10.")
+    blocos = [((t + AVISO_RET) if t.startswith(_DA_ATOS) else t, d, k, y)
+              for t, d, k, y in blocos]
     wsd = wb.create_sheet("Graf_Dados")
     wsg = wb.create_sheet("Graficos")
     negrito = Font(bold=True)
@@ -324,8 +419,17 @@ def gerar(caminho, log=print):
         head = linha + 1
         for j, c in enumerate(df.columns, start=1):
             wsd.cell(row=head, column=j, value=str(c)).font = negrito
+        _var_map = {}
+        if titulo.startswith("G7."):
+            for _i, (_, _r) in enumerate(df.iterrows(), start=1):
+                _var_map[str(head + _i)] = _variantes_por_nome.get(
+                    str(_r.iloc[0]), [str(_r.iloc[0])])
         for i, (_, r) in enumerate(df.iterrows(), start=1):
             for j, v in enumerate(r.tolist(), start=1):
+                _f = _formula(titulo, str(df.columns[j - 1]), j, head + i, _R, _var_map)
+                if _f is not None:
+                    wsd.cell(row=head + i, column=j, value=_f)
+                    continue
                 wsd.cell(row=head + i, column=j,
                          value=(None if pd.isna(v) else
                                 (float(v) if isinstance(v, (int, float)) else str(v))))

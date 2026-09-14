@@ -117,7 +117,8 @@ def enriquecer(funil, pintar, log=print):
     """Preenche cod_ies / cod_curso / municipio / uf / vagas no DataFrame `funil`.
     `pintar` recebe (indice, coluna) das celulas da CAMADA 2 (cruzamento externo).
     Devolve dict com a contagem de cada origem, para a nota de cabecalho."""
-    stat = {"campo": 0, "ies_nome": 0, "curso": 0, "municipio": 0, "uf": 0, "vagas": 0}
+    stat = {"campo": 0, "ies_nome": 0, "curso": 0, "municipio": 0, "uf": 0,
+            "vagas": 0, "mun_conflito": 0}
 
     # ---------------- CAMADA 1: codigo que ja estava no campo (sem amarelo) ---------
     for i in funil.index:
@@ -186,6 +187,18 @@ def enriquecer(funil, pintar, log=print):
         hit = por_par.get(str(int(float(cod_ies))) + "|" + alvo) if alvo else None
         if hit is None:
             continue
+        # GUARDA DE MUNICIPIO (dono, 14/09/2026): o par (IES+curso) e unico no e-MEC,
+        # mas a MESMA IES pode ter o MESMO curso em outra cidade, com processo proprio
+        # e codigo proprio. Se o ato ja disse o municipio e ele diverge do e-MEC, este
+        # NAO e o mesmo curso — casar aqui colava um codigo alheio na linha e, pior,
+        # fazia dois cursos distintos virarem uma linha so na consolidacao por codigo.
+        # Caso real: Odontologia do Centro Universitario Avantis (atos de Blumenau e de
+        # Florianopolis receberam o cod 1168617, que e o curso de Balneario Camboriu).
+        _mun_linha = _norm(funil.at[i, "municipio"])
+        _mun_hit = _norm(getattr(hit, "municipio", ""))
+        if _mun_linha and _mun_hit and _mun_linha != _mun_hit:
+            stat["mun_conflito"] = stat.get("mun_conflito", 0) + 1
+            continue
         for col, val in (("cod_curso", hit.cod_curso), ("municipio", hit.municipio),
                          ("uf", hit.uf), ("vagas", hit.vagas)):
             if col in falta and not _vazio(val):
@@ -196,7 +209,9 @@ def enriquecer(funil, pintar, log=print):
                 if col == "vagas":
                     funil.at[i, "vagas_fonte"] = VAGAS_FONTE_EMEC
     log(f"[enriquecer] camada 2 por (IES + curso): cod_curso={stat['curso']} "
-        f"municipio={stat['municipio']} uf={stat['uf']} vagas={stat['vagas']}")
+        f"municipio={stat['municipio']} uf={stat['uf']} vagas={stat['vagas']}"
+        + (f" | {stat['mun_conflito']} recusado(s): o curso do e-MEC e de outra cidade"
+           if stat.get("mun_conflito") else ""))
     return stat
 
 

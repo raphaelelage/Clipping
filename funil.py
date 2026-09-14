@@ -268,6 +268,20 @@ def _acrescentar_estaduais(funil, log=print):
              & e["situacao_emec"].isin(["Em atividade", "Em extinção"])]
     ja = set(funil["cod_curso"].astype(str).str.replace(".0", "", regex=False))
     novos = alvo[~alvo["cod_curso"].astype(int).astype(str).isin(ja)]
+    # PRIORIDADE DO DOCUMENTO ESPECIFICO (dono, 14/09/2026): 19 IES estaduais/municipais
+    # tem ato no DOU. Quando o MESMO curso ja entrou pelo ato (IES+curso+municipio), a
+    # linha do cadastro e-MEC nao entra de novo — o ato e o documento especifico daquele
+    # curso e traz fase, data e vagas; o cadastro so diria que o curso existe. Sem isto o
+    # curso contava em dobro em qualquer soma por IES.
+    def _k3(ies, curso, mun):
+        return _norm(ies) + "|" + _norm(curso_padrao(curso)) + "|" + _norm(mun)
+    ja_dou = {_k3(r.ies, r.curso, r.municipio) for r in funil.itertuples()}
+    antes = len(novos)
+    novos = novos[[_k3(r.ies, r.curso, r.municipio) not in ja_dou
+                   for r in novos.itertuples()]]
+    if antes != len(novos):
+        log(f"[funil] estaduais: {antes - len(novos)} curso(s) ja tinham ato no DOU — "
+            f"fica a linha do ato (documento especifico), nao a do cadastro")
     linhas = []
     for r in novos.itertuples():
         linhas.append({
@@ -399,22 +413,29 @@ def _aba_conferir(funil, rel_ajustes=(), log=print):
             if p.startswith("conferir:") and "municipios diferentes" in p:
                 cidades = p[p.find("(") + 1:p.find(")")] if "(" in p else "?"
                 _add("Município divergente entre os atos",
-                     "Os atos com este mesmo código de curso citam cidades diferentes: "
-                     + cidades + ". Ou um deles tem erro de digitação no DOU, ou o curso "
-                     "mudou de campus, ou o código está errado num dos atos e a linha "
-                     "está juntando dois cursos distintos.",
-                     "Abra o link_fonte e veja qual cidade o ato cita. Os atos deste "
-                     "código estão na aba Atos (uma linha por ato). Se for erro do DOU, "
-                     "corrija o município pela aba Ajustes.", r)
+                     "Os atos reunidos neste cod_curso citam cidades diferentes: "
+                     + cidades + ". Pode ser erro de digitação do DOU, mudança de campus, "
+                     "ou — mais comum — a mesma IES tendo o MESMO curso em duas cidades, "
+                     "cada uma com seu processo: quando o ato não traz o código, ele vem "
+                     "do cruzamento por nome e os dois colam no mesmo código.",
+                     "Abra os atos deste código na aba Atos e compare a coluna processo: "
+                     "processos diferentes = cursos diferentes, e a linha do Funil está "
+                     "juntando os dois. Confirme a cidade no link_fonte e corrija pela "
+                     "aba Ajustes (campo municipio ou cod_curso).", r)
             elif p.startswith("conferir:") and "cursos diferentes" in p:
                 nomes = p[p.find("(") + 1:p.find(")")] if "(" in p else "?"
                 _add("Curso divergente entre os atos",
-                     "Os atos com este mesmo código citam cursos de nomes incompatíveis: "
-                     + nomes + ". Um código de curso só pode ter um nome, então algum ato "
-                     "veio com o código trocado e esta linha pode misturar dois cursos.",
-                     "Compare os atos deste código na aba Atos e confirme no e-MEC a que "
-                     "curso o código pertence. O ato com código errado deve ser "
-                     "desconsiderado na leitura da linha.", r)
+                     "Os atos reunidos neste cod_curso citam cursos de nomes "
+                     "incompatíveis: " + nomes + ". Um código só pode ser de um curso, "
+                     "então os atos não são todos do mesmo curso. Causa mais comum: a "
+                     "tabela da portaria traz 'Registro e-MEC nº', que é o número do "
+                     "PROCESSO (ex.: 202200829), não o código do curso — quando o ato "
+                     "não traz o código, ele vem do cruzamento por nome da IES + nome do "
+                     "curso, e dois processos diferentes podem colar no mesmo código.",
+                     "Abra os atos deste código na aba Atos e compare a coluna processo: "
+                     "processos diferentes = cursos diferentes. Confirme no e-MEC de quem "
+                     "é o código e corrija pela aba Ajustes (campo cod_curso) na linha "
+                     "que estiver errada.", r)
             elif p.startswith("divergencia:"):
                 sit = p.split("diz", 1)[-1].strip(' "')
                 _add("DOU encerrou, e-MEC diz que existe",
