@@ -142,14 +142,33 @@ def _aplicar_ajustes(funil, xl, pintar_manual, log=print):
             continue
         sel = (cods == cod) if cod else (liga == link)
         curso_f = _limpa(r.get("curso") if "curso" in aj.columns else "")
+        modo_curso = ""
         if curso_f:
-            sel = sel & funil["curso"].map(lambda c: _norm(curso_f) in _norm(c))
+            alvo_n = _norm(curso_f)
+            # IGUALDADE primeiro: "Medicina" nao pode pegar "Medicina Veterinaria"
+            exato = sel & (funil["curso"].map(_norm).eq(alvo_n)
+                           | funil["curso_padrao"].map(_norm).eq(alvo_n))
+            if exato.any():
+                sel, modo_curso = exato, ""
+            else:   # sem igualdade, cai para substring — mas avisa que foi por aproximacao
+                sel = sel & funil["curso"].map(lambda c: alvo_n in _norm(c))
+                modo_curso = " (curso casado por aproximacao, nao por nome exato)"
         alvo = list(funil.index[sel])
         if not alvo:
             _rel(pos, chave, campo, valor,
                  "NAO APLICADO: nenhuma linha do Funil bate com essa chave"
                  + (" + curso '" + curso_f + "'" if curso_f else ""))
             continue
+        if len(alvo) > 1:
+            # o dono precisa saber: uma portaria de tabela cobre dezenas de cursos
+            _cursos = ", ".join(sorted({_limpa(funil.at[i, "curso"])[:28] for i in alvo})
+                                )[:160]
+            _txt = ("conferir: o ajuste da linha " + str(pos) + " da aba Ajustes ("
+                    + campo + " = \"" + str(valor)[:28] + "\") atingiu " + str(len(alvo))
+                    + " linhas do Funil, nao uma" + modo_curso + ". Cursos: " + _cursos)
+            for i in alvo:
+                _ja = _limpa(funil.at[i, "status_regulatorio"])
+                funil.at[i, "status_regulatorio"] = (_ja + " | " + _txt) if _ja else _txt
         for i in alvo:
             funil.at[i, campo] = valor
             pintar_manual.append((i, campo))
@@ -159,7 +178,9 @@ def _aplicar_ajustes(funil, xl, pintar_manual, log=print):
                                                 + "manual: " + campo) \
                     if "manual:" not in atual else atual + ", " + campo
             n += 1
-        _rel(pos, chave, campo, valor, f"aplicado em {len(alvo)} linha(s)")
+        _rel(pos, chave, campo, valor,
+             f"aplicado em {len(alvo)} linha(s)" + modo_curso
+             + (" — MAIS DE UMA LINHA, confira na aba Conferir" if len(alvo) > 1 else ""))
     nao = [x for x in relatorio if not x["resultado"].startswith("aplicado")]
     if n or nao:
         log(f"[funil] Ajustes manuais: {n} celula(s) aplicada(s) (verde)"
@@ -330,8 +351,12 @@ def _carregar_cautelares(log=print):
     return out
 
 
+# Nomes de curso que nao existem no catalogo do e-MEC, preenchido a cada gerar().
+# O clipping.py le daqui para montar o bloco de copiar-e-colar do e-mail.
+PENDENTES_CURSO: list = []
+
 ORDEM_ABAS = ("Atos", "Funil", "Conferir", "Conferir - Listadas", "Ajustes",
-               "Graf_Dados", "Graficos", "Medicina_SERES", "Notas")
+               "Listadas - IES", "Graf_Dados", "Graficos", "Medicina_SERES", "Notas")
 
 
 def ordenar_abas(wb):
@@ -446,6 +471,23 @@ def _aba_conferir(funil, rel_ajustes=(), log=print):
                      "processos diferentes = cursos diferentes. Confirme no e-MEC de quem "
                      "é o código e corrija pela aba Ajustes (campo cod_curso) na linha "
                      "que estiver errada.", r)
+            elif p.startswith("conferir:") and "atingiu" in p and "aba Ajustes" in p:
+                _add("Ajuste manual atingiu mais de uma linha",
+                     p.split(":", 1)[-1].strip().capitalize(),
+                     "Se era para uma linha só, use cod_curso como chave em vez do link "
+                     "(o link de uma portaria de tabela cobre dezenas de cursos) ou "
+                     "preencha a coluna curso com o nome exato. Se era para todas, "
+                     "ignore este aviso.", r)
+            elif p.startswith("conferir:") and "nome de curso fora do catalogo" in p:
+                _add("Nome de curso fora do catálogo do e-MEC",
+                     p.split("—", 1)[0].split(":", 1)[-1].strip().capitalize()
+                     + ". O nome foi mantido exatamente como veio do ato — nada foi "
+                     "adivinhado. Quase sempre é erro de digitação do DOU ou nome "
+                     "truncado.",
+                     "Veja o curso no link_fonte ou no e-MEC e registre o nome correto na "
+                     "aba Ajustes (campo curso_padrao). A lista completa desses nomes, "
+                     "com quantas linhas cada um afeta, sai no e-mail em bloco de copiar "
+                     "e colar e no arquivo curso_padrao_pendentes.csv.", r)
             elif p.startswith("conferir:") and "codigo do curso trocado" in p:
                 _add("Código do curso trocado (código apagado)",
                      p.split("—", 1)[-1].strip().capitalize()
@@ -612,6 +654,36 @@ def _padronizar_curso_pelo_emec(funil, log=print):
         f"{n_corte} cortando o rabo de localizacao, {len(pendentes)} nome(s) sem "
         f"correspondencia (backlog)")
     return funil, sorted(pendentes.items(), key=lambda x: -x[1])
+
+
+def _sinalizar_curso_fora_do_catalogo(funil, log=print):
+    """Nome de curso que nao existe no catalogo do e-MEC e MANTIDO como esta (dono:
+    "mantenha os nomes errados, quero apenas que de o flag deles") e sinalizado para a
+    aba Conferir. E quase sempre erro de digitacao do DOU ("Engenhariacivil") ou nome
+    truncado ("Graduacao")."""
+    if not os.path.exists(EMEC_PARQUET):
+        return funil
+    try:
+        e = pd.read_parquet(EMEC_PARQUET)
+    except Exception:
+        return funil
+    catalogo = {_norm(curso_padrao(c)) for c in e["curso"] if str(c).strip()}
+    catalogo.discard("")
+    n = 0
+    for i in funil.index:
+        atual = _limpa(funil.at[i, "curso_padrao"])
+        if not atual or _norm(atual) in catalogo:
+            continue
+        txt = ("conferir: nome de curso fora do catalogo do e-MEC (\"" + atual[:40]
+               + "\") — o nome foi MANTIDO como veio do ato; classifique qual e o curso "
+               "certo e registre pela aba Ajustes (campo curso_padrao)")
+        ja = _limpa(funil.at[i, "status_regulatorio"])
+        funil.at[i, "status_regulatorio"] = (ja + " | " + txt) if ja else txt
+        n += 1
+    if n:
+        log(f"[funil] nome de curso fora do catalogo do e-MEC: {n} linha(s) sinalizada(s) "
+            f"(nome mantido)")
+    return funil
 
 
 def _validar_cod_por_municipio(funil, log=print):
@@ -1005,7 +1077,10 @@ def gerar(caminho, log=print):
     # A regulacao dessas IES e dos CONSELHOS ESTADUAIS (diario do estado, nao DOU):
     # sem isto, 58 Medicinas ativas (UERJ, UPE, UEPA...) ficavam invisiveis. Entram
     # como linha INTEGRAL do Cadastro e-MEC, com fase propria e fonte declarada.
+    global PENDENTES_CURSO
     funil, _pendentes_curso = _padronizar_curso_pelo_emec(funil, log)
+    PENDENTES_CURSO = list(_pendentes_curso)
+    funil = _sinalizar_curso_fora_do_catalogo(funil, log)
     funil = _acrescentar_estaduais(funil, log)
 
     # ---- DIVERGENCIA DECLARADA (auditoria 13/09/2026): o ato do DOU encerrou o curso
@@ -1031,10 +1106,13 @@ def gerar(caminho, log=print):
         and "VETERIN" not in _norm(c))
     for _c in ("cod_ies", "cod_curso", "vagas", "qtd_atos"):
         funil[_c] = pd.to_numeric(funil[_c], errors="coerce").astype("Int64")
-    funil = (funil.assign(_m=_med_topo)
-             .sort_values(["_m", "fase_atual", "data_fase"],
-                          ascending=[False, True, False])
-             .drop(columns="_m"))[COLS_FUNIL]
+    # ORDEM CRONOLOGICA, mais recente em cima (dono, 14/09/2026). Substitui a ordem
+    # antiga (Medicina no topo, depois fase): o dono le a base pelo que aconteceu por
+    # ultimo. Linha sem data (estadual, sobrestado, protocolado) vai para o fim.
+    _d = pd.to_datetime(funil["data_fase"], errors="coerce")
+    funil = (funil.assign(_d=_d, _m=_med_topo)
+             .sort_values(["_d", "_m"], ascending=[False, False], na_position="last")
+             .drop(columns=["_d", "_m"]))[COLS_FUNIL]
 
     # ---------------- grava: so a aba Funil muda; amarelo nas celulas do INEP -------
     # NOTA no cabecalho (linha 1): de onde veio TODO dado que nao estava no ato do DOU
@@ -1099,6 +1177,11 @@ def gerar(caminho, log=print):
     with pd.ExcelWriter(caminho, engine="openpyxl",
                         date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY") as xw:
         for n, df in abas.items():
+            if n == "Atos" and "data_decisao" in df.columns:
+                # mesma regra do Funil: mais recente em cima (dono, 14/09/2026)
+                df = (df.assign(_d=pd.to_datetime(df["data_decisao"], errors="coerce"))
+                        .sort_values("_d", ascending=False, na_position="last")
+                        .drop(columns="_d"))
             df.to_excel(xw, sheet_name=n, index=False)
         conferir = _aba_conferir(funil, _rel_ajustes, log)
         conferir.to_excel(xw, sheet_name="Conferir", index=False, startrow=1)
@@ -1176,6 +1259,9 @@ def gerar(caminho, log=print):
             "caminho administrativo\n"
             "Restrito - Enamed - curso EXISTENTE sob medidas cautelares das "
             "Portarias SERES 72-76/2026 (reducao/suspensao de ingressos)\n"
+            "conferir: o ajuste da linha N da aba Ajustes atingiu X linhas - o ajuste "
+            "foi aplicado em mais de um curso. Chave por LINK pega todos os cursos da "
+            "portaria; use cod_curso para uma linha so\n"
             "conferir: ... - CAMADA DE CONFERENCIA, nao e erro confirmado: os atos "
             "juntados por este cod_curso citam municipio ou curso diferentes, entao o "
             "codigo pode ter vindo errado do DOU e a linha misturar processos. Abra o "

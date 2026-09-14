@@ -33,6 +33,7 @@ import requests
 IPE = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/IPE/DADOS/ipe_cia_aberta_{}.zip"
 ANOS = (2022, 2023, 2024, 2025, 2026)
 ABA = "Conferir - Listadas"
+ABA_IES = "Listadas - IES"
 # nome da companhia no IPE -> como o dono chama
 LISTADAS = {"YDUQS": "YDUQS", "COGNA": "COGNA", "SER EDUCACIONAL": "SER EDUCACIONAL",
             "ANIMA HOLDING": "ANIMA", "CRUZEIRO DO SUL EDUCACIONAL": "CRUZEIRO DO SUL",
@@ -170,6 +171,7 @@ def gerar(caminho="Regulacao_Cursos.xlsx", log=print):
         lambda a: (RX_ATO_NUM.search(a).group(1) if RX_ATO_NUM.search(a) else ""))
     atos["_ano"] = atos["_d"].dt.year.astype("Int64")
 
+    _semente_ies = None      # so vira DataFrame quando a aba precisa ser criada
     docs = _ipe(log)
     log(f"[listadas] {len(docs)} comunicado(s) sobre vagas/autorizacao na CVM")
     linhas = []
@@ -288,18 +290,30 @@ def gerar(caminho="Regulacao_Cursos.xlsx", log=print):
                            if r.cm in cod_grupo and r.ci}
         # a TABELA do dono manda; a mantenedora so completa quem ela nao lista
         ies_grupo, n_tab = dict(por_mantenedora), 0
-        tab = os.path.join(base_dir, GRUPO_IES_CSV)
-        if os.path.exists(tab):
-            t = pd.read_csv(tab, dtype=str).dropna(subset=["CO_IES"])
+        # A ABA MANDA (dono, 14/09/2026): "quero uma aba onde eu edito os codigos das
+        # listadas, adiciono e retiro". O CSV do repo e so a semente da primeira vez.
+        t = None
+        if ABA_IES in xl.sheet_names:
+            t = xl.parse(ABA_IES, dtype=str).dropna(subset=["CO_IES"])
+            log(f"[listadas] tabela de IES lida da aba '{ABA_IES}' ({len(t)} linhas) — "
+                f"edite ali para incluir ou tirar faculdade de um grupo")
+        else:
+            tab = os.path.join(base_dir, GRUPO_IES_CSV)
+            if os.path.exists(tab):
+                t = pd.read_csv(tab, dtype=str).dropna(subset=["CO_IES"])
+                _semente_ies = t        # a aba sera criada com isto
+                log(f"[listadas] aba '{ABA_IES}' ainda nao existe — semeando com "
+                    f"{GRUPO_IES_CSV}")
+        if t is not None:
             for r3 in t.itertuples():
                 ies_grupo[str(r3.CO_IES).strip()] = SIGLA_GRUPO.get(
                     str(r3.Grupo).strip(), str(r3.Grupo).strip())
                 n_tab += 1
-            log(f"[listadas] grupo por codigo: {n_tab} IES da tabela grupo_ies.csv + "
+            log(f"[listadas] grupo por codigo: {n_tab} IES da tabela + "
                 f"{len(set(por_mantenedora) - set(t['CO_IES'].astype(str)))} pela "
                 f"mantenedora = {len(ies_grupo)} IES")
         else:
-            log(f"[listadas] grupo_ies.csv ausente — usando so a mantenedora "
+            log(f"[listadas] sem tabela de IES — usando so a mantenedora "
                 f"({len(ies_grupo)} IES)")
         # 3) curso -> grupo pelo cod_ies
         med = emec[emec["curso"].map(nm).str.contains(RX_MED, na=False, regex=True)
@@ -323,17 +337,30 @@ def gerar(caminho="Regulacao_Cursos.xlsx", log=print):
     df = pd.DataFrame(linhas, columns=COLS)
     log("[listadas] " + str(len(df)) + " linha(s): "
         + str(df["situacao"].value_counts().to_dict()))
-    _gravar(caminho, xl, df, log)
+    _gravar(caminho, xl, df, log, _semente_ies)
     return df
 
 
-def _gravar(caminho, xl, df, log=print):
+def _gravar(caminho, xl, df, log=print, semente=None):
     """Insere/atualiza SO a aba nova, com openpyxl. NUNCA reescrever o arquivo inteiro
     via pandas: isso apaga os graficos nativos e as notas de cabecalho das outras abas."""
     from openpyxl import load_workbook
     from openpyxl.styles import Alignment, Font, PatternFill
 
     wb = load_workbook(caminho)
+    if ABA_IES not in wb.sheetnames and semente is not None:
+        wsi = wb.create_sheet(ABA_IES)
+        wsi.cell(row=1, column=1, value="CO_IES").font = Font(bold=True)
+        wsi.cell(row=1, column=2, value="Grupo").font = Font(bold=True)
+        for i2, r2 in enumerate(semente.itertuples(), start=2):
+            wsi.cell(row=i2, column=1, value=str(r2.CO_IES).strip())
+            wsi.cell(row=i2, column=2, value=str(r2.Grupo).strip())
+        wsi.column_dimensions["A"].width = 12
+        wsi.column_dimensions["B"].width = 20
+        wsi.freeze_panes = "A2"
+        wsi.auto_filter.ref = "A1:B" + str(wsi.max_row)
+        log(f"[listadas] aba '{ABA_IES}' criada com {len(semente)} IES — edite ai para "
+            f"incluir ou tirar faculdade de um grupo")
     if ABA in wb.sheetnames:
         del wb[ABA]
     ws = wb.create_sheet(ABA)

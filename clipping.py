@@ -55,6 +55,8 @@ RADAR_FRASES: list = []
 # Linha de transparencia do radar no e-mail (dono, 10/09/2026): qual periodo do DOU foi
 # verificado nesta rodada e de onde a varredura retomou (a ultima checagem gravada).
 RADAR_COBERTURA_TXT = ""
+# nomes de curso sem correspondencia no catalogo do e-MEC, para o bloco de copiar e colar
+RADAR_CURSOS_PROBLEMA: list = []
 
 # Tabela de valuation da cobertura (valuation.py), montada durante o sync do Drive
 # e injetada no e-mail logo apos o botao de download. Vazia = sem summary (lista de
@@ -179,6 +181,37 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
       </td></tr>
     </table>
     """
+    # BLOCO DE COPIAR E COLAR (dono, 14/09/2026): nome de curso que nao existe no
+    # catalogo do e-MEC. O nome fica como veio do ato; este bloco e para o dono jogar
+    # numa IA e devolver a classificacao pela aba Ajustes.
+    if RADAR_CURSOS_PROBLEMA:
+        from html import escape as _esc2
+        _linhas = "\n".join(
+            f"{i}. {nome}   ({n} linha{'s' if n > 1 else ''} na base)"
+            for i, (nome, n) in enumerate(RADAR_CURSOS_PROBLEMA[:40], start=1))
+        _mais = ("" if len(RADAR_CURSOS_PROBLEMA) <= 40 else
+                 f"\n(e mais {len(RADAR_CURSOS_PROBLEMA) - 40} — lista completa em "
+                 f"curso_padrao_pendentes.csv)")
+        _pedido = ("Estes nomes de curso vieram do Diario Oficial e nao batem com nenhum "
+                   "curso do catalogo do e-MEC (erro de digitacao, nome truncado ou nome "
+                   "comercial). Para cada um, diga qual e o curso do e-MEC correspondente "
+                   "e, se nao houver, escreva SEM CORRESPONDENCIA. Responda em CSV com as "
+                   "colunas nome_atual;curso_correto.")
+        radar_html += (
+            '<table width="100%" style="border-collapse:collapse;margin:0 0 18px 0;">'
+            f'<tr><td style="background:#F4F6FA;border-left:4px solid #1d4e89;'
+            'padding:10px 12px;font-family:Arial,sans-serif;font-size:13px;color:#22324a;">'
+            '<b>&#128221; Nomes de curso a classificar ('
+            + str(len(RADAR_CURSOS_PROBLEMA)) + ')</b>'
+            '<p style="margin:4px 0 8px 0;font-size:12px;">Copie o bloco abaixo e mande '
+            'para a IA; devolva o resultado pela aba <b>Ajustes</b> (campo '
+            '<code>curso_padrao</code>). O nome errado continua na base ate voce '
+            'corrigir.</p>'
+            '<pre style="white-space:pre-wrap;background:#fff;border:1px solid #d8dde6;'
+            'border-radius:6px;padding:10px;font-size:12px;margin:0;">'
+            + _esc2(_pedido) + "\n\n" + _esc2(_linhas + _mais) +
+            '</pre></td></tr></table>')
+
     if RADAR_COBERTURA_TXT:
         # sempre visivel, com ou sem alerta: o leitor confere o periodo coberto
         radar_html += (f'<p style="font-family:Arial,sans-serif;font-size:11px;'
@@ -495,6 +528,8 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
         import funil as _funil
         import funil_graficos as _fgraf
         _funil.gerar(str(local), log=lambda m: print(m, flush=True))
+        global RADAR_CURSOS_PROBLEMA
+        RADAR_CURSOS_PROBLEMA = list(getattr(_funil, "PENDENTES_CURSO", []))
         _fgraf.gerar(str(local), log=lambda m: print(m, flush=True))
     except Exception as e:
         avisos.aviso(f"Funil do DOU nao regenerado ({type(e).__name__}: {e}) — a planilha "
