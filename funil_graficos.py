@@ -471,6 +471,8 @@ def gerar(caminho, log=print):
         wsg.add_chart(ch, pos[k])
 
     wsd.freeze_panes = "A2"
+    from funil import ordenar_abas
+    ordenar_abas(wb)
     wb.save(caminho)
     log(f"[graficos] {len(blocos)} graficos + dados auditaveis gravados "
         f"(abas Graficos e Graf_Dados)")

@@ -330,6 +330,16 @@ def _carregar_cautelares(log=print):
     return out
 
 
+ORDEM_ABAS = ("Atos", "Funil", "Conferir", "Conferir - Listadas", "Ajustes",
+               "Graf_Dados", "Graficos", "Medicina_SERES", "Notas")
+
+
+def ordenar_abas(wb):
+    """Ordem escolhida pelo dono (14/09/2026). Aba desconhecida vai para o fim."""
+    pos = {n: i for i, n in enumerate(ORDEM_ABAS)}
+    wb._sheets.sort(key=lambda ws: (pos.get(ws.title, len(ORDEM_ABAS)), ws.title))
+
+
 def _norm(s):
     s = unicodedata.normalize("NFKD", str(s or ""))
     return "".join(c for c in s if not unicodedata.combining(c)).upper().strip()
@@ -551,6 +561,57 @@ _ORDEM_FASE = {"F. Desativado": 6, "F. Indeferido (pedido negado)": 5,
                "3. Renovacao de reconhecimento": 4, "2. Reconhecido": 3,
                "1. Autorizado": 2, "0. Sobrestado (ADC 81)": 1,
                "0. Protocolado (em tramitacao)": 1}
+
+
+_RX_RABO_LOCAL = re.compile(
+    r"\s+(?:n[oa]|d[oa]|em|para\s+[oa])\s+munic[ií]pio\s+d[eoa]\s+.*$"
+    r"|\s+d[oa]\s+campus\s+.*$"
+    r"|\s+(?:n[oa]|em)\s+[A-ZÀ-Ÿ][^,]{2,40}/[A-Za-z]{2}\s*$", re.I)
+
+
+def _padronizar_curso_pelo_emec(funil, log=print):
+    """curso_padrao contra o CATALOGO de nomes do e-MEC (dono, 14/09/2026).
+    (a) com cod_curso conhecido, usa o nome oficial daquele curso;
+    (b) sem codigo, corta o rabo de localizacao e so aceita se cair no catalogo.
+    Devolve (funil, pendentes) — pendentes e o backlog do que nao resolveu."""
+    if not os.path.exists(EMEC_PARQUET):
+        return funil, []
+    try:
+        e = pd.read_parquet(EMEC_PARQUET)
+    except Exception as exc:
+        log(f"[funil] padronizacao de curso_padrao pulada ({type(exc).__name__})")
+        return funil, []
+    catalogo = {}
+    nome_por_cod = {}
+    for r in e.itertuples():
+        nome = curso_padrao(r.curso)
+        if not nome:
+            continue
+        catalogo.setdefault(_norm(nome), nome)
+        if pd.notna(r.cod_curso):
+            nome_por_cod[str(int(r.cod_curso))] = nome
+    n_cod = n_corte = 0
+    pendentes = {}
+    for i in funil.index:
+        atual = _limpa(funil.at[i, "curso_padrao"])
+        if not atual or _norm(atual) in catalogo:
+            continue
+        cod = _limpa(funil.at[i, "cod_curso"]).replace(".0", "")
+        oficial = nome_por_cod.get(cod, "")
+        if oficial:
+            funil.at[i, "curso_padrao"] = oficial
+            n_cod += 1
+            continue
+        cortado = _RX_RABO_LOCAL.sub("", atual).strip(" -–,")
+        if cortado and _norm(cortado) in catalogo:
+            funil.at[i, "curso_padrao"] = catalogo[_norm(cortado)]
+            n_corte += 1
+            continue
+        pendentes[atual] = pendentes.get(atual, 0) + 1
+    log(f"[funil] curso_padrao pelo catalogo do e-MEC: {n_cod} pelo codigo do curso, "
+        f"{n_corte} cortando o rabo de localizacao, {len(pendentes)} nome(s) sem "
+        f"correspondencia (backlog)")
+    return funil, sorted(pendentes.items(), key=lambda x: -x[1])
 
 
 def _validar_cod_por_municipio(funil, log=print):
@@ -944,6 +1005,7 @@ def gerar(caminho, log=print):
     # A regulacao dessas IES e dos CONSELHOS ESTADUAIS (diario do estado, nao DOU):
     # sem isto, 58 Medicinas ativas (UERJ, UPE, UEPA...) ficavam invisiveis. Entram
     # como linha INTEGRAL do Cadastro e-MEC, com fase propria e fonte declarada.
+    funil, _pendentes_curso = _padronizar_curso_pelo_emec(funil, log)
     funil = _acrescentar_estaduais(funil, log)
 
     # ---- DIVERGENCIA DECLARADA (auditoria 13/09/2026): o ato do DOU encerrou o curso
@@ -1004,6 +1066,16 @@ def gerar(caminho, log=print):
         "ATENCAO vagas: veja a coluna vagas_fonte — vagas do INEP sao o TOTAL ofertado do "
         "curso EXISTENTE (nunca o numero de um pedido pendente nem o acrescimo de um "
         "aumento de vagas). ESCOPO ampliado (aprovado 11/09/2026): cursos de IES ESTADUAIS/municipais entram como linha INTEGRAL do Cadastro e-MEC - fase (sistema estadual/municipal) - porque a regulacao deles e dos Conselhos Estaduais (diario do estado, nao DOU). Historicamente a base cobria so o sistema FEDERAL de ensino (atos do MEC no DOU); cursos de IES ESTADUAIS/municipais sao regulados pelos Conselhos Estaduais e publicados nos diarios dos ESTADOS — As ~69 Medicinas ativas dessas IES (UERJ, UPE, UEPA...) hoje estao DENTRO pela linha e-MEC. CELULAS VERDES = correcao manual do dono via aba Ajustes (link do ato + campo + valor) - preencha LA, nunca direto no Funil: o Funil e regenerado pelo robo e edicoes diretas se perdem. Nada e estimado por IA.")
+
+    if _pendentes_curso:
+        try:
+            _bk = os.path.join(os.path.dirname(os.path.abspath(caminho)),
+                               "curso_padrao_pendentes.csv")
+            pd.DataFrame(_pendentes_curso, columns=["curso_padrao_atual", "linhas"]).to_csv(
+                _bk, index=False, encoding="utf-8-sig")
+            log(f"[funil] backlog de nomes de curso: {_bk}")
+        except Exception as _e:
+            log(f"[funil] backlog de curso_padrao nao salvo ({type(_e).__name__})")
 
     # Graficos/Graf_Dados NUNCA sao reescritos aqui: parse+to_excel transforma os
     # DESENHOS em aba de dados morta (foi assim que uma regeneracao so-funil abriu
@@ -1182,6 +1254,7 @@ def gerar(caminho, log=print):
         # e data/datetime recebe DD/MM/YYYY de forma explicita — o valor nao muda, so a
         # exibicao (e o horario 00:00 deixa de poluir a leitura).
         import datetime as _dt
+        ordenar_abas(xw.book)
         for aba in xw.book.sheetnames:
             w = xw.book[aba]
             for linha in w.iter_rows():

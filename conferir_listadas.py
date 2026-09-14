@@ -359,6 +359,11 @@ def _gravar(caminho, xl, df, log=print):
             cel.alignment = Alignment(wrap_text=True, vertical="top")
     ws.freeze_panes = "A3"
     ws.auto_filter.ref = "A2:" + chr(64 + len(COLS)) + str(ws.max_row)
+    try:
+        from funil import ordenar_abas
+        ordenar_abas(wb)
+    except Exception:
+        pass
     wb.save(caminho)
     log(f"[listadas] aba '{ABA}' gravada em {caminho} ({len(df)} linhas)")
 

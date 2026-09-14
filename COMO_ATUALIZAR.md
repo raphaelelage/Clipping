@@ -85,11 +85,48 @@ deixar de existir.
 | 1-2×/ano (e-MEC) | baixar o CSV¹ → `python atualizar_emec.py` |
 | Censo novo do INEP (anual) | baixar o zip de microdados → `python atualizar_inep.py <zip>` |
 | SERES publicar planilha nova | abrir **PROMPT_ATUALIZAR_SERES.md** e colar numa sessão do Claude |
+| Conferir as listadas (quando quiser) | `python conferir_listadas.py <arquivo.xlsx>` |
 
 Depois de qualquer um: `git add *.parquet *.json && git commit -m "atualiza base X" && git push`
 — o robô usa os arquivos do repositório.
 
 ¹ CSV "Cursos de Graduação do Brasil": https://dadosabertos.mec.gov.br/indicadores-sobre-ensino-superior/item/183-cursos-de-graduacao-do-brasil (o portal tem CAPTCHA — baixe no navegador e salve na pasta `Clipping New`).
+
+## 3b. As duas abas de conferência
+
+**Conferir** — sai de graça em toda regeneração, a partir do Funil. Uma linha por
+pendência que o robô não resolve sozinho: município ou curso divergindo entre os atos de
+um mesmo código, código de curso trocado, DOU encerrando um curso que o e-MEC diz ativo,
+e ajuste da aba Ajustes que não casou. Ver §2b.
+
+**Conferir - Listadas** — só sai quando você roda `python conferir_listadas.py`, porque
+depende de baixar os fatos relevantes e comunicados ao mercado da CVM (dataset IPE,
+público). Cruza o que YDUQS, Cogna, Ser, Cruzeiro do Sul, Ânima e Vitru comunicaram sobre
+vagas/autorização de Medicina com os atos que a base tem, pelo **número da portaria** que
+o próprio comunicado cita. Dois blocos: comunicado × base, e cursos de Medicina ativos no
+e-MEC sem nenhum ato na base. A coluna **ajuste_no_funil** diz o que fazer em cada linha:
+*VARREDURA* quando falta o ato (a linha do Funil nasce com ele) ou *ABA AJUSTES* quando a
+linha existe e o valor é que está errado.
+
+O grupo de cada IES vem de `grupo_ies.csv` (código da IES → grupo), no repositório. Esse
+arquivo é usado **somente** neste cruzamento; nada no Funil depende dele. Quando comprar
+ou vender faculdade, edite o CSV e faça commit.
+
+## 3c. Backlog de nomes de curso
+
+O `curso_padrao` é padronizado contra o catálogo de nomes do e-MEC: quando a linha tem
+código de curso, usa o nome oficial dele; quando não tem, corta o rabo de localização
+("no município de X", "do campus Y") e só aceita se o resultado existir no catálogo.
+
+O que não resolve por código vai para **`curso_padrao_pendentes.csv`**, salvo ao lado da
+planilha, com cada nome e quantas linhas ele afeta. São nomes que o próprio DOU escreveu
+errado ou truncou. Para corrigir um deles: aba **Ajustes**, campo `curso_padrao`.
+
+## 3d. Ordem das abas
+
+Atos · Funil · Conferir · Conferir - Listadas · Ajustes · Graf_Dados · Gráficos ·
+Medicina_SERES · Notas. É aplicada a cada regeneração; aba nova que apareça vai para o
+fim, nunca some.
 
 ## 4. Onde investigar quando algo parecer errado
 
