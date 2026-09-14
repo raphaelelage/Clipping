@@ -38,21 +38,23 @@ LISTADAS = {"YDUQS": "YDUQS", "COGNA": "COGNA", "SER EDUCACIONAL": "SER EDUCACIO
             "ANIMA HOLDING": "ANIMA", "CRUZEIRO DO SUL EDUCACIONAL": "CRUZEIRO DO SUL",
             "VITRU": "VITRU", "BAHEMA EDUCACAO": "BAHEMA"}
 # marcas de IES por grupo (para o bloco de cursos sem ato)
-# ORDEM IMPORTA: a marca mais especifica vem primeiro. "ITPAC CRUZEIRO DO SUL" e da
-# AFYA — "Cruzeiro do Sul" ali e a CIDADE no Acre, nao o grupo (erro pego em 14/09/2026).
-GRUPOS = {
-    "AFYA": r"AFYA|ITPAC|UNIPTAN|IESVAP|UNIREDENTOR",
-    "YDUQS": r"ESTACIO|IDOMED|UNIFAMETRO|IBMEC|WYDEN|UNITOLEDO|UNIFAVIP|UNIFANOR|UNIFBV",
-    "COGNA": r"ANHANGUERA|PITAGORAS|UNOPAR|UNIDERP|UNIME|KROTON",
-    "ANIMA": r"UNIBH|SOCIESC|UNICURITIBA|SAO JUDAS|UNIFG|MILTON CAMPOS|UNIFACS|FASEH|"
-             r"UNIRITTER|AGES|INSPIRALI",
-    "SER EDUCACIONAL": r"UNINASSAU|UNAMA|UNINABUCO|JOAQUIM NABUCO|UNIVERITAS|UNESC",
-    "CRUZEIRO DO SUL": r"CRUZEIRO DO SUL|CEUNSP|CESUCA|POSITIVO|BRAZ CUBAS|MODULO|"
-                       r"SERRA GAUCHA|UNIFRAN|UNICID",
-    "VITRU": r"UNICESUMAR|UNIASSELVI",
+# MANTENEDORA (entidade juridica) -> grupo listado. O nome e usado SO aqui, uma vez, e
+# sobre a razao social; o resto do caminho e por codigo: cod_mantenedora -> cod_ies ->
+# curso. Padroes ancorados, sem marca de faculdade (ver docstring do modulo).
+MANTENEDORAS = {
+    "YDUQS": r"ESTACIO DE SA|IREP SOCIEDADE DE ENSINO SUPERIOR",
+    "COGNA": r"KROTON|ANHANGUERA EDUCACIONAL PARTICIPAC|"
+             r"EDITORA E DISTRIBUIDORA EDUCACIONAL|COGNA EDUCA",
+    "SER EDUCACIONAL": r"SER EDUCACIONAL S",
+    "CRUZEIRO DO SUL": r"CRUZEIRO DO SUL EDUCACIONAL",
+    "AFYA": r"AFYA|\bITPAC\b|INSTITUTO TOCANTINENSE DE EDUCACAO|"
+            r"INSTITUTO TOCANTINENSE PRESIDENTE ANTONIO CARLOS",
+    "VITRU": r"VITRU ",
 }
-RX_MED = re.compile(r"\bMEDICINA\b")   # borda de palavra: BIOMEDICINA contem MEDICINA
-RX_NAO_ATO = re.compile(r"supremo|STF|judicial|aquisi[çc]|capital", re.I)
+
+# borda de palavra: BIOMEDICINA contem MEDICINA como substring
+RX_MED = re.compile(r"\bMEDICINA\b")
+RX_NAO_ATO = re.compile(r"supremo|\bSTF\b|judicial|aquisi[çc]|capital", re.I)
 RX_DECISAO = re.compile(r"autoriz|deferi|expans|aumento|acr[eé]scim", re.I)
 RX_ASSUNTO = re.compile(r"vaga|medicin|autoriz|credenciam|mais m[eé]dicos|chamamento", re.I)
 RX_PORT = re.compile(r"portarias?\s*n?[^\dA-Za-z]{0,5}(\d{1,4})"
@@ -79,7 +81,7 @@ NOTA = (
     "base tem. Fonte dos comunicados: dataset IPE da CVM (link na ultima coluna leva ao "
     "PDF original). O cruzamento e pelo NUMERO DA PORTARIA que o proprio comunicado cita. "
     "Regerar com: python conferir_listadas.py <arquivo>. ATENCAO: Afya e Vitru sao "
-    "listadas na Nasdaq e nao protocolam IPE na CVM — os 6-K delas NAO entram aqui.")
+    "listadas na Nasdaq e nao protocolam IPE na CVM — os 6-K delas NAO entram aqui. No bloco 2, o grupo e atribuido por CODIGO (cod_mantenedora -> cod_ies), nunca por nome de faculdade; mantenedora que a base nao identifica fica de fora do bloco.")
 
 
 def nm(s):
@@ -122,6 +124,24 @@ def _texto(link):
     b = requests.get(link, timeout=120).content
     with pdfplumber.open(io.BytesIO(b)) as pdf:
         return " ".join(" ".join((p.extract_text() or "") for p in pdf.pages).split())
+
+
+def _add_b2(linhas, c, recente):
+    linhas.append({
+        "bloco": "2. Curso ativo sem ato na base", "grupo": c["_grupo"], "data": "",
+        "assunto_ou_curso": f"{c['curso']} — {c['ies']} ({c['municipio']}/{c['uf']})",
+        "portaria_citada": "", "vagas_citadas": str(c["vagas"]),
+        "municipio_citado": str(c["municipio"]),
+        "o_que_a_base_tem": f"nenhum ato com o cod_curso {c['_cod']} (cod_ies {c['_ci']})",
+        "situacao": ("CODIGO RECENTE — conferir" if recente
+                     else "provavelmente anterior a 2018 (fora da janela da base)"),
+        "o_que_conferir": (
+            "Curso ativo no e-MEC sem nenhum ato no DOU desde 2018. Codigo alto sugere "
+            "autorizacao recente: procure o ato no DOU e rode a varredura do periodo."
+            if recente else
+            "A base cobre o DOU de 2018 em diante; curso autorizado antes disso so "
+            "aparece quando tiver um ato novo (renovacao, vagas). Sem acao."),
+        "fonte": "Cadastro e-MEC (cursos_emec.parquet), grupo pelo cod_mantenedora"})
 
 
 def gerar(caminho="Regulacao_Cursos.xlsx", log=print):
@@ -201,40 +221,47 @@ def gerar(caminho="Regulacao_Cursos.xlsx", log=print):
                                  + (f" | vagas: {', '.join(vagas_base)}" if vagas_base else "")) if tem else "nada",
             "situacao": sit, "o_que_conferir": fazer, "fonte": r["Link_Download"]})
 
-    # ---- bloco 2: Medicina ativa no e-MEC das listadas SEM nenhum ato na base
+    # ---- bloco 2: Medicina ativa no e-MEC das listadas SEM nenhum ato na base.
+    # Atribuicao do grupo POR CODIGO (dono, 14/09/2026): nome so para achar o
+    # cod_mantenedora; dali em diante cod_mantenedora -> cod_ies -> curso.
     base_dir = os.path.dirname(os.path.abspath(__file__))
     pq = os.path.join(base_dir, "cursos_emec.parquet")
-    if os.path.exists(pq):
+    cad = os.path.join(base_dir, "cadastro_ies.parquet")
+    usados = []
+    if os.path.exists(pq) and os.path.exists(cad):
         emec = pd.read_parquet(pq)
+        cadastro = pd.read_parquet(cad)
+        # 1) razao social -> cod_mantenedora, lido da propria base de atos
+        mant = atos[["cod_mantenedora", "mantenedora"]].dropna().copy()
+        mant["_c"] = v(mant["cod_mantenedora"]).str.replace(r"\.0$", "", regex=True)
+        mant["_n"] = mant["mantenedora"].map(nm)
+        mant = mant[mant["_c"] != ""].drop_duplicates("_c")
+        cod_grupo = {}
+        for g, rx in MANTENEDORAS.items():
+            hit = mant[mant["_n"].str.contains(rx, regex=True, na=False)]
+            for _, r2 in hit.iterrows():
+                cod_grupo[r2["_c"]] = g
+                usados.append(f"{g}: {r2['_c']} {str(r2['mantenedora'])[:38]}")
+        # 2) cod_mantenedora -> cod_ies
+        cadastro["cm"] = v(cadastro["cod_mantenedora"]).str.replace(r"\.0$", "", regex=True)
+        cadastro["ci"] = v(cadastro["cod_ies"]).str.replace(r"\.0$", "", regex=True)
+        ies_grupo = {r.ci: cod_grupo[r.cm] for r in cadastro.itertuples()
+                     if r.cm in cod_grupo and r.ci}
+        log(f"[listadas] grupos por codigo: {len(cod_grupo)} mantenedora(s) -> "
+            f"{len(ies_grupo)} IES")
+        # 3) curso -> grupo pelo cod_ies
         med = emec[emec["curso"].map(nm).str.contains(RX_MED, na=False, regex=True)
                    & ~emec["curso"].map(nm).str.contains("VETERIN", na=False)
                    & emec["situacao_emec"].isin(["Em atividade", "Em extinção"])].copy()
         med["_cod"] = med["cod_curso"].astype(str).str.replace(r"\.0$", "", regex=True)
+        med["_ci"] = med["cod_ies"].astype(str).str.replace(r"\.0$", "", regex=True)
+        med["_grupo"] = med["_ci"].map(ies_grupo).fillna("")
         cods = set(v(atos["cod_curso"]).str.replace(r"\.0$", "", regex=True)) - {""}
-        med["_grupo"] = ""
-        for g, rx in GRUPOS.items():
-            hit = med["ies"].map(nm).str.contains(rx, regex=True, na=False)
-            med.loc[hit & (med["_grupo"] == ""), "_grupo"] = g
         falta = med[(med["_grupo"] != "") & (~med["_cod"].isin(cods))].copy()
         falta["_n"] = pd.to_numeric(falta["_cod"], errors="coerce")
-        falta = falta.sort_values("_n", ascending=False)
-        for _, c in falta.iterrows():
+        for _, c in falta.sort_values("_n", ascending=False).iterrows():
             recente = pd.notna(c["_n"]) and c["_n"] >= COD_RECENTE
-            linhas.append({
-                "bloco": "2. Curso ativo sem ato na base", "grupo": c["_grupo"], "data": "",
-                "assunto_ou_curso": f"{c['curso']} — {c['ies']} ({c['municipio']}/{c['uf']})",
-                "portaria_citada": "", "vagas_citadas": str(c["vagas"]),
-                "municipio_citado": str(c["municipio"]),
-                "o_que_a_base_tem": f"nenhum ato com o cod_curso {c['_cod']}",
-                "situacao": ("CODIGO RECENTE — conferir" if recente
-                             else "provavelmente anterior a 2018 (fora da janela da base)"),
-                "o_que_conferir": (
-                    "Curso ativo no e-MEC sem nenhum ato no DOU desde 2018. Codigo alto "
-                    "sugere autorizacao recente: procure o ato no DOU e rode a varredura "
-                    "do periodo." if recente else
-                    "A base cobre o DOU de 2018 em diante; curso autorizado antes disso "
-                    "so aparece quando tiver um ato novo (renovacao, vagas). Sem acao."),
-                "fonte": "Cadastro e-MEC (cursos_emec.parquet)"})
+            _add_b2(linhas, c, recente)
 
     df = pd.DataFrame(linhas, columns=COLS)
     log("[listadas] " + str(len(df)) + " linha(s): "
