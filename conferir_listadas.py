@@ -44,7 +44,8 @@ LISTADAS = {"YDUQS": "YDUQS", "COGNA": "COGNA", "SER EDUCACIONAL": "SER EDUCACIO
 MANTENEDORAS = {
     "YDUQS": r"ESTACIO DE SA|IREP SOCIEDADE DE ENSINO SUPERIOR",
     "COGNA": r"KROTON|ANHANGUERA EDUCACIONAL PARTICIPAC|"
-             r"EDITORA E DISTRIBUIDORA EDUCACIONAL|COGNA EDUCA",
+             r"EDITORA E DISTRIBUIDORA EDUCACIONAL|COGNA EDUCA|"
+             r"PITAGORAS - SISTEMA DE EDUCACAO SUPERIOR|UNIAO DE ENSINO UNOPAR",
     "SER EDUCACIONAL": r"SER EDUCACIONAL S",
     "CRUZEIRO DO SUL": r"CRUZEIRO DO SUL EDUCACIONAL",
     "AFYA": r"AFYA|\bITPAC\b|INSTITUTO TOCANTINENSE DE EDUCACAO|"
@@ -235,13 +236,22 @@ def gerar(caminho="Regulacao_Cursos.xlsx", log=print):
         mant = atos[["cod_mantenedora", "mantenedora"]].dropna().copy()
         mant["_c"] = v(mant["cod_mantenedora"]).str.replace(r"\.0$", "", regex=True)
         mant["_n"] = mant["mantenedora"].map(nm)
-        mant = mant[mant["_c"] != ""].drop_duplicates("_c")
-        cod_grupo = {}
+        mant = mant[(mant["_c"] != "") & (mant["_n"] != "")].drop_duplicates(["_c", "_n"])
+        # o MESMO codigo aparece na base com mais de uma razao social; testa TODAS
+        cod_grupo, ambiguos = {}, []
         for g, rx in MANTENEDORAS.items():
             hit = mant[mant["_n"].str.contains(rx, regex=True, na=False)]
             for _, r2 in hit.iterrows():
-                cod_grupo[r2["_c"]] = g
-                usados.append(f"{g}: {r2['_c']} {str(r2['mantenedora'])[:38]}")
+                c0 = r2["_c"]
+                if cod_grupo.get(c0, g) != g:      # duas grafias, dois grupos: descarta
+                    ambiguos.append(f"{c0} ({cod_grupo[c0]} x {g})")
+                    cod_grupo.pop(c0, None)
+                    continue
+                cod_grupo[c0] = g
+                usados.append(f"{g}: {c0} {str(r2['mantenedora'])[:38]}")
+        if ambiguos:
+            log("[listadas] cod_mantenedora ambiguo, fora do bloco: "
+                + ", ".join(sorted(set(ambiguos))))
         # 2) cod_mantenedora -> cod_ies
         cadastro["cm"] = v(cadastro["cod_mantenedora"]).str.replace(r"\.0$", "", regex=True)
         cadastro["ci"] = v(cadastro["cod_ies"]).str.replace(r"\.0$", "", regex=True)
