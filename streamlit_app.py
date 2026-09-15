@@ -656,18 +656,35 @@ with tab_sched:
         # trava anti-duplicata: se a criacao devolve erro (ex.: 429) mas chegou a ser
         # criada no servidor, um novo clique gerava DOIS agendamentos no mesmo horario
         # — e dois e-mails por dia. Ja aconteceu.
-        dup = [j for j in jobs
-               if (j.get("schedule", {}).get("hours") or [None])[0] == t.hour
-               and (j.get("schedule", {}).get("minutes") or [None])[0] == t.minute]
+        # A trava so vale quando os DIAS se cruzam (dono, 15/09/2026): mesmo horario em
+        # dias DIFERENTES nao gera duplicata. Antes ela bloqueava qualquer coincidencia
+        # de horario, e a saida era defasar 5 min — o que acabou mandando dois e-mails
+        # na segunda, quando os dois agendamentos caiam no mesmo dia.
+        wdays_novo = sorted(DIAS[d] for d in dias_sel) or [-1]
+
+        def _colide(j):
+            sch = j.get("schedule", {})
+            if (sch.get("hours") or [None])[0] != t.hour:
+                return False
+            if (sch.get("minutes") or [None])[0] != t.minute:
+                return False
+            w = sch.get("wdays") or [-1]
+            if -1 in w or -1 in wdays_novo:      # "todo dia" cruza com qualquer dia
+                return True
+            return bool(set(w) & set(wdays_novo))
+
+        dup = [j for j in jobs if _colide(j)]
         forcar = False
         if dup:
+            _dias_txt = ", ".join(d for d in dias_sel) or "todos os dias"
             st.warning(f"⚠️ Já existe um agendamento de **{V['label']}** às "
-                       f"**{t.strftime('%H:%M')}**. Criar outro faria o robô rodar duas "
-                       "vezes e mandar dois e-mails. Prefira **✏️ editar** o existente.")
-            forcar = st.checkbox("Quero criar mesmo assim (dois no mesmo horário)",
+                       f"**{t.strftime('%H:%M')}** em dia que coincide ({_dias_txt}). "
+                       "Criar outro faria o robô rodar duas vezes no mesmo dia e mandar "
+                       "dois e-mails. Prefira **✏️ editar** o existente.")
+            forcar = st.checkbox("Quero criar mesmo assim (dois no mesmo dia e horário)",
                                  key=f"dup_{VERT}")
         if st.button("➕ Criar agendamento", disabled=bool(dup) and not forcar):
-            wdays = sorted(DIAS[d] for d in dias_sel) or [-1]
+            wdays = wdays_novo
             with st.spinner("Criando no cron-job.org…"):
                 r = cron_create(VERT, [t.hour], [t.minute], wdays, period_s, to_s)
             if r.status_code in (200, 201):
