@@ -86,7 +86,9 @@ jobs:
             echo "duplicado=0" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          DESDE=$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)
+          # 15/09/2026: chegaram DOIS e-mails com 5 min de diferenca (09:40 e 09:45)
+          # — o gatilho repetiu fora da janela de 5 min. Janela ampliada para 12 min.
+          DESDE=$(date -u -d '-12 minutes' +%Y-%m-%dT%H:%M:%SZ)
           N=$(gh api "repos/$R/actions/workflows/clipping.yml/runs?created=>$DESDE&per_page=15"                 --jq "[.workflow_runs[]
                        | select(.id != $MEU_ID)
                        | select(.created_at < \"$MEU_CRIADO\"
