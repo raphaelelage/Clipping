@@ -186,17 +186,7 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
     # numa IA e devolver a classificacao pela aba Ajustes.
     if RADAR_CURSOS_PROBLEMA:
         from html import escape as _esc2
-        _linhas = "\n".join(
-            f"{i}. {nome}   ({n} linha{'s' if n > 1 else ''} na base)"
-            for i, (nome, n) in enumerate(RADAR_CURSOS_PROBLEMA[:40], start=1))
-        _mais = ("" if len(RADAR_CURSOS_PROBLEMA) <= 40 else
-                 f"\n(e mais {len(RADAR_CURSOS_PROBLEMA) - 40} — lista completa em "
-                 f"curso_padrao_pendentes.csv)")
-        _pedido = ("Estes nomes de curso vieram do Diario Oficial e nao batem com nenhum "
-                   "curso do catalogo do e-MEC (erro de digitacao, nome truncado ou nome "
-                   "comercial). Para cada um, diga qual e o curso do e-MEC correspondente "
-                   "e, se nao houver, escreva SEM CORRESPONDENCIA. Responda em CSV com as "
-                   "colunas nome_atual;curso_correto.")
+        _bloco = texto_cursos_para_ia(RADAR_CURSOS_PROBLEMA, limite=40)
         radar_html += (
             '<table width="100%" style="border-collapse:collapse;margin:0 0 18px 0;">'
             f'<tr><td style="background:#F4F6FA;border-left:4px solid #1d4e89;'
@@ -205,11 +195,12 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
             + str(len(RADAR_CURSOS_PROBLEMA)) + ')</b>'
             '<p style="margin:4px 0 8px 0;font-size:12px;">Copie o bloco abaixo e mande '
             'para a IA; devolva o resultado pela aba <b>Ajustes</b> (campo '
-            '<code>curso_padrao</code>). O nome errado continua na base ate voce '
-            'corrigir.</p>'
+            '<code>curso_padrao</code>). A lista completa tambem sobe para o Drive '
+            'como <b>ai_cursos.txt</b>, e so baixar. O nome errado continua na base ate '
+            'voce corrigir.</p>'
             '<pre style="white-space:pre-wrap;background:#fff;border:1px solid #d8dde6;'
             'border-radius:6px;padding:10px;font-size:12px;margin:0;">'
-            + _esc2(_pedido) + "\n\n" + _esc2(_linhas + _mais) +
+            + _esc2(_bloco) +
             '</pre></td></tr></table>')
 
     if RADAR_COBERTURA_TXT:
@@ -343,6 +334,25 @@ def build_ai_text(df: pd.DataFrame) -> str:
 
 RADAR_DRIVE_NOME = "Regulacao_Cursos.xlsx"
 RADAR_SEED = "seed_regulacao_cursos.xlsx"     # levantamento 2018-2026 versionado no repo
+
+
+def texto_cursos_para_ia(pendentes, limite=None) -> str:
+    """Bloco de copiar-e-colar com os nomes de curso a classificar. Usado no e-mail E no
+    ai_cursos.txt do Drive — uma fonte so, para os dois nunca divergirem."""
+    if not pendentes:
+        return ""
+    itens = pendentes if limite is None else pendentes[:limite]
+    linhas = "\n".join(
+        f"{i}. {nome}   ({n} linha{'s' if n > 1 else ''} na base)"
+        for i, (nome, n) in enumerate(itens, start=1))
+    resto = ("" if limite is None or len(pendentes) <= limite else
+             f"\n(e mais {len(pendentes) - limite} — lista completa em "
+             f"curso_padrao_pendentes.csv)")
+    return ("Estes nomes de curso vieram do Diario Oficial e nao batem com nenhum curso "
+            "do catalogo do e-MEC (erro de digitacao, nome truncado ou nome comercial). "
+            "Para cada um, diga qual e o curso do e-MEC correspondente e, se nao houver, "
+            "escreva SEM CORRESPONDENCIA. Responda em CSV com as colunas "
+            "nome_atual;curso_correto.\n\n" + linhas + resto)
 
 
 def _radar_e_excel(download_file, update_file, xlsx_mime):
@@ -689,6 +699,13 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
         return True
 
     ai_url = update_file(txt_path, "ai_input.txt", "text/plain")
+    # mesmo servico para os nomes de curso a classificar (dono, 15/09/2026)
+    if RADAR_CURSOS_PROBLEMA:
+        _p = Path("ai_cursos.txt")
+        _p.write_text(texto_cursos_para_ia(RADAR_CURSOS_PROBLEMA), encoding="utf-8")
+        update_file(_p, "ai_cursos.txt", "text/plain")
+        print(f"[ok] Drive: ai_cursos.txt com {len(RADAR_CURSOS_PROBLEMA)} nome(s) "
+              f"a classificar", flush=True)
     xlsx_url = update_file(xlsx_path, "news_scrapper.xlsx", XLSX_MIME)
 
     # Falha aqui NAO derruba o clipping, mas tambem NAO pode ficar so no log: vira aviso
