@@ -939,21 +939,74 @@ def _scrape_bsg_sitemap(cutoff):
         dedup.append(r)
     return dedup
 
-def _decode_links(df):
+def _decodificou(r):
+    """True quando o decoder diz que conseguiu.
+
+    A chave mudou de nome entre versoes do googlenewsdecoder: 0.1.x devolve
+    {"status": True, ...} e 0.2.x devolve {"success": True, ...} — e o valor pode vir
+    como texto ("True") em vez de booleano. Aceitar as duas e o que impede que um
+    upgrade silencioso da dependencia volte a derrubar o decode inteiro (28/09/2026:
+    o CI subiu para 0.2.1 sozinho, `status` virou None e TODOS os links do clipping
+    sairam como news.google.com por semanas, sem um unico erro no log)."""
+    if not isinstance(r, dict):
+        return False
+    v = r.get("success", r.get("status"))
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "ok")
+    return bool(v)
+
+
+def _decode_links(df, log=None):
+    """Troca o link do Google News pela URL do veiculo.
+
+    Usa o modo em LOTE quando a versao instalada o oferece (0.2.x): uma requisicao
+    para cada bloco de links em vez de uma por link. Medido em 60 links: 12,7s no lote
+    contra ~25s no modo individual com 8 threads, e sem rajada contra o mesmo host.
+    Em 0.1.x o lote nao existe e o codigo cai no caminho antigo, uma thread por link.
+
+    Se o decode falhar para mais de um quinto dos links, AVISA. Nunca mais em silencio."""
     mask = df["link"].astype(str).str.contains("news.google.com")
     uniq = list(set(df.loc[mask, "link"]))
     if not uniq:
         return df
-    def dec(l):
-        try:
-            r = gnewsdecoder(l, interval=0)
-            return l, (r["decoded_url"] if r.get("status") else l)
-        except Exception:
-            return l, l
+
     dmap = {}
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        for f in as_completed([ex.submit(dec, l) for l in uniq]):
-            o, n = f.result(); dmap[o] = n
+    try:                                   # passo 1 — lote (so existe na 0.2.x)
+        for i in range(0, len(uniq), 60):
+            bloco = uniq[i:i + 60]
+            res = gnewsdecoder(bloco, interval=0)
+            if not isinstance(res, list) or len(res) != len(bloco):
+                raise TypeError("esta versao nao aceita lista")
+            for l, r in zip(bloco, res):
+                if _decodificou(r):
+                    dmap[l] = r.get("decoded_url")
+    except Exception:
+        pass
+
+    # passo 2 — o que sobrou, um a um. Cobre a 0.1.x (que nao tem lote) e tambem o
+    # lote que volta inteiro com falha sem levantar excecao: sob rajada o endpoint
+    # responde 405 no lote e 429 no individual, e e o individual que volta a
+    # responder quando se da intervalo entre as chamadas.
+    faltam = [l for l in uniq if l not in dmap]
+    if faltam:
+        def dec(l):
+            try:
+                r = gnewsdecoder(l, interval=1)
+                return l, (r["decoded_url"] if _decodificou(r) else l)
+            except Exception:
+                return l, l
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for f in as_completed([ex.submit(dec, l) for l in faltam]):
+                o, n = f.result(); dmap[o] = n
+
+    falhou = sum(1 for l in uniq if "news.google.com" in str(dmap.get(l, l)))
+    if log:
+        log(f"[decode] {len(uniq) - falhou}/{len(uniq)} links do Google News resolvidos")
+    if falhou > len(uniq) // 5:
+        avisos.aviso(f"Decode do Google News falhou em {falhou} de {len(uniq)} links "
+                     f"({100 * falhou // len(uniq)}%) — esses links vao para o clipping "
+                     f"como news.google.com. Verifique a versao do googlenewsdecoder "
+                     f"(o retorno mudou de 'status' para 'success' na 0.2.x).")
     df["link"] = df["link"].map(lambda l: dmap.get(l, l))
     return df
 
@@ -1219,7 +1272,7 @@ def collect(period: str = "1d", progress=None, vertical: str | None = None,
     allnews = allnews.drop_duplicates(subset="_t").reset_index(drop=True)
 
     _p("Decodificando links do Google News…")
-    allnews = _decode_links(allnews)
+    allnews = _decode_links(allnews, log=lambda m: print(m, flush=True))
     allnews = allnews.drop_duplicates(subset="link").reset_index(drop=True)
 
     allnews = _dedup_similar(allnews, log=lambda m: print(m, flush=True))
