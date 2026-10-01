@@ -1,0 +1,444 @@
+{
+ "_comentario": [
+  "Grupos do Blast de Net Adds — COPIA da relacao que estava nas abas Codes e",
+  "Dental_Codes da planilha, sem vinculo com a Base Consolidada.",
+  "registro = codigo ANS da operadora (6 digitos). Editavel pelo app.",
+  "'itens' sao as sub-linhas que aparecem indentadas sob o grupo no e-mail.",
+  "odonto.sub_grupo: sub-linha cujo nome e, ele proprio, um grupo de por_grupo (HAPV no odonto se abre em Hapvida e NDI)."
+ ],
+ "medico": {
+  "por_grupo": {
+   "Amil": [
+    "326305",
+    "355097",
+    "326500",
+    "360244"
+   ],
+   "Athena": [
+    "342033",
+    "357511",
+    "348180"
+   ],
+   "Bradesco": [
+    "005711",
+    "421715",
+    "333689"
+   ],
+   "CNU": [
+    "339679"
+   ],
+   "HAPV": [
+    "368253",
+    "359017",
+    "348520",
+    "340782",
+    "392804",
+    "402966",
+    "350249",
+    "344362"
+   ],
+   "Porto": [
+    "000582",
+    "417491"
+   ],
+   "Prevent Sênior": [
+    "302147"
+   ],
+   "SULA": [
+    "006246",
+    "350141",
+    "000477",
+    "000043",
+    "005622",
+    "419338",
+    "416428"
+   ],
+   "Unimed BH": [
+    "343889"
+   ],
+   "Unimed Ferj": [
+    "312363"
+   ],
+   "Unimed Seguros": [
+    "000701"
+   ]
+  },
+  "layout": [
+   {
+    "grupo": "HAPV",
+    "rotulo": "HAPV",
+    "itens": [
+     {
+      "rotulo": "Hapvida",
+      "registro": "368253"
+     },
+     {
+      "rotulo": "ND Intermédica",
+      "registro": "359017"
+     },
+     {
+      "rotulo": "Medisanitas",
+      "registro": "348520"
+     },
+     {
+      "rotulo": "Clinipam",
+      "registro": "340782"
+     },
+     {
+      "rotulo": "CCG",
+      "registro": "392804"
+     },
+     {
+      "rotulo": "Bio Saúde",
+      "registro": "402966"
+     },
+     {
+      "rotulo": "HB Saúde",
+      "registro": "350249"
+     },
+     {
+      "rotulo": "São Lucas",
+      "registro": "344362"
+     }
+    ]
+   },
+   {
+    "grupo": "SULA",
+    "rotulo": "SULA",
+    "itens": [
+     {
+      "rotulo": "SulAmérica (ex. ASO)",
+      "registro": "006246"
+     },
+     {
+      "rotulo": "Others",
+      "registro": "416428"
+     }
+    ]
+   },
+   {
+    "grupo": "Amil",
+    "rotulo": "Amil",
+    "itens": [
+     {
+      "rotulo": "Amil",
+      "registro": "326305"
+     },
+     {
+      "rotulo": "Others",
+      "registro": "350141"
+     }
+    ]
+   },
+   {
+    "grupo": "Bradesco",
+    "rotulo": "Bradesco",
+    "itens": [
+     {
+      "rotulo": "Bradesco (ex. ASO)",
+      "registro": "005711"
+     },
+     {
+      "rotulo": "Others",
+      "registro": ""
+     }
+    ]
+   },
+   {
+    "grupo": "Porto",
+    "rotulo": "Porto Seguro",
+    "itens": [
+     {
+      "rotulo": "Porto Seguro",
+      "registro": "000582"
+     },
+     {
+      "rotulo": "PortoMed",
+      "registro": "417491"
+     }
+    ]
+   },
+   {
+    "grupo": "CNU",
+    "rotulo": "CNU",
+    "itens": []
+   },
+   {
+    "grupo": "Unimed Seguros",
+    "rotulo": "Unimed Seguros",
+    "itens": []
+   },
+   {
+    "grupo": "Unimed Ferj",
+    "rotulo": "Unimed Ferj",
+    "itens": []
+   },
+   {
+    "grupo": "Others",
+    "rotulo": "Others",
+    "itens": []
+   },
+   {
+    "grupo": "Market",
+    "rotulo": "Market",
+    "itens": []
+   }
+  ]
+ },
+ "odonto": {
+  "por_grupo": {
+   "Amil": [
+    "326305",
+    "326500"
+   ],
+   "NDI": [
+    "306649",
+    "340782",
+    "343013",
+    "348520",
+    "359017"
+   ],
+   "Hapvida": [
+    "302091",
+    "350249",
+    "360767",
+    "365319",
+    "368253",
+    "414131",
+    "417823"
+   ],
+   "Metlife": [
+    "406481"
+   ],
+   "Odontoprev": [
+    "301949",
+    "343889",
+    "354741",
+    "379956",
+    "419419",
+    "333689"
+   ],
+   "SulAmérica": [
+    "006246",
+    "380041",
+    "416428",
+    "417815"
+   ],
+   "HAPV": [
+    "302091",
+    "350249",
+    "360767",
+    "365319",
+    "368253",
+    "414131",
+    "417823",
+    "306649",
+    "340782",
+    "343013",
+    "348520",
+    "359017"
+   ]
+  },
+  "layout": [
+   {
+    "grupo": "Odontoprev",
+    "rotulo": "ODPV",
+    "itens": []
+   },
+   {
+    "grupo": "HAPV",
+    "rotulo": "HAPV",
+    "itens": [
+     {
+      "rotulo": "Hapvida",
+      "registro": ""
+     },
+     {
+      "rotulo": "NDI",
+      "registro": ""
+     }
+    ]
+   },
+   {
+    "grupo": "SulAmérica",
+    "rotulo": "SulAmérica",
+    "itens": []
+   },
+   {
+    "grupo": "Amil",
+    "rotulo": "Amil",
+    "itens": []
+   },
+   {
+    "grupo": "Metlife",
+    "rotulo": "Metlife",
+    "itens": []
+   },
+   {
+    "grupo": "Others",
+    "rotulo": "Others",
+    "itens": []
+   },
+   {
+    "grupo": "Market",
+    "rotulo": "Market",
+    "itens": []
+   }
+  ],
+  "sub_grupo": {
+   "Hapvida": "Hapvida",
+   "NDI": "NDI"
+  }
+ },
+ "corporate": {
+  "por_grupo": {
+   "Amil": [
+    "326305",
+    "355097",
+    "326500",
+    "360244"
+   ],
+   "Athena": [
+    "342033",
+    "357511",
+    "348180"
+   ],
+   "Bradesco": [
+    "005711",
+    "421715",
+    "333689"
+   ],
+   "CNU": [
+    "339679"
+   ],
+   "HAPV": [
+    "368253",
+    "359017",
+    "348520",
+    "340782",
+    "392804",
+    "402966",
+    "350249",
+    "344362"
+   ],
+   "Porto": [
+    "000582",
+    "417491"
+   ],
+   "Prevent Sênior": [
+    "302147"
+   ],
+   "SULA": [
+    "006246",
+    "350141",
+    "000477",
+    "000043",
+    "005622",
+    "419338",
+    "416428"
+   ],
+   "Unimed BH": [
+    "343889"
+   ],
+   "Unimed Ferj": [
+    "312363"
+   ],
+   "Unimed Seguros": [
+    "000701"
+   ]
+  },
+  "layout": [
+   {
+    "grupo": "HAPV",
+    "rotulo": "HAPV",
+    "itens": [
+     {
+      "rotulo": "Hapvida",
+      "registro": "368253"
+     },
+     {
+      "rotulo": "ND Intermédica",
+      "registro": "359017"
+     },
+     {
+      "rotulo": "Medisanitas",
+      "registro": "348520"
+     },
+     {
+      "rotulo": "Clinipam",
+      "registro": "340782"
+     },
+     {
+      "rotulo": "CCG",
+      "registro": "392804"
+     },
+     {
+      "rotulo": "Bio Saúde",
+      "registro": "402966"
+     },
+     {
+      "rotulo": "HB Saúde",
+      "registro": "350249"
+     },
+     {
+      "rotulo": "São Lucas",
+      "registro": "344362"
+     }
+    ]
+   },
+   {
+    "grupo": "SULA",
+    "rotulo": "SULA",
+    "itens": [
+     {
+      "rotulo": "SulAmérica",
+      "registro": "006246"
+     },
+     {
+      "rotulo": "Others",
+      "registro": ""
+     }
+    ]
+   },
+   {
+    "grupo": "Amil",
+    "rotulo": "Amil",
+    "itens": [
+     {
+      "rotulo": "Amil",
+      "registro": "326305"
+     },
+     {
+      "rotulo": "Others",
+      "registro": ""
+     }
+    ]
+   },
+   {
+    "grupo": "Bradesco",
+    "rotulo": "Bradesco",
+    "itens": []
+   },
+   {
+    "grupo": "CNU",
+    "rotulo": "CNU",
+    "itens": []
+   },
+   {
+    "grupo": "Unimed Seguros",
+    "rotulo": "Unimed Seguros",
+    "itens": []
+   },
+   {
+    "grupo": "Porto",
+    "rotulo": "Porto Seguro",
+    "itens": []
+   },
+   {
+    "grupo": "Unimed Ferj",
+    "rotulo": "Unimed Ferj",
+    "itens": []
+   }
+  ]
+ }
+}

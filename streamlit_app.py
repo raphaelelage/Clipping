@@ -121,6 +121,18 @@ def dispatch_now(vertical, period, recipients):
                                       "recipients": recipients}}
     return _req("post", url, headers=_gh_headers(), json=body, timeout=30)
 
+BLAST_WF = S.get("blast_workflow_file", "blast.yml")
+
+
+def dispatch_blast(modo, recipients, mes=""):
+    """Dispara o workflow do Blast. `modo` em {'completo', 'tabela'} — tabela
+    remonta o e-mail do historico do BigQuery, sem consultar a ANS."""
+    url = f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/{BLAST_WF}/dispatches"
+    body = {"ref": BRANCH, "inputs": {"modo": modo, "mes": mes,
+                                      "recipients": recipients}}
+    return _req("post", url, headers=_gh_headers(), json=body, timeout=30)
+
+
 def recent_runs(n=8):
     r = _req("get", f"{GH_API}/repos/{OWNER}/{REPO}/actions/runs?per_page={n}",
                      headers=_gh_headers(), timeout=30)
@@ -460,8 +472,8 @@ else:
     st.caption(f"Vertical **{V['label']}** · portais: {V['portais']} · "
                "palavras-chave e fontes = **união de Saúde + Educação** (automática)")
 
-tab_run, tab_cfg, tab_sched, tab_debug = st.tabs(
-    ["▶️ Rodar agora", "⚙️ Config", "🕗 Agendamento", "🔧 Debug"])
+tab_run, tab_cfg, tab_sched, tab_blast, tab_debug = st.tabs(
+    ["▶️ Rodar agora", "⚙️ Config", "🕗 Agendamento", "📊 ANS Net Adds", "🔧 Debug"])
 
 with tab_run:
     to = email_editor(f"run_{VERT}")
@@ -693,6 +705,31 @@ with tab_sched:
                 st.rerun()
             else:
                 st.error(f"Falhou ({r.status_code}): {r.text[:300]}")
+
+with tab_blast:
+    import datetime as _dt
+
+    import blast_app
+
+    def _bl_dispatch(modo, to):
+        r = dispatch_blast(modo, to)
+        if getattr(r, "status_code", 0) == 204:
+            st.success("Disparado. O e-mail chega quando o run terminar.")
+        else:
+            st.error(f"Falhou: {getattr(r, 'status_code', '?')} "
+                     f"{getattr(r, 'text', '')[:200]}")
+
+    def _bl_get(path):
+        txt, sha = gh_get_file(path)
+        return (None, None) if sha is None else (txt or "{}", sha)
+
+    def _bl_put(path, texto, sha, msg):
+        r = gh_put_file(path, texto, sha, msg)
+        return getattr(r, "status_code", 0) in (200, 201)
+
+    blast_app.render(dispatch=_bl_dispatch, gh_get=_bl_get, gh_put=_bl_put,
+                     ano_padrao=_dt.date.today().year)
+
 
 with tab_debug:
     st.markdown("**🩺 Diagnóstico de conexão**")

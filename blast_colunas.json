@@ -1,0 +1,81 @@
+{
+ "_comentario": [
+  "Override das 4 colunas de Net Adds, por mes do ano.",
+  "Vazio/ausente = usa a regra automatica (blast_periodos.padrao).",
+  "Os rotulos tem que existir em blast_periodos.opcoes(ano, mes)."
+ ],
+ "meses": {
+  "01": [
+   "jan-26",
+   "QTD",
+   "4Q25",
+   "2025"
+  ],
+  "02": [
+   "fev-26",
+   "QTD",
+   "4Q25",
+   "2025"
+  ],
+  "03": [
+   "mar-26",
+   "QTD",
+   "1Q26",
+   "2025"
+  ],
+  "04": [
+   "abr-26",
+   "QTD",
+   "1Q26",
+   "YTD"
+  ],
+  "05": [
+   "mai-26",
+   "QTD",
+   "1Q26",
+   "YTD"
+  ],
+  "06": [
+   "jun-26",
+   "QTD",
+   "2Q26",
+   "YTD"
+  ],
+  "07": [
+   "jul-26",
+   "QTD",
+   "2Q26",
+   "YTD"
+  ],
+  "08": [
+   "ago-26",
+   "QTD",
+   "2Q26",
+   "YTD"
+  ],
+  "09": [
+   "set-26",
+   "QTD",
+   "3Q26",
+   "YTD"
+  ],
+  "10": [
+   "out-26",
+   "QTD",
+   "3Q26",
+   "YTD"
+  ],
+  "11": [
+   "nov-26",
+   "QTD",
+   "3Q26",
+   "YTD"
+  ],
+  "12": [
+   "dez-26",
+   "QTD",
+   "4Q26",
+   "2026"
+  ]
+ }
+}

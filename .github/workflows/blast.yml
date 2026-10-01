@@ -1,0 +1,94 @@
+name: blast-ans
+
+# Blast de Net Adds da ANS (Sala de Situacao).
+# Roda no PC do Raphael quando ele estiver ligado; se nao, no GitHub — mesma
+# logica do clipping diario. Aqui NAO ha coleta dividida: sao ~92 series, que o
+# coletor resolve em poucos minutos de uma maquina so.
+
+on:
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "completo = coleta a ANS e grava no BQ · tabela = so remonta do BQ"
+        required: false
+        default: "completo"
+        type: choice
+        options: ["completo", "tabela"]
+      mes:
+        description: "AAAA-MM (vazio = o ultimo disponivel)"
+        required: false
+        default: ""
+      recipients:
+        description: "E-mails destino (virgula). Vazio = BLAST_RECIPIENTS"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  escolher:
+    runs-on: ubuntu-latest
+    outputs:
+      maquina: ${{ steps.decidir.outputs.maquina }}
+    steps:
+      - id: decidir
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_PAT || github.token }}
+        run: |
+          # Se a consulta falhar, cai no GitHub — nunca o contrario, para nao
+          # mandar o job para uma maquina desligada.
+          ONLINE=$(gh api "repos/${{ github.repository }}/actions/runners" \
+                     --jq '[.runners[] | select(.status=="online" and (.busy|not))] | length' \
+                   2>/dev/null || echo 0)
+          if [ "${ONLINE:-0}" -gt 0 ]; then
+            echo "PC ligado -> self-hosted"
+            echo "maquina=self-hosted" >> "$GITHUB_OUTPUT"
+          else
+            echo "PC indisponivel -> ubuntu-latest"
+            echo "maquina=ubuntu-latest" >> "$GITHUB_OUTPUT"
+          fi
+
+  blast:
+    needs: escolher
+    runs-on: ${{ needs.escolher.outputs.maquina }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependencias
+        run: pip install -r clipping_requirements.txt google-cloud-bigquery pandas-gbq
+
+      - name: Credencial do BigQuery
+        env:
+          SA: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          # `secrets` nao existe no `if:` de um step — o teste tem que ser aqui dentro
+          if [ -z "$SA" ]; then echo "sem GCP_SA_KEY — o run vai falhar no BQ"; exit 0; fi
+          printf '%s' "$SA" > "$RUNNER_TEMP/gcp.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/gcp.json" >> "$GITHUB_ENV"
+
+      - name: Rodar o Blast
+        env:
+          EMAIL_REMETENTE: ${{ secrets.EMAIL_REMETENTE }}
+          EMAIL_SENHA: ${{ secrets.EMAIL_SENHA }}
+          BLAST_TO: ${{ github.event.inputs.recipients || vars.BLAST_RECIPIENTS }}
+          BQ_PROJECT: ${{ vars.BQ_PROJECT || 'ans-net-adds-big-query' }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.modo }}" = "tabela" ]; then ARGS="--so-tabela"; fi
+          if [ -n "${{ github.event.inputs.mes }}" ]; then ARGS="$ARGS --mes ${{ github.event.inputs.mes }}"; fi
+          python blast_run.py $ARGS
+
+      - name: Subir a planilha
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blast-ans
+          path: |
+            ANS_Net_Adds_Blast*.xlsx
+            ANS_Net_Adds_Blast*.html
+          if-no-files-found: warn
