@@ -7,16 +7,22 @@ Base Growth. Celula sem dado sai VAZIA, nunca zero.
 """
 from __future__ import annotations
 
-VERDE = (198, 239, 206)
-VERMELHO = (255, 199, 206)
+# Tonalidade mais forte que o padrao do Excel: a tabela e lida como FOTO no
+# WhatsApp, onde a compressao lava a cor (dono, 01/10/2026).
+VERDE = (140, 214, 160)
+VERMELHO = (247, 150, 162)
 CINZA = "#4a4a4a"
+# Larguras FIXAS, iguais nas duas tabelas — sem isso cada tabela se ajusta ao
+# proprio conteudo e as colunas nao casam quando as duas entram no mesmo print.
+L_ROTULO = 168
+L_NUM = 56
 
 
 def _cor(v, maxabs):
     """Fundo da celula: intensidade proporcional ao maior valor da coluna."""
     if v is None or not maxabs:
         return ""
-    f = min(abs(v) / maxabs, 1.0) ** 0.6
+    f = min(abs(v) / maxabs, 1.0) ** 0.42
     r, g, b = VERDE if v > 0 else VERMELHO
     r = int(255 + (r - 255) * f)
     g = int(255 + (g - 255) * f)
@@ -25,11 +31,13 @@ def _cor(v, maxabs):
 
 
 def _n(v):
-    return "" if v is None else f"{v:,.0f}".replace(",", ".")
+    """Milhar com virgula, decimal com ponto. Conta que nao fecha vira n.a. —
+    celula vazia era lida como zero."""
+    return "n.a." if v is None else f"{v:,.0f}"
 
 
 def _p(v):
-    return "" if v is None else f"{v * 100:.1f}%".replace(".", ",")
+    return "n.a." if v is None else f"{v * 100:.1f}%"
 
 
 def tabela_html(t: dict, titulo: str) -> str:
@@ -43,12 +51,18 @@ def tabela_html(t: dict, titulo: str) -> str:
     esc_mom = max((abs(l["mom"]) for l in corpo if l["mom"] is not None), default=0)
     esc_yoy = max((abs(l["yoy"]) for l in corpo if l["yoy"] is not None), default=0)
 
-    th = ("padding:3px 7px;font-size:11px;font-weight:bold;color:#fff;"
-          "background:#9e1b32;border:1px solid #fff;text-align:center;")
-    td = "padding:2px 7px;font-size:11px;border:1px solid #e3e3e3;text-align:right;"
+    th = ("padding:1px 5px;font-size:11px;font-weight:bold;color:#fff;"
+          "background:#9e1b32;border:1px solid #fff;text-align:center;"
+          "white-space:nowrap;line-height:1.15;")
+    td = ("padding:0 5px;font-size:11px;border:1px solid #e3e3e3;"
+          "text-align:right;white-space:nowrap;line-height:1.3;")
 
+    n_num = 1 + len(cols) + 2
+    grupo = (f'<colgroup><col style="width:{L_ROTULO}px">'
+             + f'<col style="width:{L_NUM}px">' * n_num + '</colgroup>')
     out = [f'<table style="border-collapse:collapse;font-family:Arial,sans-serif;'
-           f'margin:0 0 18px 0;">']
+           f'margin:0 0 10px 0;table-layout:fixed;'
+           f'width:{L_ROTULO + L_NUM * n_num}px;">{grupo}']
     out.append(f'<tr><th style="{th}text-align:left;">{titulo}</th>'
                f'<th style="{th}">{t["mes_rotulo"]}</th>'
                f'<th style="{th}" colspan="{len(cols)}">Net Adds</th>'

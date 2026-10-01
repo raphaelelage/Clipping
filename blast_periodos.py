@@ -23,8 +23,10 @@ Conferido contra o Blast de jul-26 (1o mes de 3Q26), cujas colunas sao
 """
 from __future__ import annotations
 
-MESES = ["jan", "fev", "mar", "abr", "mai", "jun",
-         "jul", "ago", "set", "out", "nov", "dez"]
+# Em ingles: o Blast vai para cliente internacional e a tabela e colada como
+# imagem, entao o rotulo tem que sair pronto (dono, 01/10/2026).
+MESES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
 def rotulo_mes(ano: int, mes: int) -> str:

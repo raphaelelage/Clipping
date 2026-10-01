@@ -120,34 +120,56 @@ def _editor_colunas(gh_get, gh_put, ano: int):
         st.success("Voltou ao padrão.") if ok else st.error("Falhou.")
 
 
-# --------------------------------------------------------------- aba
-def render(*, dispatch, gh_get, gh_put, cron_ui=None, ano_padrao: int):
-    """`dispatch(modo, destinatarios)` dispara o workflow; modo em
-    {'completo', 'tabela'}."""
-    st.subheader("ANS — Net Adds (Sala de Situação)")
+# --------------------------------------------------------------- seção
+def render(*, dispatch, gh_get, gh_put, runs=None, cron_ui=None, ano_padrao: int):
+    """A seção inteira do Blast, com as proprias abas.
 
-    to = st.text_input("E-mails", value="raphael.elage.s@gmail.com",
-                       key="bl_to",
-                       help="Separe por vírgula. Vazio = só gera o arquivo.")
-    c1, c2 = st.columns(2)
-    if c1.button("📨 Coletar e enviar", key="bl_run"):
-        with st.spinner("disparando…"):
-            dispatch("completo", to)
-    if c2.button("🔁 Só a tabela", key="bl_tab",
-                 help="Não consulta a ANS: remonta o e-mail com o histórico que "
-                      "já está no BigQuery. Use depois de mexer em grupos ou "
-                      "colunas."):
-        with st.spinner("disparando…"):
-            dispatch("tabela", to)
+    E um projeto separado do clipping de noticias — so divide a casca do app
+    (token do GitHub, leitura/escrita de arquivo do repo, disparo de workflow).
+    Por isso tem as mesmas quatro abas, e nenhuma delas conversa com o clipping.
 
-    st.divider()
-    aba_g, aba_c, aba_s = st.tabs(["👥 Grupos", "🗓️ Colunas", "⏰ Agendamento"])
-    with aba_g:
-        _editor_grupos(gh_get, gh_put)
-    with aba_c:
-        _editor_colunas(gh_get, gh_put, ano_padrao)
-    with aba_s:
+    `dispatch(modo, destinatarios)` com modo em {'completo', 'tabela'}.
+    """
+    st.subheader("📊 ANS — Net Adds (Sala de Situação)")
+    st.caption("Reconstrói as tabelas do Blast direto da Sala de Situação da ANS "
+               "e manda por e-mail, com a planilha das três bases em anexo.")
+
+    t_run, t_cfg, t_sched, t_dbg = st.tabs(
+        ["▶️ Rodar agora", "⚙️ Config", "🕗 Agendamento", "🔧 Debug"])
+
+    with t_run:
+        to = st.text_input("E-mails", value="raphael.elage.s@gmail.com",
+                           key="bl_to", help="Separe por vírgula.")
+        c1, c2 = st.columns(2)
+        if c1.button("📨 Coletar e enviar", key="bl_run"):
+            with st.spinner("disparando…"):
+                dispatch("completo", to)
+        if c2.button("🔁 Só a tabela", key="bl_tab",
+                     help="Não consulta a ANS: remonta o e-mail com o histórico "
+                          "que já está no BigQuery. Use depois de mexer em "
+                          "grupos ou colunas."):
+            with st.spinner("disparando…"):
+                dispatch("tabela", to)
+
+    with t_cfg:
+        sub_g, sub_c = st.tabs(["👥 Grupos", "🗓️ Colunas"])
+        with sub_g:
+            _editor_grupos(gh_get, gh_put)
+        with sub_c:
+            _editor_colunas(gh_get, gh_put, ano_padrao)
+
+    with t_sched:
         if cron_ui:
             cron_ui()
         else:
-            st.caption("Agendamento ainda não ligado para o Blast.")
+            st.caption("Agendamento ainda não ligado para o Blast — por enquanto "
+                       "o disparo é manual, pela aba Rodar agora.")
+
+    with t_dbg:
+        if runs:
+            for r in runs():
+                st.write(f"{r.get('status')} · {r.get('conclusion') or '—'} · "
+                         f"{r.get('created_at', '')[:16].replace('T', ' ')} · "
+                         f"[log]({r.get('html_url')})")
+        else:
+            st.caption("Sem leitura de runs.")

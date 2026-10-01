@@ -386,9 +386,49 @@ if not PAT:
 _REG_RAW, _REG_SHA = gh_get_file("verticais.json")
 VERTICAIS = montar_verticais(_REG_RAW)
 labels = {k: f"{v['icon']} {v['label']}" for k, v in VERTICAIS.items()}
+NETADDS = "_netadds"
+labels[NETADDS] = "📊 ANS Net Adds"
 escolha = st.radio("Vertical", list(labels.values()), horizontal=True,
                    label_visibility="collapsed")
 VERT = next(k for k, v in labels.items() if v == escolha)
+
+# O Blast da ANS e outro PROJETO: so divide a casca do app (token, dispatch,
+# contents API). Entra aqui em cima, ao lado das verticais, e termina a pagina —
+# nada do clipping (nem a Varredura do DOU, que vem solta no fim do arquivo)
+# deve aparecer embaixo dele.
+if VERT == NETADDS:
+    import datetime as _dt
+
+    import blast_app
+
+    def _bl_dispatch(modo, to):
+        r = dispatch_blast(modo, to)
+        if getattr(r, "status_code", 0) == 204:
+            st.success("Disparado. O e-mail chega quando o run terminar.")
+        else:
+            st.error(f"Falhou: {getattr(r, 'status_code', '?')} "
+                     f"{getattr(r, 'text', '')[:200]}")
+
+    def _bl_get(path):
+        txt, sha = gh_get_file(path)
+        return (None, None) if sha is None else (txt or "{}", sha)
+
+    def _bl_put(path, texto, sha, msg):
+        return getattr(gh_put_file(path, texto, sha, msg),
+                       "status_code", 0) in (200, 201)
+
+    def _bl_runs():
+        r = _req("get", f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/"
+                        f"{BLAST_WF}/runs?per_page=5", headers=_gh_headers())
+        try:
+            return r.json().get("workflow_runs", [])
+        except Exception:
+            return []
+
+    blast_app.render(dispatch=_bl_dispatch, gh_get=_bl_get, gh_put=_bl_put,
+                     runs=_bl_runs, ano_padrao=_dt.date.today().year)
+    st.stop()
+
 V = VERTICAIS[VERT]
 
 with st.expander("🗂️ Gerenciar seções (renomear · criar · excluir)"):
@@ -472,8 +512,8 @@ else:
     st.caption(f"Vertical **{V['label']}** · portais: {V['portais']} · "
                "palavras-chave e fontes = **união de Saúde + Educação** (automática)")
 
-tab_run, tab_cfg, tab_sched, tab_blast, tab_debug = st.tabs(
-    ["▶️ Rodar agora", "⚙️ Config", "🕗 Agendamento", "📊 ANS Net Adds", "🔧 Debug"])
+tab_run, tab_cfg, tab_sched, tab_debug = st.tabs(
+    ["▶️ Rodar agora", "⚙️ Config", "🕗 Agendamento", "🔧 Debug"])
 
 with tab_run:
     to = email_editor(f"run_{VERT}")
@@ -705,31 +745,6 @@ with tab_sched:
                 st.rerun()
             else:
                 st.error(f"Falhou ({r.status_code}): {r.text[:300]}")
-
-with tab_blast:
-    import datetime as _dt
-
-    import blast_app
-
-    def _bl_dispatch(modo, to):
-        r = dispatch_blast(modo, to)
-        if getattr(r, "status_code", 0) == 204:
-            st.success("Disparado. O e-mail chega quando o run terminar.")
-        else:
-            st.error(f"Falhou: {getattr(r, 'status_code', '?')} "
-                     f"{getattr(r, 'text', '')[:200]}")
-
-    def _bl_get(path):
-        txt, sha = gh_get_file(path)
-        return (None, None) if sha is None else (txt or "{}", sha)
-
-    def _bl_put(path, texto, sha, msg):
-        r = gh_put_file(path, texto, sha, msg)
-        return getattr(r, "status_code", 0) in (200, 201)
-
-    blast_app.render(dispatch=_bl_dispatch, gh_get=_bl_get, gh_put=_bl_put,
-                     ano_padrao=_dt.date.today().year)
-
 
 with tab_debug:
     st.markdown("**🩺 Diagnóstico de conexão**")
