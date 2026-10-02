@@ -1,21 +1,29 @@
 # Runner self-hosted — PC do Raphael
 
 Instalado em `C:\actions-runner`, registrado no repo `raphaelelage/Clipping`.
-Como clipping.yml e blast.yml estao no MESMO repo, **um runner serve os dois**.
+Como `clipping.yml` e `blast.yml` estao no MESMO repo, **um runner serve os dois**.
 
 Labels: `self-hosted, windows, x64, pc-raphael`.
 
 ## Virar servico (sobe sozinho com o Windows)
 
-Abra o PowerShell **como administrador** e rode:
+**`svc.cmd` NAO existe nas versoes atuais do runner (2.3x).** Ele so e criado
+quando o runner ja foi configurado como servico — ou seja, instalar o servico
+significa RE-REGISTRAR o runner com `--runasservice`, nao rodar um script a parte.
 
-    cd C:\actions-runner
-    .\svc.cmd install
-    .\svc.cmd start
+PowerShell **como administrador**. O comando busca o token sozinho, para ele nao
+passar por chat nem ficar em disco:
 
-Sem isso o runner so fica de pe enquanto a janela que o iniciou estiver aberta.
+```
+cd C:\actions-runner
+$t = gh api repos/raphaelelage/Clipping/actions/runners/registration-token -X POST --jq .token
+.\config.cmd --unattended --replace --url https://github.com/raphaelelage/Clipping --token $t --name pc-raphael --labels self-hosted,windows,x64,pc-raphael --work _work --runasservice
+```
 
-Conferir:  `.\svc.cmd status`   ·  Parar: `.\svc.cmd stop`
+Conferir: `Get-Service actions.runner.*`
+Parar / subir: `Stop-Service actions.runner.*` · `Start-Service actions.runner.*`
+
+Sem o servico, o runner so fica de pe enquanto o processo que o iniciou viver.
 
 ## O que ainda falta: o secret RUNNER_PAT
 
@@ -34,5 +42,5 @@ e salve como secret `RUNNER_PAT`:
 
     https://github.com/raphaelelage/Clipping/settings/secrets/actions
 
-Evite usar um token classico de uso geral aqui: ele daria ao workflow muito mais
+Evite um token classico de uso geral aqui: ele daria ao workflow muito mais
 alcance do que a pergunta "o PC esta ligado?" precisa.
