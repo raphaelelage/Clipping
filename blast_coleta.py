@@ -144,12 +144,36 @@ def _longo(df: pd.DataFrame, registro: str, secao: str) -> pd.DataFrame:
 
 
 def todas_operadoras(s_sess=None) -> list[str]:
-    """Os ~3.700 registros do dropdown do painel."""
+    """Os registros do dropdown do painel, lidos AO VIVO a cada rodada.
+
+    Nunca cacheado de proposito: operadora nova entra no dropdown sem avisar, e
+    uma lista congelada a deixaria de fora para sempre (dono, 02/10/2026). Custa
+    uma requisicao."""
     sc = _sc()
     s_sess = s_sess or sc.sessao()
     d = sc.coletar(s_sess, CDA_CARTEIRA, "qOperadoras")
     col = d.columns[0]
     return sorted({str(v).strip().zfill(6) for v in d[col] if str(v).strip()})
+
+
+def novas_operadoras(atuais, log=print) -> list[str]:
+    """Quais registros do dropdown ainda nao existem no historico do BigQuery.
+
+    So informativo — a varredura ja pega todas de qualquer jeito. Serve para o
+    log dizer que apareceu gente nova, em vez de a mudanca passar despercebida."""
+    try:
+        import blast_bq
+        c = blast_bq.cliente()
+        ja = {str(r["registro"]).zfill(6) for r in
+              c.query(f"SELECT DISTINCT registro FROM `{blast_bq.FQN}`").result()}
+    except Exception as exc:                                      # noqa: BLE001
+        log(f"[operadoras] não consegui comparar com o BigQuery ({str(exc)[:60]})")
+        return []
+    novas = sorted(set(atuais) - ja)
+    if novas:
+        log(f"[operadoras] {len(novas)} nova(s) desde a última rodada: "
+            f"{', '.join(novas[:8])}{'…' if len(novas) > 8 else ''}")
+    return novas
 
 
 def coletar(registros=None, workers: int = 8, log=print, todas: bool = False) -> pd.DataFrame:
@@ -163,7 +187,13 @@ def coletar(registros=None, workers: int = 8, log=print, todas: bool = False) ->
     from concurrent.futures import ThreadPoolExecutor, as_completed
     sc = _sc()
     if registros is None:
-        registros = todas_operadoras() if todas else sorted(registros_do_config())
+        if todas:
+            registros = todas_operadoras()
+            log(f"[operadoras] dropdown tem {len(registros)} — lido agora, "
+                f"para pegar operadora nova")
+            novas_operadoras(registros, log=log)
+        else:
+            registros = sorted(registros_do_config())
     registros = sorted(registros)
     local = threading.local()
 

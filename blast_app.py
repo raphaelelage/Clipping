@@ -131,8 +131,10 @@ def render(*, dispatch, gh_get, gh_put, runs=None, cron_ui=None, ano_padrao: int
     `dispatch(modo, destinatarios)` com modo em {'completo', 'tabela'}.
     """
     st.subheader("📊 ANS — Net Adds (Sala de Situação)")
-    st.caption("Reconstrói as tabelas do Blast direto da Sala de Situação da ANS "
-               "e manda por e-mail, com a planilha das três bases em anexo.")
+    st.caption("Reconstrói as tabelas direto da Sala de Situação da ANS e manda "
+               "por e-mail, com a planilha em anexo. No seu PC roda em duas "
+               "fases (grupos, depois todas as operadoras com as quebras); no "
+               "GitHub só a primeira, para não gastar cota.")
 
     t_run, t_cfg, t_sched, t_dbg = st.tabs(
         ["▶️ Rodar agora", "⚙️ Config", "🕗 Agendamento", "🔧 Debug"])
