@@ -108,9 +108,11 @@ def registros_do_config(caminho: str | None = None) -> set[str]:
     cfg = json.load(io.open(caminho or os.path.join(AQUI, "blast_grupos.json"),
                             encoding="utf-8"))
     out = set()
-    for secao in ("medico", "odonto", "corporate"):
-        for regs in cfg[secao]["por_grupo"].values():
-            out.update(str(r).zfill(6) for r in regs)
+    # percorre o que EXISTE no arquivo: "corporate" deixou de ter lista propria
+    for secao, bloco in cfg.items():
+        if isinstance(bloco, dict) and "por_grupo" in bloco:
+            for regs in bloco["por_grupo"].values():
+                out.update(str(r).zfill(6) for r in regs)
     return out
 
 
@@ -188,9 +190,18 @@ def coletar(registros=None, workers: int = 8, log=print, todas: bool = False) ->
     sc = _sc()
     if registros is None:
         if todas:
-            registros = todas_operadoras()
-            log(f"[operadoras] dropdown tem {len(registros)} — lido agora, "
-                f"para pegar operadora nova")
+            drop = set(todas_operadoras())
+            cfg = registros_do_config()
+            # UNIAO, nao substituicao: o dropdown NAO lista tudo que tem dado.
+            # Medido em 02/10/2026 — 419419, 419338 e 421715 estao no nosso
+            # de-para, respondem normalmente, e nao aparecem na lista. Varrer so
+            # o dropdown perdia 450 mil vidas da Odontoprev em silencio.
+            fora = sorted(cfg - drop)
+            registros = sorted(drop | cfg)
+            log(f"[operadoras] dropdown tem {len(drop)}; mais {len(fora)} do "
+                f"de-para que ele nao lista -> {len(registros)} no total")
+            if fora:
+                log(f"[operadoras] fora do dropdown: {', '.join(fora)}")
             novas_operadoras(registros, log=log)
         else:
             registros = sorted(registros_do_config())

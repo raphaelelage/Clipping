@@ -104,8 +104,11 @@ def _so_contratacao(df: pd.DataFrame) -> pd.DataFrame:
 def para_secao(df: pd.DataFrame, secao: str) -> pd.DataFrame:
     """Recorta e agrega o longo para o que cada secao do e-mail precisa."""
     df = _so_contratacao(df)
-    if secao == "corporate":
-        d = df[(df["secao"] == "medico")
+    # "corporate_X" nao e uma secao da ANS: e o segmento Coletivo Empresarial
+    # dentro de X. Por isso nao tem lista de grupos propria (dono, 02/10/2026).
+    if secao.startswith("corporate"):
+        base = "odonto" if secao.endswith("odonto") else "medico"
+        d = df[(df["secao"] == base)
                & (df["segmento"].str.lower() == CORPORATE)]
     elif secao in ("medico", "odonto"):
         d = df[df["secao"] == secao]
@@ -120,12 +123,12 @@ def mercado(df: pd.DataFrame, secao: str) -> pd.DataFrame:
     como a pseudo-operadora de registro 0 dentro de medico/odonto. Aceita as
     duas formas para nao quebrar base antiga."""
     d = _so_contratacao(df)
-    novo = d[(d["secao"] == ("odonto" if secao == "odonto" else "medico"))
+    novo = d[(d["secao"] == ("odonto" if secao.endswith("odonto") else "medico"))
              & (d["registro"].astype(str).str.lstrip("0") == "")]
     if len(novo):
         out = novo.assign(registro="MERCADO")
     else:
-        alvo = "exclusivamente odontol" if secao == "odonto" else "assist"
+        alvo = "exclusivamente odontol" if secao.endswith("odonto") else "assist"
         out = d[(d["secao"] == "mercado")
                 & (d["segmento"].str.lower().str.startswith(alvo))]
     return (out.groupby(["registro", "ano", "mes"], as_index=False)["beneficiarios"]

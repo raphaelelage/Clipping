@@ -95,13 +95,12 @@ def _editor_colunas(gh_get, gh_put, ano: int):
 
     escolhas = {}
     for m in range(1, 13):
-        opts = [o["rotulo"] for o in bp.opcoes(ano, m)]
-        atual = [c for c in (meses.get(f"{m:02d}")
-                             or [c["rotulo"] for c in bp.padrao(ano, m)])
-                 if c in opts]
+        atual = [c for c in (meses.get(f"{m:02d}") or bp.padrao_chaves(m))
+                 if c in bp.CHAVES]
         sel = st.multiselect(
-            bp.rotulo_mes(ano, m), opts, default=atual, key=f"bl_c_{m}",
-            help="A ordem em que você escolhe é a ordem das colunas.")
+            bp.MESES[m - 1], bp.CHAVES, default=atual, key=f"bl_c_{m}",
+            help="A ordem em que você escolhe é a ordem das colunas. "
+                 "São relativas ao mês de referência, então valem todo ano.")
         escolhas[f"{m:02d}"] = sel
         if not sel:
             st.caption("↳ vazio: este mês cai no padrão automático.")
@@ -113,15 +112,15 @@ def _editor_colunas(gh_get, gh_put, ano: int):
                     "colunas do Blast")
         st.success("Salvo.") if ok else st.error("Falhou ao salvar.")
     if c2.button("↩️ Voltar ao padrão", key="bl_rs_col"):
-        cfg["meses"] = {f"{m:02d}": [c["rotulo"] for c in bp.padrao(ano, m)]
-                        for m in range(1, 13)}
+        cfg["meses"] = {f"{m:02d}": bp.padrao_chaves(m) for m in range(1, 13)}
         ok = gh_put(COLUNAS, json.dumps(cfg, ensure_ascii=False, indent=1), sha,
                     "colunas do Blast: padrão")
         st.success("Voltou ao padrão.") if ok else st.error("Falhou.")
 
 
 # --------------------------------------------------------------- seção
-def render(*, dispatch, gh_get, gh_put, runs=None, cron_ui=None, ano_padrao: int):
+def render(*, dispatch, gh_get, gh_put, runs=None, logs=None, diagnostico=None,
+           cron_ui=None, ano_padrao: int):
     """A seção inteira do Blast, com as proprias abas.
 
     E um projeto separado do clipping de noticias — so divide a casca do app
@@ -168,10 +167,32 @@ def render(*, dispatch, gh_get, gh_put, runs=None, cron_ui=None, ano_padrao: int
                        "o disparo é manual, pela aba Rodar agora.")
 
     with t_dbg:
-        if runs:
-            for r in runs():
-                st.write(f"{r.get('status')} · {r.get('conclusion') or '—'} · "
-                         f"{r.get('created_at', '')[:16].replace('T', ' ')} · "
-                         f"[log]({r.get('html_url')})")
-        else:
-            st.caption("Sem leitura de runs.")
+        # Mesma cara do Debug das outras abas: diagnostico, execucoes com icone e
+        # leitura de log dentro do app (debug pelo celular, sem abrir o PC).
+        st.markdown("**🩺 Diagnóstico de conexão**")
+        if st.button("Checar conexões", key="bl_diag") and diagnostico:
+            for rotulo, valor in diagnostico():
+                st.write(rotulo, valor)
+
+        st.divider()
+        st.markdown("**📊 Últimas execuções**")
+        lista = runs() if runs else []
+        if not lista:
+            st.caption("Nenhuma execução ainda (ou PAT sem acesso a Actions).")
+        rotulos = {}
+        for r in lista:
+            ic = {"success": "✅", "failure": "❌",
+                  "cancelled": "⚪"}.get(r.get("conclusion"), "🟡")
+            st.markdown(f"{ic} **{r.get('name', 'blast-ans')}** · "
+                        f"`{r.get('status')}/{r.get('conclusion')}` · "
+                        f"[abrir]({r.get('html_url')}) · "
+                        f"{r.get('created_at', '')[:16].replace('T', ' ')}")
+            rotulos[f"#{r.get('run_number')} · "
+                    f"{r.get('conclusion') or r.get('status')}"] = r.get("id")
+
+        if rotulos and logs:
+            st.divider()
+            st.markdown("**📜 Ver logs no app** (debug pelo celular, sem abrir o PC)")
+            sel = st.selectbox("Execução", list(rotulos.keys()), key="bl_run")
+            if st.button("Carregar logs", key="bl_logs"):
+                st.code(logs(rotulos[sel]) or "(sem log)", language="text")

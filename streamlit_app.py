@@ -425,8 +425,26 @@ if VERT == NETADDS:
         except Exception:
             return []
 
+    def _bl_logs(run_id):
+        return run_logs_tail(run_id)
+
+    def _bl_diag():
+        gh, wf = gh_check(), _req(
+            "get", f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/{BLAST_WF}",
+            headers=_gh_headers()).status_code
+        saida = [("GitHub (PAT + acesso ao repo):",
+                  "✅ ok" if gh == 200 else f"❌ HTTP {gh}"),
+                 (f"Workflow `{BLAST_WF}`:",
+                  "✅ encontrado" if wf == 200 else f"❌ HTTP {wf}")]
+        for arq in ("blast_grupos.json", "blast_colunas.json"):
+            cur, sha = gh_get_file(arq)
+            saida.append((f"`{arq}`:",
+                          "✅ ok" if sha else "❌ não encontrado"))
+        return saida
+
     blast_app.render(dispatch=_bl_dispatch, gh_get=_bl_get, gh_put=_bl_put,
-                     runs=_bl_runs, ano_padrao=_dt.date.today().year)
+                     runs=_bl_runs, logs=_bl_logs, diagnostico=_bl_diag,
+                     ano_padrao=_dt.date.today().year)
     st.stop()
 
 V = VERTICAIS[VERT]

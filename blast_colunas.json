@@ -1,81 +1,83 @@
 {
  "_comentario": [
-  "Override das 4 colunas de Net Adds, por mes do ano.",
-  "Vazio/ausente = usa a regra automatica (blast_periodos.padrao).",
-  "Os rotulos tem que existir em blast_periodos.opcoes(ano, mes)."
+  "Colunas de Net Adds por mes do ano. Guardam CHAVES RELATIVAS, nao rotulos",
+  "concretos: a mesma configuracao vale todo ano. O rotulo (Jul-26, 2Q26) e",
+  "resolvido na hora de montar o e-mail.",
+  "Opcoes: Último Mês · QTD · Último Trimestre · YTD · Último Ano",
+  "Mes ausente ou vazio cai no padrao automatico."
  ],
  "meses": {
   "01": [
-   "Jan-26",
+   "Último Mês",
    "QTD",
-   "4Q25",
-   "2025"
+   "Último Trimestre",
+   "Último Ano"
   ],
   "02": [
-   "Feb-26",
+   "Último Mês",
    "QTD",
-   "4Q25",
-   "2025"
+   "Último Trimestre",
+   "Último Ano"
   ],
   "03": [
-   "Mar-26",
+   "Último Mês",
    "QTD",
-   "1Q26",
-   "2025"
+   "Último Trimestre",
+   "Último Ano"
   ],
   "04": [
-   "Apr-26",
+   "Último Mês",
    "QTD",
-   "1Q26",
+   "Último Trimestre",
    "YTD"
   ],
   "05": [
-   "May-26",
+   "Último Mês",
    "QTD",
-   "1Q26",
+   "Último Trimestre",
    "YTD"
   ],
   "06": [
-   "Jun-26",
+   "Último Mês",
    "QTD",
-   "2Q26",
+   "Último Trimestre",
    "YTD"
   ],
   "07": [
-   "Jul-26",
+   "Último Mês",
    "QTD",
-   "2Q26",
+   "Último Trimestre",
    "YTD"
   ],
   "08": [
-   "Aug-26",
+   "Último Mês",
    "QTD",
-   "2Q26",
+   "Último Trimestre",
    "YTD"
   ],
   "09": [
-   "Sep-26",
+   "Último Mês",
    "QTD",
-   "3Q26",
+   "Último Trimestre",
    "YTD"
   ],
   "10": [
-   "Oct-26",
+   "Último Mês",
    "QTD",
-   "3Q26",
+   "Último Trimestre",
    "YTD"
   ],
   "11": [
-   "Nov-26",
+   "Último Mês",
    "QTD",
-   "3Q26",
+   "Último Trimestre",
    "YTD"
   ],
   "12": [
-   "Dec-26",
+   "Último Mês",
    "QTD",
-   "4Q26",
-   "2026"
+   "Último Trimestre",
+   "Último Ano"
   ]
  }
 }

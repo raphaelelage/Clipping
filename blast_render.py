@@ -122,7 +122,9 @@ def email_html(tabelas, mes_rotulo: str, avisos=None, texto: str = "") -> str:
 # Excel
 # --------------------------------------------------------------------------- #
 ROTULO_SECAO = {"medico": "Médico-hospitalar", "odonto": "Odontológico",
-                "mercado": "Mercado Total", "corporate": "Médico-hospitalar"}
+                "mercado": "Mercado Total",
+                "corporate_medico": "Médico-hospitalar",
+                "corporate_odonto": "Odontológico"}
 # Uma aba por dimensao. O nome da coluna da quebra muda com ela — "segmento" nao
 # dizia nada (dono, 02/10/2026). A primeira aba e a de contratacao.
 ABAS = {"Contratação": ("Tipo de contratação", ["tipo de contratação"]),
@@ -204,15 +206,25 @@ def _formula_sumifs(secao_rotulo, registros, periodo, n_dados, segmento=None):
 
 
 def excel(caminho: str, df_longo, tabelas=None):
-    """Duas abas: `Dados` (tudo) e `Tabelas` (o que vai no e-mail, por SUMIFS)."""
+    """Abas de dados (uma por dimensao) + a aba Tabelas por SUMIFS.
+
+    Usa xlsxwriter, nao openpyxl. Motivo medido em 02/10/2026: formatar celula a
+    celula um milhao de linhas levava 25 MINUTOS a 95% de CPU — mais tempo do que
+    a coleta inteira. O xlsxwriter aplica formato por COLUNA (`set_column`), sem
+    tocar em cada celula, e grava a mesma planilha em segundos.
+    """
     import pandas as pd
-    from openpyxl.formatting.rule import ColorScaleRule
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-    from openpyxl.utils import get_column_letter
 
     presentes = (set(df_longo["dimensao"].dropna()) if "dimensao" in df_longo
                  else set()) | {"Contratação"}
-    with pd.ExcelWriter(caminho, engine="openpyxl") as w:
+    with pd.ExcelWriter(caminho, engine="xlsxwriter",
+                        datetime_format="mmm-yy") as w:
+        wb = w.book
+        f_cab = wb.add_format({"bold": True, "font_color": "#FFFFFF",
+                               "bg_color": VINHO, "border": 1,
+                               "border_color": "#FFFFFF"})
+        f_data = wb.add_format({"num_format": "mmm-yy"})
+        f_num = wb.add_format({"num_format": "#,##0"})
         n = 2
         for dim in ("Contratação", "Faixa etária", "UF"):
             if dim not in presentes:
@@ -220,87 +232,111 @@ def excel(caminho: str, df_longo, tabelas=None):
             g = _dados_longos(df_longo, dim)
             if not len(g):
                 continue
-            g.to_excel(w, sheet_name=ABAS[dim][0][:31], index=False)
+            aba = ABAS[dim][0][:31]
+            g.to_excel(w, sheet_name=aba, index=False)
+            ws = w.sheets[aba]
+            ws.hide_gridlines(2)
+            ws.freeze_panes(1, 0)
+            for c, nome in enumerate(g.columns):
+                ws.write(0, c, nome, f_cab)
+            ws.set_column(0, 0, 10, f_data)                 # data
+            ws.set_column(1, 1, 20)                         # secao
+            ws.set_column(2, 2, 11)                         # registro
+            ws.set_column(3, len(g.columns) - 2, 24)        # quebra(s)
+            ws.set_column(len(g.columns) - 1, len(g.columns) - 1, 16, f_num)
             if dim == "Contratação":
                 n = len(g) + 1
-        wb = w.book
-        for aba in wb.sheetnames:
-            _formatar_dados(wb[aba])
-        _leia_me(wb)
+
         if tabelas:
-            wt = wb.create_sheet("Tabelas")
-            wt.sheet_view.showGridLines = False
-            fino = Side(style="thin", color="E3E3E3")
-            borda = Border(left=fino, right=fino, top=fino, bottom=fino)
-            linha = 2
-            for t, titulo in tabelas:
-                rot = ROTULO_SECAO.get(t["secao"], t["secao"])
-                cabs = ["", "Lives"] + list(t["colunas"]) + ["MoM", "YoY"]
-                for j, texto in enumerate(cabs, start=2):
-                    c = wt.cell(row=linha, column=j, value=texto or titulo)
-                    c.font = Font(bold=True, color="FFFFFF", size=9)
-                    c.fill = PatternFill("solid", fgColor=VINHO.lstrip("#"))
-                    c.alignment = Alignment(horizontal="center")
-                    c.border = borda
-                linha += 1
-                ini_dados = linha
-                for l in t["linhas"]:
-                    c = wt.cell(row=linha, column=2, value=l["rotulo"])
-                    c.font = Font(bold=(l["nivel"] == 0), size=9)
-                    c.alignment = Alignment(indent=0 if l["nivel"] == 0 else 2)
-                    c.border = borda
-                    wt.cell(row=linha, column=3, value=l["lives"]).number_format = "#,##0"
-                    for k, per in enumerate(t.get("periodos", [])):
-                        f = _formula_sumifs(
-                            rot, l.get("registros") or [], per, n,
-                            segmento=("Coletivo Empresarial"
-                                      if t["secao"] == "corporate" else None))
-                        cel = wt.cell(row=linha, column=4 + k,
-                                      value=f if f else l["net_adds"][k])
-                        cel.number_format = "#,##0"
-                        cel.border = borda
-                    base = 4 + len(t["colunas"])
-                    wt.cell(row=linha, column=base, value=l["mom"]).number_format = "0.0%"
-                    wt.cell(row=linha, column=base + 1,
-                            value=l["yoy"]).number_format = "0.0%"
-                    for j in range(2, base + 2):
-                        wt.cell(row=linha, column=j).border = borda
-                    linha += 1
-                # escala de cor igual a do e-mail, mas nativa do Excel (dinamica)
-                col_ini = get_column_letter(4)
-                col_fim = get_column_letter(4 + len(t["colunas"]) + 1)
-                wt.conditional_formatting.add(
-                    f"{col_ini}{ini_dados}:{col_fim}{linha - 1}",
-                    ColorScaleRule(start_type="min", start_color="F796A2",
-                                   mid_type="num", mid_value=0, mid_color="FFFFFF",
-                                   end_type="max", end_color="8CD6A0"))
-                linha += 2          # faixa branca entre as tabelas
-            wt.column_dimensions["A"].width = 2
-            wt.column_dimensions["B"].width = 26
-            for j in range(3, 12):
-                wt.column_dimensions[get_column_letter(j)].width = 9
+            _aba_tabelas(wb, w, tabelas, n)
+        _leia_me_x(wb)
     return caminho
 
 
-def _formatar_dados(ws):
-    """Sem gridline, 1a linha congelada e em destaque, data e milhar."""
-    from openpyxl.styles import Font, PatternFill
-    ws.sheet_view.showGridLines = False
-    ws.freeze_panes = "A2"
-    for c in ws[1]:
-        c.font = Font(bold=True, color="FFFFFF")
-        c.fill = PatternFill("solid", fgColor=VINHO.lstrip("#"))
-    for row in ws.iter_rows(min_row=2, min_col=1, max_col=1):
-        for c in row:
-            c.number_format = "mmm-yy"
-    ult = ws.max_column
-    for row in ws.iter_rows(min_row=2, min_col=ult, max_col=ult):
-        for c in row:
-            c.number_format = "#,##0"
-    larguras = {1: 10, 2: 20, 3: 11, 4: 24, 5: 18, 6: 16}
-    for j, larg in larguras.items():
-        if j <= ult:
-            ws.column_dimensions[chr(64 + j)].width = larg
+def _aba_tabelas(wb, w, tabelas, n):
+    """As tabelas do e-mail, por SUMIFS, com a mesma escala de cor."""
+    ws = wb.add_worksheet("Tabelas")
+    w.sheets["Tabelas"] = ws
+    ws.hide_gridlines(2)
+    f_cab = wb.add_format({"bold": True, "font_color": "#FFFFFF",
+                           "bg_color": VINHO, "border": 1,
+                           "border_color": "#FFFFFF", "align": "center",
+                           "font_size": 9})
+    f_g = wb.add_format({"bold": True, "font_size": 9, "border": 1,
+                         "border_color": "#E3E3E3"})
+    f_i = wb.add_format({"font_size": 9, "indent": 2, "border": 1,
+                         "border_color": "#E3E3E3"})
+    f_ng = wb.add_format({"bold": True, "num_format": "#,##0", "font_size": 9,
+                          "border": 1, "border_color": "#E3E3E3"})
+    f_ni = wb.add_format({"num_format": "#,##0", "font_size": 9, "border": 1,
+                          "border_color": "#E3E3E3"})
+    f_pg = wb.add_format({"bold": True, "num_format": "0.0%", "font_size": 9,
+                          "border": 1, "border_color": "#E3E3E3"})
+    f_pi = wb.add_format({"num_format": "0.0%", "font_size": 9, "border": 1,
+                          "border_color": "#E3E3E3"})
+    linha = 1
+    for t, titulo in tabelas:
+        rot = ROTULO_SECAO.get(t["secao"], t["secao"])
+        segm = ("Coletivo Empresarial"
+                if str(t["secao"]).startswith("corporate") else None)
+        cabs = [titulo, "Lives"] + list(t["colunas"]) + ["MoM", "YoY"]
+        for j, txt in enumerate(cabs):
+            ws.write(linha, 1 + j, txt, f_cab)
+        linha += 1
+        ini = linha
+        for l in t["linhas"]:
+            topo = l["nivel"] == 0
+            ws.write(linha, 1, l["rotulo"], f_g if topo else f_i)
+            ws.write(linha, 2, l["lives"], f_ng if topo else f_ni)
+            for k, per in enumerate(t.get("periodos", [])):
+                f = _formula_sumifs(rot, l.get("registros") or [], per, n,
+                                    segmento=segm)
+                cel = f_ng if topo else f_ni
+                if f:
+                    ws.write_formula(linha, 3 + k, f, cel, l["net_adds"][k])
+                else:
+                    ws.write(linha, 3 + k, l["net_adds"][k], cel)
+            base = 3 + len(t["colunas"])
+            ws.write(linha, base, l["mom"], f_pg if topo else f_pi)
+            ws.write(linha, base + 1, l["yoy"], f_pg if topo else f_pi)
+            linha += 1
+        ws.conditional_format(ini, 3, linha - 1, 3 + len(t["colunas"]) + 1,
+                              {"type": "3_color_scale",
+                               "min_color": "#F796A2", "mid_type": "num",
+                               "mid_value": 0, "mid_color": "#FFFFFF",
+                               "max_color": "#8CD6A0"})
+        linha += 2
+    ws.set_column(0, 0, 2)
+    ws.set_column(1, 1, 26)
+    ws.set_column(2, 11, 9)
+
+
+def _leia_me_x(wb):
+    """Aba curta com as duas armadilhas da base — as duas sao silenciosas."""
+    ws = wb.add_worksheet("Leia-me")
+    ws.hide_gridlines(2)
+    forte = wb.add_format({"bold": True, "font_size": 11})
+    normal = wb.add_format({"font_size": 10})
+    txt = [
+        ("ANS — Net Adds · Sala de Situação", forte), ("", normal),
+        ("Fonte: painel Sala de Situação da ANS (abas Setor e Operadoras).", normal),
+        ("NÃO usa o Caderno 2.0 — a ideia é pegar o dado antes dele.", normal),
+        ("", normal), ("Duas armadilhas:", forte), ("", normal),
+        ("1. O registro 0 é o MERCADO (total do setor), não uma operadora.", normal),
+        ("   Somar a coluna inteira conta o mercado duas vezes.", normal),
+        ("   Para somar operadoras, filtre registro <> 0.", normal), ("", normal),
+        ("2. A soma das operadoras NÃO chega ao mercado: fica ~6% abaixo no", normal),
+        ("   médico-hospitalar e ~2,7% no odontológico, estável em todos os", normal),
+        ("   meses. Não é falha da coleta — operadora a operadora o número bate", normal),
+        ("   exato com o painel. É o agregado da ANS que é maior que a soma das", normal),
+        ("   séries que ele mesmo publica.", normal), ("", normal),
+        ("As abas de quebra (Faixa etária, UF) são MARGINAIS do mesmo total e", normal),
+        ("não se somam com a de contratação. Faixa etária existe só por", normal),
+        ("operadora e só para o mês corrente.", normal),
+    ]
+    for i, (linha, fmt) in enumerate(txt):
+        ws.write(i, 0, linha, fmt)
+    ws.set_column(0, 0, 78)
 
 
 def zipar(caminho: str) -> str:

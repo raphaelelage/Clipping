@@ -35,9 +35,10 @@ import blast_tabela as bt
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 COLUNAS_CFG = os.path.join(AQUI, "blast_colunas.json")
-SECOES = [("medico", "Health plans ('000)"),
-          ("odonto", "Dental plans ('000)"),
-          ("corporate", "Corporate ('000)")]
+SECOES = [("medico", "Health Plans ('000)"),
+          ("odonto", "Dental Plans ('000)"),
+          ("corporate_medico", "Corporate Health Plans ('000)"),
+          ("corporate_odonto", "Corporate Dental Plans ('000)")]
 # Nomes de exibicao das secoes na planilha (o codigo segue usando as chaves)
 ROTULO_SECAO = {"medico": "Médico-hospitalar", "odonto": "Odontológico",
                 "mercado": "Mercado Total"}
@@ -60,9 +61,7 @@ def colunas_do_mes(ano: int, mes: int) -> list[dict]:
     escolha = (cfg.get("meses") or {}).get(f"{mes:02d}")
     if not escolha:
         return padrao
-    opcoes = {o["rotulo"]: o for o in bp.opcoes(ano, mes)}
-    out = [opcoes.get(r) for r in escolha]
-    return [c for c in out if c] or padrao
+    return bp.das_chaves(escolha, ano, mes) or padrao
 
 
 # --------------------------------------------------------------- dados

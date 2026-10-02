@@ -108,7 +108,9 @@ def montar(serie: Serie, secao: str, ano: int, mes: int, colunas: list[dict] | N
     Base Growth sai MoM (o mes) e YoY (12 meses), como no print.
     """
     grupos = grupos or carregar_grupos()
-    cfg = grupos[secao]
+    # corporate_medico usa os grupos do medico; corporate_odonto, os do odonto
+    chave = ("odonto" if secao.endswith("odonto") else "medico")         if secao.startswith("corporate") else secao
+    cfg = grupos[chave]
     colunas = colunas or bp.padrao(ano, mes)
 
     mom = bp._mes(ano, mes)
