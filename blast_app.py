@@ -26,8 +26,9 @@ import blast_periodos as bp
 
 GRUPOS = "blast_grupos.json"
 COLUNAS = "blast_colunas.json"
-SECOES = [("medico", "Health plans"), ("odonto", "Dental plans"),
-          ("corporate", "Corporate")]
+# So estas duas tem lista de grupos propria. As secoes "corporate_*" do e-mail
+# reaproveitam os grupos da secao base (ver blast_tabela.montar).
+SECOES = [("medico", "Health plans"), ("odonto", "Dental plans")]
 
 
 def _carregar(gh_get, caminho, vazio):
@@ -52,10 +53,10 @@ def _editor_grupos(gh_get, gh_put):
                "que estava na planilha — não tem vínculo com a Base Consolidada.")
     secao = st.selectbox("Seção", [s for s, _ in SECOES],
                          format_func=lambda s: dict(SECOES)[s], key="bl_sec")
-    pg = cfg[secao]["por_grupo"]
+    pg = cfg.setdefault(secao, {}).setdefault("por_grupo", {})
 
     linhas = [{"grupo": g, "registros": ", ".join(r)} for g, r in sorted(pg.items())]
-    ed = st.data_editor(linhas, num_rows="dynamic", use_container_width=True,
+    ed = st.data_editor(linhas, num_rows="dynamic", width="stretch",
                         key=f"bl_ed_{secao}",
                         column_config={
                             "grupo": st.column_config.TextColumn("Grupo", width="medium"),
@@ -193,6 +194,7 @@ def render(*, dispatch, gh_get, gh_put, runs=None, logs=None, diagnostico=None,
         if rotulos and logs:
             st.divider()
             st.markdown("**📜 Ver logs no app** (debug pelo celular, sem abrir o PC)")
-            sel = st.selectbox("Execução", list(rotulos.keys()), key="bl_run")
+            sel = st.selectbox("Execução", list(rotulos.keys()),
+                               key="bl_run_log")
             if st.button("Carregar logs", key="bl_logs"):
                 st.code(logs(rotulos[sel]) or "(sem log)", language="text")
