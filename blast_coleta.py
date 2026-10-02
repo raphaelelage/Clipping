@@ -143,12 +143,28 @@ def _longo(df: pd.DataFrame, registro: str, secao: str) -> pd.DataFrame:
     return out.dropna(subset=["ano", "mes", "beneficiarios"])
 
 
-def coletar(registros=None, workers: int = 4, log=print) -> pd.DataFrame:
-    """Historico longo de todas as operadoras do config + o mercado."""
+def todas_operadoras(s_sess=None) -> list[str]:
+    """Os ~3.700 registros do dropdown do painel."""
+    sc = _sc()
+    s_sess = s_sess or sc.sessao()
+    d = sc.coletar(s_sess, CDA_CARTEIRA, "qOperadoras")
+    col = d.columns[0]
+    return sorted({str(v).strip().zfill(6) for v in d[col] if str(v).strip()})
+
+
+def coletar(registros=None, workers: int = 8, log=print, todas: bool = False) -> pd.DataFrame:
+    """Historico longo das operadoras pedidas + o mercado.
+
+    `todas=True` varre o dropdown inteiro (~3.700 operadoras, ~30 min). Medido em
+    02/10/2026: 0,24 s por serie, e o paralelismo SATURA entre 4 e 10 robos — com
+    20 ou 32 o tempo PIORA (0,28 e 0,33 s/serie), porque o WAF serializa. Entao
+    mais threads nao e o caminho; 8 e o ponto de equilibrio."""
     import threading
     from concurrent.futures import ThreadPoolExecutor, as_completed
     sc = _sc()
-    registros = sorted(registros or registros_do_config())
+    if registros is None:
+        registros = todas_operadoras() if todas else sorted(registros_do_config())
+    registros = sorted(registros)
     local = threading.local()
 
     def sessao():
@@ -169,15 +185,23 @@ def coletar(registros=None, workers: int = 4, log=print) -> pd.DataFrame:
             log(f"[coleta] {reg}/{seg} falhou: {str(exc)[:80]}")
             return pd.DataFrame()
 
-    partes, feitos = [], 0
+    # Progresso com percentual e ETA: numa varredura completa sao ~7.400 series e
+    # meia hora de janela aberta — sem estimativa, quem olha nao sabe se travou.
+    import time as _t
+    partes, feitos, t0 = [], 0, _t.time()
+    passo = max(1, len(tarefas) // 40)
     with ThreadPoolExecutor(max_workers=workers) as ex:
         for fut in as_completed([ex.submit(_uma, t) for t in tarefas]):
             d = fut.result()
             feitos += 1
             if len(d):
                 partes.append(d)
-            if feitos % 20 == 0:
-                log(f"[coleta] {feitos}/{len(tarefas)} series")
+            if feitos % passo == 0 or feitos == len(tarefas):
+                dec = _t.time() - t0
+                falta = dec / feitos * (len(tarefas) - feitos)
+                log(f"[coleta] {feitos:>5}/{len(tarefas)} "
+                    f"({100 * feitos // len(tarefas):>3}%) "
+                    f"· {dec / 60:.1f} min · faltam ~{falta / 60:.0f} min")
 
     for seg, rotulo in (("ASSIST", "Assistência Médica"),
                         ("ODONTO", "Exclusivamente Odontológico")):
@@ -198,4 +222,161 @@ def coletar(registros=None, workers: int = 4, log=print) -> pd.DataFrame:
     out["mes"] = out["mes"].astype(int)
     log(f"[coleta] {len(out):,} linhas | até "
         f"{out['ano'].max()}-{out[out['ano'] == out['ano'].max()]['mes'].max():02d}")
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Quebras adicionais (fase 2)
+#
+# IMPORTANTE: elas NAO cruzam entre si nem com o tempo. Cada query devolve uma
+# marginal do MES CORRENTE — faixa etaria por sexo, ou UF, e so. Nao existe
+# "registro x mes x faixa x UF" na API; quem quiser isso precisa do Caderno 2.0.
+# Por isso entram como linhas com `dimensao` propria, lado a lado, e NUNCA devem
+# ser somadas junto com a contratacao (contariam a mesma vida varias vezes).
+# --------------------------------------------------------------------------- #
+QUEBRAS = [("qGraficoFaixaEtaria", "Faixa etária"), ("qMapa", "UF")]
+
+
+def _longo_quebra(df, registro, secao, dimensao, ano, mes):
+    if df.empty or len(df.columns) < 2:
+        return pd.DataFrame()
+    linhas = []
+    if dimensao == "Faixa etária":      # IDADE | MASCULINO | FEMININO
+        for _, r in df.iterrows():
+            faixa = str(r.iloc[0]).strip()
+            for sexo, col in (("M", 1), ("F", 2)):
+                if col < len(df.columns):
+                    v = pd.to_numeric(r.iloc[col], errors="coerce")
+                    if pd.notna(v):
+                        linhas.append((f"{faixa} ({sexo})", abs(float(v))))
+    else:                                # ESTADO | QUANTIDADE
+        for _, r in df.iterrows():
+            v = pd.to_numeric(r.iloc[1], errors="coerce")
+            if pd.notna(v):
+                linhas.append((str(r.iloc[0]).strip(), float(v)))
+    if not linhas:
+        return pd.DataFrame()
+    return pd.DataFrame({
+        "registro": registro, "ano": ano, "mes": mes,
+        "segmento": [a for a, _ in linhas],
+        "beneficiarios": [b for _, b in linhas],
+        "secao": secao, "dimensao": dimensao})
+
+
+def coletar_quebras(registros, ano: int, mes: int, workers: int = 8,
+                    log=print) -> pd.DataFrame:
+    """Faixa etaria e UF do mes corrente, por operadora."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    sc = _sc()
+    local = threading.local()
+    tarefas = [(r, seg, secao, q, dim)
+               for r in sorted(registros)
+               for seg, secao in (("ASSIST", "medico"), ("ODONTO", "odonto"))
+               for q, dim in QUEBRAS]
+
+    def _uma(t):
+        reg, seg, secao, q, dim = t
+        if not hasattr(local, "s"):
+            local.s = sc.sessao()
+        try:
+            d = sc.coletar(local.s, CDA_CARTEIRA, q,
+                           {"codOperadora": reg, "Segmento": seg})
+            return _longo_quebra(d, reg, secao, dim, ano, mes)
+        except Exception:                                         # noqa: BLE001
+            return pd.DataFrame()
+
+    partes, feitos = [], 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for fut in as_completed([ex.submit(_uma, t) for t in tarefas]):
+            d = fut.result()
+            feitos += 1
+            if len(d):
+                partes.append(d)
+            if feitos % max(1, len(tarefas) // 10) == 0:
+                log(f"[quebras] {feitos}/{len(tarefas)} "
+                    f"({100 * feitos // len(tarefas)}%)")
+    if not partes:
+        return pd.DataFrame()
+    out = pd.concat(partes, ignore_index=True)
+    log(f"[quebras] {len(out):,} linhas ({out['dimensao'].nunique()} dimensões)")
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Mercado como pseudo-operadora (registro 0)
+#
+# A soma das operadoras NAO chega ao mercado: faltam ~6% no medico e ~2,7% no
+# odonto, de forma estavel em todos os meses. Nao e falha da coleta — operadora
+# a operadora o numero bate exato com o painel; e o proprio agregado da ANS que
+# e maior que a soma das series que ele mesmo publica. Como nao da para somar
+# ate o mercado, ele entra como UMA LINHA, com registro 0, e as mesmas quebras
+# que uma operadora tem (dono, 02/10/2026).
+#
+# ATENCAO: por isso a aba Dados NAO deve ser somada inteira — o registro 0 ja e
+# o total. Filtre registro<>0 para somar operadoras.
+# --------------------------------------------------------------------------- #
+# O parametro da query e a SIGLA, mas o qMapa (quebra por operadora) devolve o
+# NOME por extenso. Sem este de-para a aba UF fica com 57 valores — "AC" e "Acre"
+# lado a lado, que nao somam juntos (visto na varredura de 02/10/2026).
+UF_NOME = {
+    "AC": "Acre", "AL": "Alagoas", "AM": "Amazonas", "AP": "Amapá",
+    "BA": "Bahia", "CE": "Ceará", "DF": "Distrito Federal",
+    "ES": "Espírito Santo", "GO": "Goiás", "MA": "Maranhão",
+    "MG": "Minas Gerais", "MS": "Mato Grosso do Sul", "MT": "Mato Grosso",
+    "PA": "Pará", "PB": "Paraíba", "PE": "Pernambuco", "PI": "Piauí",
+    "PR": "Paraná", "RJ": "Rio de Janeiro", "RN": "Rio Grande do Norte",
+    "RO": "Rondônia", "RR": "Roraima", "RS": "Rio Grande do Sul",
+    "SC": "Santa Catarina", "SE": "Sergipe", "SP": "São Paulo",
+    "TO": "Tocantins",
+    # dois pseudo-estados do painel; sem eles a soma das UFs fica 0,09% abaixo
+    "EX": "Exterior", "XX": "Não identificado"}
+UFS = list(UF_NOME)
+REG_MERCADO = "000000"
+
+
+def coletar_mercado(workers: int = 8, log=print) -> pd.DataFrame:
+    """O mercado como operadora: serie total + serie por UF, ambas mensais."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    sc = _sc()
+    local = threading.local()
+
+    def _ses():
+        if not hasattr(local, "s"):
+            local.s = sc.sessao()
+        return local.s
+
+    tarefas = [(seg, secao, uf)
+               for seg, secao in (("ASSIST", "medico"), ("ODONTO", "odonto"))
+               for uf in ["TODOS"] + UFS]
+
+    def _uma(t):
+        seg, secao, uf = t
+        try:
+            d = sc.coletar(_ses(), CDA_PERFIL, "qgrafbenef",
+                           {"Segmento": seg, "UF": uf, "Modalidade": "TODOS"})
+            out = _longo(d, REG_MERCADO, secao)
+            if not len(out):
+                return pd.DataFrame()
+            if uf == "TODOS":
+                out["segmento"] = "Total do setor"
+                out["dimensao"] = "Contratação"
+            else:
+                out["segmento"] = UF_NOME.get(uf, uf)
+                out["dimensao"] = "UF"
+            return out
+        except Exception:                                         # noqa: BLE001
+            return pd.DataFrame()
+
+    partes = []
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for fut in as_completed([ex.submit(_uma, t) for t in tarefas]):
+            d = fut.result()
+            if len(d):
+                partes.append(d)
+    if not partes:
+        return pd.DataFrame()
+    out = pd.concat(partes, ignore_index=True)
+    log(f"[mercado] {len(out):,} linhas (total + {out[out.dimensao=='UF'].segmento.nunique()} UFs)")
     return out

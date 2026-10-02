@@ -87,28 +87,28 @@ def _editor_colunas(gh_get, gh_put, ano: int):
         return
     meses = cfg.setdefault("meses", {})
 
-    st.caption("As 4 colunas de Net Adds de cada mês. O padrão já segue a regra "
+    st.caption("As colunas de Net Adds de cada mês. O padrão segue a regra "
                "(1º e 2º mês do trimestre mostram o trimestre anterior; o 3º "
                "mostra o que fechou; janeiro a março trocam o YTD pelo ano "
-               "anterior; dezembro vira o ano cheio).")
+               "anterior; dezembro vira o ano cheio). Cada mês pode ter uma "
+               "quantidade diferente — a tabela se ajusta.")
 
     escolhas = {}
     for m in range(1, 13):
         opts = [o["rotulo"] for o in bp.opcoes(ano, m)]
-        atual = meses.get(f"{m:02d}") or [c["rotulo"] for c in bp.padrao(ano, m)]
-        st.markdown(f"**{bp.rotulo_mes(ano, m)}**")
-        cols = st.columns(4)
-        linha = []
-        for i, c in enumerate(cols):
-            val = atual[i] if i < len(atual) and atual[i] in opts else opts[0]
-            linha.append(c.selectbox(f"col {i+1}", opts, index=opts.index(val),
-                                     key=f"bl_c_{m}_{i}",
-                                     label_visibility="collapsed"))
-        escolhas[f"{m:02d}"] = linha
+        atual = [c for c in (meses.get(f"{m:02d}")
+                             or [c["rotulo"] for c in bp.padrao(ano, m)])
+                 if c in opts]
+        sel = st.multiselect(
+            bp.rotulo_mes(ano, m), opts, default=atual, key=f"bl_c_{m}",
+            help="A ordem em que você escolhe é a ordem das colunas.")
+        escolhas[f"{m:02d}"] = sel
+        if not sel:
+            st.caption("↳ vazio: este mês cai no padrão automático.")
 
-    c1, c2 = st.columns([1, 1])
+    c1, c2 = st.columns(2)
     if c1.button("💾 Salvar colunas", key="bl_sv_col"):
-        cfg["meses"] = escolhas
+        cfg["meses"] = {k: v for k, v in escolhas.items() if v}
         ok = gh_put(COLUNAS, json.dumps(cfg, ensure_ascii=False, indent=1), sha,
                     "colunas do Blast")
         st.success("Salvo.") if ok else st.error("Falhou ao salvar.")

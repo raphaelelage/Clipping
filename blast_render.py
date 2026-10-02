@@ -1,38 +1,38 @@
 # -*- coding: utf-8 -*-
 """As tabelas do Blast em HTML (e-mail) e em Excel.
 
-O HTML imita o print que o dono usa: numero em milhares sem casa decimal,
-percentual com uma casa, e o heatmap vermelho-verde nas colunas de Net Adds e
-Base Growth. Celula sem dado sai VAZIA, nunca zero.
+As tabelas sao coladas como IMAGEM no WhatsApp, as duas num print so. Dai todas
+as decisoes de forma: larguras fixas e iguais entre as tabelas, linhas finas,
+cor forte (a compressao do WhatsApp lava o tom), fundo branco e uma coluna
+branca de respiro em cada lado — para o recorte nao encostar no numero.
 """
 from __future__ import annotations
 
-# Tonalidade mais forte que o padrao do Excel: a tabela e lida como FOTO no
-# WhatsApp, onde a compressao lava a cor (dono, 01/10/2026).
+import datetime as _dt
+import re
+
+import blast_periodos as bp
+
 VERDE = (140, 214, 160)
 VERMELHO = (247, 150, 162)
 CINZA = "#4a4a4a"
-# Larguras FIXAS, iguais nas duas tabelas — sem isso cada tabela se ajusta ao
-# proprio conteudo e as colunas nao casam quando as duas entram no mesmo print.
+VINHO = "#9e1b32"
 L_ROTULO = 168
 L_NUM = 56
+L_RESPIRO = 14          # coluna branca em cada lado
 
 
 def _cor(v, maxabs):
-    """Fundo da celula: intensidade proporcional ao maior valor da coluna."""
     if v is None or not maxabs:
         return ""
     f = min(abs(v) / maxabs, 1.0) ** 0.42
     r, g, b = VERDE if v > 0 else VERMELHO
-    r = int(255 + (r - 255) * f)
-    g = int(255 + (g - 255) * f)
-    b = int(255 + (b - 255) * f)
-    return f"background:rgb({r},{g},{b});"
+    return (f"background:rgb({int(255 + (r - 255) * f)},"
+            f"{int(255 + (g - 255) * f)},{int(255 + (b - 255) * f)});")
 
 
 def _n(v):
-    """Milhar com virgula, decimal com ponto. Conta que nao fecha vira n.a. —
-    celula vazia era lida como zero."""
+    """Milhar com virgula, decimal com ponto. Conta que nao fecha vira n.a."""
     return "n.a." if v is None else f"{v:,.0f}"
 
 
@@ -43,7 +43,6 @@ def _p(v):
 def tabela_html(t: dict, titulo: str) -> str:
     cols = t["colunas"]
     linhas = t["linhas"]
-    # escala por coluna, ignorando a linha de mercado (que e uma ordem maior)
     corpo = [l for l in linhas if l["rotulo"] != "Market"]
     esc_na = [max((abs(l["net_adds"][i]) for l in corpo
                    if l["net_adds"][i] is not None), default=0)
@@ -52,69 +51,302 @@ def tabela_html(t: dict, titulo: str) -> str:
     esc_yoy = max((abs(l["yoy"]) for l in corpo if l["yoy"] is not None), default=0)
 
     th = ("padding:1px 5px;font-size:11px;font-weight:bold;color:#fff;"
-          "background:#9e1b32;border:1px solid #fff;text-align:center;"
+          f"background:{VINHO};border:1px solid #fff;text-align:center;"
           "white-space:nowrap;line-height:1.15;")
     td = ("padding:0 5px;font-size:11px;border:1px solid #e3e3e3;"
           "text-align:right;white-space:nowrap;line-height:1.3;")
+    br = f"background:#fff;border:0;width:{L_RESPIRO}px;"   # respiro lateral
 
     n_num = 1 + len(cols) + 2
-    grupo = (f'<colgroup><col style="width:{L_ROTULO}px">'
-             + f'<col style="width:{L_NUM}px">' * n_num + '</colgroup>')
-    out = [f'<table style="border-collapse:collapse;font-family:Arial,sans-serif;'
-           f'margin:0 0 10px 0;table-layout:fixed;'
-           f'width:{L_ROTULO + L_NUM * n_num}px;">{grupo}']
-    out.append(f'<tr><th style="{th}text-align:left;">{titulo}</th>'
-               f'<th style="{th}">{t["mes_rotulo"]}</th>'
-               f'<th style="{th}" colspan="{len(cols)}">Net Adds</th>'
-               f'<th style="{th}" colspan="2">Base Growth</th></tr>')
-    out.append(f'<tr><th style="{th}"></th><th style="{th}">Lives</th>'
-               + "".join(f'<th style="{th}">{c}</th>' for c in cols)
-               + f'<th style="{th}">MoM</th><th style="{th}">YoY</th></tr>')
+    grupo = (f'<colgroup><col style="width:{L_RESPIRO}px">'
+             f'<col style="width:{L_ROTULO}px">'
+             + f'<col style="width:{L_NUM}px">' * n_num
+             + f'<col style="width:{L_RESPIRO}px"></colgroup>')
+    larg = L_ROTULO + L_NUM * n_num + 2 * L_RESPIRO
+    o = [f'<table style="border-collapse:collapse;font-family:Arial,sans-serif;'
+         f'background:#fff;margin:0;table-layout:fixed;width:{larg}px;">{grupo}']
+
+    o.append(f'<tr><td style="{br}"></td><th style="{th}text-align:left;">{titulo}</th>'
+             f'<th style="{th}">{t["mes_rotulo"]}</th>'
+             f'<th style="{th}" colspan="{len(cols)}">Net Adds</th>'
+             f'<th style="{th}" colspan="2">Base Growth</th>'
+             f'<td style="{br}"></td></tr>')
+    o.append(f'<tr><td style="{br}"></td><th style="{th}"></th>'
+             f'<th style="{th}">Lives</th>'
+             + "".join(f'<th style="{th}">{c}</th>' for c in cols)
+             + f'<th style="{th}">MoM</th><th style="{th}">YoY</th>'
+             f'<td style="{br}"></td></tr>')
 
     for l in linhas:
         topo = l["nivel"] == 0
         peso = "font-weight:bold;" if topo else ""
         recuo = "" if topo else "padding-left:20px;"
         cor_txt = "" if topo else f"color:{CINZA};"
-        out.append(f'<tr><td style="{td}text-align:left;{peso}{recuo}{cor_txt}">'
-                   f'{l["rotulo"]}</td>')
-        out.append(f'<td style="{td}{peso}">{_n(l["lives"])}</td>')
+        o.append(f'<tr><td style="{br}"></td>'
+                 f'<td style="{td}text-align:left;{peso}{recuo}{cor_txt}">'
+                 f'{l["rotulo"]}</td>')
+        o.append(f'<td style="{td}{peso}">{_n(l["lives"])}</td>')
         for i, v in enumerate(l["net_adds"]):
-            out.append(f'<td style="{td}{peso}{_cor(v, esc_na[i])}">{_n(v)}</td>')
-        out.append(f'<td style="{td}{peso}{_cor(l["mom"], esc_mom)}">'
-                   f'{_p(l["mom"])}</td>')
-        out.append(f'<td style="{td}{peso}{_cor(l["yoy"], esc_yoy)}">'
-                   f'{_p(l["yoy"])}</td></tr>')
-    out.append("</table>")
-    return "".join(out)
+            o.append(f'<td style="{td}{peso}{_cor(v, esc_na[i])}">{_n(v)}</td>')
+        o.append(f'<td style="{td}{peso}{_cor(l["mom"], esc_mom)}">{_p(l["mom"])}</td>')
+        o.append(f'<td style="{td}{peso}{_cor(l["yoy"], esc_yoy)}">{_p(l["yoy"])}</td>'
+                 f'<td style="{br}"></td></tr>')
+    o.append("</table>")
+    return "".join(o)
 
 
-def email_html(tabelas: list[tuple[dict, str]], mes_rotulo: str,
-               avisos: list[str] | None = None) -> str:
-    corpo = "".join(tabela_html(t, titulo) for t, titulo in tabelas)
+def email_html(tabelas, mes_rotulo: str, avisos=None, texto: str = "") -> str:
+    """Tabelas empilhadas, coladas, com faixa branca entre elas e nas pontas —
+    para o print sair com margem sem precisar de edicao."""
+    faixa = '<div style="height:12px;background:#fff;line-height:12px;">&nbsp;</div>'
+    corpo = faixa + faixa.join(tabela_html(t, ti) for t, ti in tabelas) + faixa
     av = ""
     if avisos:
         itens = "".join(f"<li>{a}</li>" for a in avisos)
-        av = (f'<ul style="color:#9e1b32;font-size:12px;font-family:Arial;'
+        av = (f'<ul style="color:{VINHO};font-size:12px;font-family:Arial;'
               f'padding-left:18px;">{itens}</ul>')
-    return (f'<div style="font-family:Arial,sans-serif;color:#222;">'
+    txt = ""
+    if texto:
+        txt = (f'<pre style="font-family:Arial,sans-serif;font-size:13px;'
+               f'white-space:pre-wrap;background:#f6f6f6;padding:10px;'
+               f'border-left:3px solid {VINHO};">{texto}</pre>')
+    return (f'<div style="font-family:Arial,sans-serif;color:#222;background:#fff;">'
             f'<h2 style="font-size:17px;margin:0 0 2px;">ANS — Net Adds '
             f'({mes_rotulo})</h2>'
-            f'<p style="color:#888;font-size:12px;margin:0 0 14px;">'
+            f'<p style="color:#888;font-size:12px;margin:0 0 10px;">'
             f'Sala de Situação da ANS · planilha completa em anexo</p>'
-            f'{av}{corpo}</div>')
+            f'{av}{corpo}{txt}</div>')
 
 
-def excel(caminho: str, historicos: dict, tabelas: list[tuple[dict, str]] | None = None):
-    """Uma aba por base (as 3 que hoje saem em arquivos separados)."""
+# --------------------------------------------------------------------------- #
+# Excel
+# --------------------------------------------------------------------------- #
+ROTULO_SECAO = {"medico": "Médico-hospitalar", "odonto": "Odontológico",
+                "mercado": "Mercado Total", "corporate": "Médico-hospitalar"}
+# Uma aba por dimensao. O nome da coluna da quebra muda com ela — "segmento" nao
+# dizia nada (dono, 02/10/2026). A primeira aba e a de contratacao.
+ABAS = {"Contratação": ("Tipo de contratação", ["tipo de contratação"]),
+        "Faixa etária": ("Faixa etária", ["sexo", "idade"]),
+        "UF": ("UF", ["UF"])}
+ABA_DADOS = "Tipo de contratação"
+_RX_FAIXA = re.compile(r"^\s*(.+?)\s*\(([MF])\)\s*$")
+
+
+def _dados_longos(df, dimensao: str):
+    """Uma aba de dados: data · secao · registro · <quebra> · beneficiarios.
+
+    A data vem PRIMEIRO (dono, 02/10/2026) e e o 1o dia do mes, data de verdade —
+    mmm-yy e so exibicao. `registro` e numero, entao 000043 vira 43; o 0 e o
+    mercado. A linha agregada antiga (secao "mercado") nao entra: ela virou o
+    registro 0 dentro de medico/odonto.
+    """
     import pandas as pd
+    d = df[df["secao"] != "mercado"].copy()
+    if "dimensao" in d.columns:
+        # SO a aba de contratacao aceita linha sem dimensao: o historico vem do
+        # `coletar()`, que nao tem essa coluna, e ao concatenar vira NaN. As abas
+        # de quebra exigem correspondencia exata — sem isso o NaN vazava para
+        # todas e cada quebra saia com 1 milhao de linhas (visto em 02/10/2026).
+        if dimensao == "Contratação":
+            d = d[d["dimensao"].isna() | (d["dimensao"] == "Contratação")]
+        else:
+            d = d[d["dimensao"] == dimensao]
+    d["secao"] = d["secao"].map(lambda x: ROTULO_SECAO.get(x, x))
+    d["data"] = [_dt.date(int(a), int(m), 1) for a, m in zip(d["ano"], d["mes"])]
+    d["registro"] = pd.to_numeric(d["registro"], errors="coerce")
+
+    if dimensao == "Faixa etária":
+        # "20 (M)" vira duas colunas: quem olha quer filtrar sexo sem mexer em texto
+        sexo, idade = [], []
+        for v in d["segmento"].astype(str):
+            m = _RX_FAIXA.match(v)
+            sexo.append(m.group(2) if m else "")
+            idade.append(m.group(1) if m else v)
+        d["sexo"], d["idade"] = sexo, idade
+        cols = ["data", "secao", "registro", "sexo", "idade", "beneficiarios"]
+    else:
+        d[ABAS[dimensao][1][0]] = d["segmento"]
+        cols = ["data", "secao", "registro", ABAS[dimensao][1][0], "beneficiarios"]
+    return d[cols]
+
+
+def _formula_sumifs(secao_rotulo, registros, periodo, n_dados, segmento=None):
+    """Net adds de um periodo = base(fim) - base(antes do inicio), somando os
+    registros do grupo. SUMPRODUCT envolve o SUMIFS para aceitar a lista."""
+    meses = bp.meses_do(periodo)
+    if not meses or not registros:
+        return None
+    fa, fm = meses[-1]
+    ia, im = meses[0]
+    ia, im = (ia - 1, 12) if im == 1 else (ia, im - 1)
+    if registros == ["MERCADO"]:
+        regs = "0"                      # o mercado e a pseudo-operadora 0
+    else:
+        regs = ";".join(str(int(r)) for r in registros if str(r).isdigit())
+    if not regs:
+        return None
+    # A=data  B=secao  C=registro  D=quebra  E=beneficiarios
+    aba = f"'{ABA_DADOS}'"
+    lim = (f"$B$2:$B${n_dados}", f"$A$2:$A${n_dados}", f"$C$2:$C${n_dados}",
+           f"$E$2:$E${n_dados}")
+    seg = ""
+    if segmento:
+        # Corporate nao e uma secao: e o segmento "Coletivo Empresarial" dentro do
+        # medico-hospitalar. Sem este filtro a formula somaria a carteira inteira.
+        seg = f',{aba}!$D$2:$D${n_dados},"{segmento}"'
+
+    def base(a, m):
+        return (f"SUMPRODUCT(SUMIFS({aba}!{lim[3]},{aba}!{lim[0]},"
+                f'"{secao_rotulo}",{aba}!{lim[1]},DATE({a},{m},1),'
+                f"{aba}!{lim[2]},{{{regs}}}{seg}))")
+
+    return f"=({base(fa, fm)}-{base(ia, im)})/1000"
+
+
+def excel(caminho: str, df_longo, tabelas=None):
+    """Duas abas: `Dados` (tudo) e `Tabelas` (o que vai no e-mail, por SUMIFS)."""
+    import pandas as pd
+    from openpyxl.formatting.rule import ColorScaleRule
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    presentes = (set(df_longo["dimensao"].dropna()) if "dimensao" in df_longo
+                 else set()) | {"Contratação"}
     with pd.ExcelWriter(caminho, engine="openpyxl") as w:
-        for aba, df in historicos.items():
-            df.to_excel(w, sheet_name=aba[:31], index=False)
-        for t, titulo in (tabelas or []):
-            linhas = [{"": l["rotulo"], "Lives": l["lives"],
-                       **{c: l["net_adds"][i] for i, c in enumerate(t["colunas"])},
-                       "MoM": l["mom"], "YoY": l["yoy"]} for l in t["linhas"]]
-            pd.DataFrame(linhas).to_excel(w, sheet_name=f"Tab {titulo}"[:31],
-                                          index=False)
+        n = 2
+        for dim in ("Contratação", "Faixa etária", "UF"):
+            if dim not in presentes:
+                continue
+            g = _dados_longos(df_longo, dim)
+            if not len(g):
+                continue
+            g.to_excel(w, sheet_name=ABAS[dim][0][:31], index=False)
+            if dim == "Contratação":
+                n = len(g) + 1
+        wb = w.book
+        for aba in wb.sheetnames:
+            _formatar_dados(wb[aba])
+        _leia_me(wb)
+        if tabelas:
+            wt = wb.create_sheet("Tabelas")
+            wt.sheet_view.showGridLines = False
+            fino = Side(style="thin", color="E3E3E3")
+            borda = Border(left=fino, right=fino, top=fino, bottom=fino)
+            linha = 2
+            for t, titulo in tabelas:
+                rot = ROTULO_SECAO.get(t["secao"], t["secao"])
+                cabs = ["", "Lives"] + list(t["colunas"]) + ["MoM", "YoY"]
+                for j, texto in enumerate(cabs, start=2):
+                    c = wt.cell(row=linha, column=j, value=texto or titulo)
+                    c.font = Font(bold=True, color="FFFFFF", size=9)
+                    c.fill = PatternFill("solid", fgColor=VINHO.lstrip("#"))
+                    c.alignment = Alignment(horizontal="center")
+                    c.border = borda
+                linha += 1
+                ini_dados = linha
+                for l in t["linhas"]:
+                    c = wt.cell(row=linha, column=2, value=l["rotulo"])
+                    c.font = Font(bold=(l["nivel"] == 0), size=9)
+                    c.alignment = Alignment(indent=0 if l["nivel"] == 0 else 2)
+                    c.border = borda
+                    wt.cell(row=linha, column=3, value=l["lives"]).number_format = "#,##0"
+                    for k, per in enumerate(t.get("periodos", [])):
+                        f = _formula_sumifs(
+                            rot, l.get("registros") or [], per, n,
+                            segmento=("Coletivo Empresarial"
+                                      if t["secao"] == "corporate" else None))
+                        cel = wt.cell(row=linha, column=4 + k,
+                                      value=f if f else l["net_adds"][k])
+                        cel.number_format = "#,##0"
+                        cel.border = borda
+                    base = 4 + len(t["colunas"])
+                    wt.cell(row=linha, column=base, value=l["mom"]).number_format = "0.0%"
+                    wt.cell(row=linha, column=base + 1,
+                            value=l["yoy"]).number_format = "0.0%"
+                    for j in range(2, base + 2):
+                        wt.cell(row=linha, column=j).border = borda
+                    linha += 1
+                # escala de cor igual a do e-mail, mas nativa do Excel (dinamica)
+                col_ini = get_column_letter(4)
+                col_fim = get_column_letter(4 + len(t["colunas"]) + 1)
+                wt.conditional_formatting.add(
+                    f"{col_ini}{ini_dados}:{col_fim}{linha - 1}",
+                    ColorScaleRule(start_type="min", start_color="F796A2",
+                                   mid_type="num", mid_value=0, mid_color="FFFFFF",
+                                   end_type="max", end_color="8CD6A0"))
+                linha += 2          # faixa branca entre as tabelas
+            wt.column_dimensions["A"].width = 2
+            wt.column_dimensions["B"].width = 26
+            for j in range(3, 12):
+                wt.column_dimensions[get_column_letter(j)].width = 9
     return caminho
+
+
+def _formatar_dados(ws):
+    """Sem gridline, 1a linha congelada e em destaque, data e milhar."""
+    from openpyxl.styles import Font, PatternFill
+    ws.sheet_view.showGridLines = False
+    ws.freeze_panes = "A2"
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor=VINHO.lstrip("#"))
+    for row in ws.iter_rows(min_row=2, min_col=1, max_col=1):
+        for c in row:
+            c.number_format = "mmm-yy"
+    ult = ws.max_column
+    for row in ws.iter_rows(min_row=2, min_col=ult, max_col=ult):
+        for c in row:
+            c.number_format = "#,##0"
+    larguras = {1: 10, 2: 20, 3: 11, 4: 24, 5: 18, 6: 16}
+    for j, larg in larguras.items():
+        if j <= ult:
+            ws.column_dimensions[chr(64 + j)].width = larg
+
+
+def zipar(caminho: str) -> str:
+    """Compacta a planilha. A base completa passa de 23 MB e o Gmail corta em 25;
+    medido: 23,8 -> 11,9 MB."""
+    import os
+    import zipfile
+    destino = os.path.splitext(caminho)[0] + ".zip"
+    with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        z.write(caminho, os.path.basename(caminho))
+    return destino
+
+
+def _leia_me(wb):
+    """Uma aba curta explicando as duas armadilhas da base.
+
+    Existe porque as duas sao silenciosas: somar a aba inteira parece certo e
+    devolve o mercado em dobro, e somar as operadoras parece certo e fica 6%
+    abaixo do mercado. Quem abrir a planilha daqui a um ano nao vai lembrar."""
+    from openpyxl.styles import Alignment, Font
+    ws = wb.create_sheet("Leia-me", 0)
+    ws.sheet_view.showGridLines = False
+    linhas = [
+        ("ANS — Net Adds · Sala de Situação", True),
+        ("", False),
+        ("Fonte: painel Sala de Situação da ANS (abas Setor e Operadoras).", False),
+        ("NÃO usa o Caderno 2.0 — a ideia é pegar o dado antes dele.", False),
+        ("", False),
+        ("Duas armadilhas:", True),
+        ("", False),
+        ("1. O registro 0 é o MERCADO (total do setor), não uma operadora.", False),
+        ("   Somar a coluna inteira conta o mercado duas vezes.", False),
+        ("   Para somar operadoras, filtre registro <> 0.", False),
+        ("", False),
+        ("2. A soma das operadoras NÃO chega ao mercado: fica ~6% abaixo no", False),
+        ("   médico-hospitalar e ~2,7% no odontológico, de forma estável em", False),
+        ("   todos os meses. Não é falha da coleta — operadora a operadora o", False),
+        ("   número bate exato com o painel. É o próprio agregado da ANS que", False),
+        ("   é maior que a soma das séries que ele mesmo publica.", False),
+        ("", False),
+        ("As abas de quebra (Faixa etária, UF) são MARGINAIS do mesmo total:", False),
+        ("não devem ser somadas junto com Tipo de contratação.", False),
+        ("Faixa etária existe só por operadora e só para o mês corrente.", False),
+    ]
+    for i, (txt, forte) in enumerate(linhas, start=1):
+        c = ws.cell(row=i, column=1, value=txt)
+        c.font = Font(bold=forte, size=12 if i == 1 else 10)
+        c.alignment = Alignment(vertical="center")
+    ws.column_dimensions["A"].width = 78

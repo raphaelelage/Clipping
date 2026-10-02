@@ -89,8 +89,21 @@ def carregar(pasta: str) -> pd.DataFrame:
     return out
 
 
+def _so_contratacao(df: pd.DataFrame) -> pd.DataFrame:
+    """Fica so com a dimensao de contratacao.
+
+    Faixa etaria e UF sao MARGINAIS do mesmo total: sem este filtro, a tabela
+    soma a mesma vida tres vezes (visto em 02/10/2026 — HAPV apareceu com 25.490
+    mil em vez de 8.497). Base antiga, sem a coluna, passa inteira."""
+    if "dimensao" not in df.columns:
+        return df
+    d = df[df["dimensao"].isna() | (df["dimensao"] == "Contratação")]
+    return d
+
+
 def para_secao(df: pd.DataFrame, secao: str) -> pd.DataFrame:
     """Recorta e agrega o longo para o que cada secao do e-mail precisa."""
+    df = _so_contratacao(df)
     if secao == "corporate":
         d = df[(df["secao"] == "medico")
                & (df["segmento"].str.lower() == CORPORATE)]
@@ -103,9 +116,17 @@ def para_secao(df: pd.DataFrame, secao: str) -> pd.DataFrame:
 
 
 def mercado(df: pd.DataFrame, secao: str) -> pd.DataFrame:
-    """A linha agregada da ANS para a secao (Assistencia Medica / Odontologico)."""
-    alvo = "exclusivamente odontol" if secao == "odonto" else "assist"
-    d = df[(df["secao"] == "mercado")
-           & (df["segmento"].str.lower().str.startswith(alvo))]
-    return (d.groupby(["registro", "ano", "mes"], as_index=False)["beneficiarios"]
-             .sum())
+    """O total do setor. Ate 02/10/2026 vinha como secao "mercado"; agora vem
+    como a pseudo-operadora de registro 0 dentro de medico/odonto. Aceita as
+    duas formas para nao quebrar base antiga."""
+    d = _so_contratacao(df)
+    novo = d[(d["secao"] == ("odonto" if secao == "odonto" else "medico"))
+             & (d["registro"].astype(str).str.lstrip("0") == "")]
+    if len(novo):
+        out = novo.assign(registro="MERCADO")
+    else:
+        alvo = "exclusivamente odontol" if secao == "odonto" else "assist"
+        out = d[(d["secao"] == "mercado")
+                & (d["segmento"].str.lower().str.startswith(alvo))]
+    return (out.groupby(["registro", "ano", "mes"], as_index=False)["beneficiarios"]
+               .sum())

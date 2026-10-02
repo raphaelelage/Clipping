@@ -132,11 +132,11 @@ def montar(serie: Serie, secao: str, ano: int, mes: int, colunas: list[dict] | N
         def _linha(rotulo, registros, nivel):
             if registros is None:
                 return {"rotulo": rotulo, "nivel": nivel, "lives": None,
-                        "net_adds": [None] * len(colunas), "mom": None, "yoy": None,
-                        "pendente": g}
+                        "registros": [], "net_adds": [None] * len(colunas),
+                        "mom": None, "yoy": None, "pendente": g}
             lives = serie.base(registros, ano, mes)
             return {
-                "rotulo": rotulo, "nivel": nivel,
+                "rotulo": rotulo, "nivel": nivel, "registros": list(registros),
                 "lives": None if lives is None else lives / 1000.0,
                 "net_adds": [(None if (v := serie.net_adds(registros, c)) is None
                               else v / 1000.0) for c in colunas],
@@ -165,6 +165,7 @@ def montar(serie: Serie, secao: str, ano: int, mes: int, colunas: list[dict] | N
             linhas.append(_linha(item["rotulo"], sub, 1))
 
     return {"secao": secao, "ano": ano, "mes": mes,
+            "periodos": colunas,
             "colunas": [bp.cabecalho(c) for c in colunas],
             "mes_rotulo": bp.rotulo_mes(ano, mes), "linhas": linhas}
 
@@ -182,13 +183,13 @@ _VAZIA = {"lives": None, "mom": None, "yoy": None}
 
 def _mercado(sm, colunas, ano, mes, rotulo):
     if sm is None:
-        return {"rotulo": rotulo, "nivel": 0, "net_adds": [None] * len(colunas),
-                **_VAZIA}
+        return {"rotulo": rotulo, "nivel": 0, "registros": [],
+                "net_adds": [None] * len(colunas), **_VAZIA}
     reg = ["MERCADO"]
     lives = sm.base(reg, ano, mes)
     atual, antes = lives, sm.base(reg, ano - 1, mes)
     return {
-        "rotulo": rotulo, "nivel": 0,
+        "rotulo": rotulo, "nivel": 0, "registros": ["MERCADO"],
         "lives": None if lives is None else lives / 1000.0,
         "net_adds": [(None if (v := sm.net_adds(reg, c)) is None else v / 1000.0)
                      for c in colunas],
@@ -201,8 +202,8 @@ def _residual(linhas, sm, colunas, ano, mes, rotulo):
     """Market menos a soma dos grupos de topo ja montados."""
     mkt = _mercado(sm, colunas, ano, mes, "Market")
     if mkt["lives"] is None:
-        return {"rotulo": rotulo, "nivel": 0, "net_adds": [None] * len(colunas),
-                **_VAZIA}
+        return {"rotulo": rotulo, "nivel": 0, "registros": [],
+                "net_adds": [None] * len(colunas), **_VAZIA}
     topos = [l for l in linhas if l["nivel"] == 0 and l["lives"] is not None]
 
     def menos(campo, i=None):
@@ -229,4 +230,4 @@ def _residual(linhas, sm, colunas, ano, mes, rotulo):
     mom = (None if (lives is None or na[0] is None or not lives or lives == na[0])
            else na[0] / (lives - na[0]))
     return {"rotulo": rotulo, "nivel": 0, "lives": lives, "net_adds": na,
-            "mom": mom, "yoy": None}
+            "registros": [], "residual": True, "mom": mom, "yoy": None}
