@@ -11,3 +11,12 @@ valuation_cache.json
 
 # cache local do backfill (214 MB, regeneravel): nunca vai para o repo
 backfill_cache.parquet
+dou_bruto.parquet
+inlabs_cache/
+dou_mensal_cache/
+
+# amostras do INLABS baixadas para teste (2,3 MB, rebaixavel): repo e publico
+inlabs_teste/
+
+credenciais_netadds.bat
+rodar_netadds.log

@@ -1,46 +1,40 @@
-# Runner self-hosted — PC do Raphael
+# Rodar o Net Adds no PC — Agendador, nao runner
 
-Instalado em `C:\actions-runner`, registrado no repo `raphaelelage/Clipping`.
-Como `clipping.yml` e `blast.yml` estao no MESMO repo, **um runner serve os dois**.
+O Blast roda no PC do dono pelo **Agendador de Tarefas do Windows**, o mesmo
+esquema das tarefas `BBI *` da Base Consolidada. Nao usa runner self-hosted.
 
-Labels: `self-hosted, windows, x64, pc-raphael`.
+    Tarefa:  BBI net adds        diaria, 08h30, limite de 2h
+    Chama:   rodar_netadds.bat   (nesta pasta)
+    Log:     rodar_netadds.log
 
-## Virar servico (sobe sozinho com o Windows)
+Assim a coleta mensal nao gasta a cota de 2.000 min/mes do GitHub. O
+`blast.yml` continua existindo para o disparo manual pelo app e como plano B.
 
-**`svc.cmd` NAO existe nas versoes atuais do runner (2.3x).** Ele so e criado
-quando o runner ja foi configurado como servico — ou seja, instalar o servico
-significa RE-REGISTRAR o runner com `--runasservice`, nao rodar um script a parte.
+## Credenciais
 
-PowerShell **como administrador**. O comando busca o token sozinho, para ele nao
-passar por chat nem ficar em disco:
+O `.bat` le `credenciais_netadds.bat` (NAO versionado). Copie o molde:
 
-```
-cd C:\actions-runner
-$t = gh api repos/raphaelelage/Clipping/actions/runners/registration-token -X POST --jq .token
-.\config.cmd --unattended --replace --url https://github.com/raphaelelage/Clipping --token $t --name pc-raphael --labels self-hosted,windows,x64,pc-raphael --work _work --runasservice
-```
+    copy credenciais_netadds.exemplo.bat credenciais_netadds.bat
 
-Conferir: `Get-Service actions.runner.*`
-Parar / subir: `Stop-Service actions.runner.*` · `Start-Service actions.runner.*`
+e preencha `EMAIL_REMETENTE`, `EMAIL_SENHA` (senha de APP do Gmail, 16 letras,
+em https://myaccount.google.com/apppasswords) e `BLAST_TO`.
 
-Sem o servico, o runner so fica de pe enquanto o processo que o iniciou viver.
+Sem esse arquivo o `.bat` roda assim mesmo, mas com `--sem-email`: atualiza o
+BigQuery e gera a planilha, sem enviar.
 
-## O que ainda falta: o secret RUNNER_PAT
+A credencial do BigQuery e a mesma do Cerebro
+(`C:\Users\Raphael\Dev\Cerebro\_gcp\credenciais.json`), ja apontada pelo `.bat`.
 
-O job `escolher` (nos dois workflows) pergunta a API se existe runner online.
-Essa consulta exige permissao **Administration: Read**, que o GITHUB_TOKEN padrao
-NAO tem. Sem o secret, a pergunta falha, o job assume "PC desligado" e vai para o
-GitHub — consumindo a cota de 2.000 min/mes. E de proposito: errar para o lado do
-GitHub e melhor do que mandar o job para uma maquina que pode estar desligada.
+## Por que nao runner self-hosted
 
-Crie um **fine-grained PAT** com acesso so a este repositorio e so a permissao
-`Administration: Read`:
+Chegou a ser instalado em `C:\actions-runner` e foi removido. Para funcionar ele
+exigiria duas pecas a mais — o servico do Windows (precisa de admin) e um secret
+`RUNNER_PAT` com permissao Administration:Read, sem o qual o workflow nao
+consegue nem perguntar se o PC esta ligado. O Agendador entrega o mesmo
+resultado com o padrao que a casa ja usa.
 
-    https://github.com/settings/personal-access-tokens/new
+## Conferir
 
-e salve como secret `RUNNER_PAT`:
-
-    https://github.com/raphaelelage/Clipping/settings/secrets/actions
-
-Evite um token classico de uso geral aqui: ele daria ao workflow muito mais
-alcance do que a pergunta "o PC esta ligado?" precisa.
+    Get-ScheduledTask -TaskName "BBI net adds"
+    Start-ScheduledTask -TaskName "BBI net adds"     # roda na hora
+    Get-Content rodar_netadds.log -Tail 20
