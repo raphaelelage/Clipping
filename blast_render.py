@@ -5,6 +5,12 @@ As tabelas sao coladas como IMAGEM no WhatsApp, as duas num print so. Dai todas
 as decisoes de forma: larguras fixas e iguais entre as tabelas, linhas finas,
 cor forte (a compressao do WhatsApp lava o tom), fundo branco e uma coluna
 branca de respiro em cada lado — para o recorte nao encostar no numero.
+
+CADA elemento declara `background` E `color`, sem excecao e sem herdar. O e-mail
+do dono abre com FUNDO PRETO (04/10/2026): o que so herda o branco aparece preto
+no print, e — pior — texto sem `color` proprio e invertido para claro pelo
+cliente e some no fundo branco da celula. Declarar os dois e o que mantem a
+tabela identica no claro e no escuro.
 """
 from __future__ import annotations
 
@@ -16,6 +22,7 @@ import blast_periodos as bp
 VERDE = (140, 214, 160)
 VERMELHO = (247, 150, 162)
 CINZA = "#4a4a4a"
+TINTA = "#222"            # cor do texto, sempre explicita — ver nota abaixo
 VINHO = "#9e1b32"
 L_ROTULO = 168
 L_NUM = 56
@@ -59,8 +66,13 @@ def tabela_html(t: dict, titulo: str) -> str:
     th = ("padding:1px 5px;font-size:11px;font-weight:bold;color:#fff;"
           f"background:{VINHO};border:1px solid #fff;text-align:center;"
           "white-space:nowrap;line-height:1.15;")
+    # `background:#fff` em TODA celula, nao so na tabela: celula que apenas
+    # herda o fundo e a que o Gmail/Outlook inverte no modo escuro, e o print
+    # sai com rotulo cinza no meio de numero branco. Quem tem cor sobrescreve,
+    # porque o `_cor` entra depois no mesmo style (dono, 04/10/2026).
     td = ("padding:0 5px;font-size:11px;border:1px solid #e3e3e3;"
-          "text-align:right;white-space:nowrap;line-height:1.3;")
+          "text-align:right;white-space:nowrap;line-height:1.3;"
+          f"background:#fff;color:{TINTA};")
     br = f"background:#fff;border:0;width:{L_RESPIRO}px;"   # respiro lateral
 
     n_num = 1 + len(cols) + 2
@@ -69,7 +81,8 @@ def tabela_html(t: dict, titulo: str) -> str:
              + f'<col style="width:{L_NUM}px">' * n_num
              + f'<col style="width:{L_RESPIRO}px"></colgroup>')
     larg = L_ROTULO + L_NUM * n_num + 2 * L_RESPIRO
-    o = [f'<table style="border-collapse:collapse;font-family:Arial,sans-serif;'
+    o = [f'<table bgcolor="#ffffff" cellpadding="0" cellspacing="0" border="0" '
+         f'style="border-collapse:collapse;font-family:Arial,sans-serif;'
          f'background:#fff;margin:0;table-layout:fixed;width:{larg}px;">{grupo}']
 
     o.append(f'<tr><td style="{br}"></td><th style="{th}text-align:left;">{titulo}</th>'
@@ -104,24 +117,40 @@ def tabela_html(t: dict, titulo: str) -> str:
 def email_html(tabelas, mes_rotulo: str, avisos=None, texto: str = "") -> str:
     """Tabelas empilhadas, coladas, com faixa branca entre elas e nas pontas —
     para o print sair com margem sem precisar de edicao."""
-    faixa = '<div style="height:12px;background:#fff;line-height:12px;">&nbsp;</div>'
+    faixa = ('<div style="height:12px;background:#fff;line-height:12px;'
+             'font-size:12px;">&nbsp;</div>')
     corpo = faixa + faixa.join(tabela_html(t, ti) for t, ti in tabelas) + faixa
     av = ""
     if avisos:
-        itens = "".join(f"<li>{a}</li>" for a in avisos)
-        av = (f'<ul style="color:{VINHO};font-size:12px;font-family:Arial;'
-              f'padding-left:18px;">{itens}</ul>')
+        itens = "".join(f'<li style="background:#fff;color:{VINHO};">{a}</li>'
+                        for a in avisos)
+        av = (f'<ul style="color:{VINHO};background:#fff;font-size:12px;'
+              f'font-family:Arial;padding:6px 6px 6px 22px;margin:0 0 8px;">'
+              f'{itens}</ul>')
     txt = ""
     if texto:
         txt = (f'<pre style="font-family:Arial,sans-serif;font-size:13px;'
-               f'white-space:pre-wrap;background:#f6f6f6;padding:10px;'
+               f'white-space:pre-wrap;background:#f6f6f6;color:{TINTA};'
+               f'padding:10px;margin:10px 0 0;'
                f'border-left:3px solid {VINHO};">{texto}</pre>')
-    return (f'<div style="font-family:Arial,sans-serif;color:#222;background:#fff;">'
-            f'<h2 style="font-size:17px;margin:0 0 2px;">ANS — Net Adds '
-            f'({mes_rotulo})</h2>'
-            f'<p style="color:#888;font-size:12px;margin:0 0 10px;">'
-            f'Sala de Situação da ANS · planilha completa em anexo</p>'
-            f'{av}{corpo}{txt}</div>')
+    # Envelope em TABELA, nao em div: numa div a tabela mais larga que a tela
+    # transborda e a parte de fora cai no preto da caixa de entrada (visto em
+    # 04/10/2026 ao simular o e-mail escuro). A celula de uma tabela cresce com
+    # o conteudo, entao o branco acompanha. `color-scheme: light only` pede ao
+    # cliente que nao inverta; quem ignora ja encontra cor e fundo em tudo.
+    dentro = (f'<div style="font-family:Arial,sans-serif;color:{TINTA};'
+              f'background:#fff;color-scheme:light only;">'
+              f'<h2 style="font-size:17px;margin:0 0 2px;color:{TINTA};'
+              f'background:#fff;">ANS — Net Adds ({mes_rotulo})</h2>'
+              f'<p style="color:#777;background:#fff;font-size:12px;'
+              f'margin:0 0 10px;">'
+              f'Sala de Situação da ANS · planilha completa em anexo</p>'
+              f'{av}{corpo}{txt}</div>')
+    return (f'<table bgcolor="#ffffff" cellpadding="0" cellspacing="0" '
+            f'border="0" width="100%" style="background:#fff;'
+            f'border-collapse:collapse;color-scheme:light only;">'
+            f'<tr><td bgcolor="#ffffff" style="background:#fff;padding:12px;">'
+            f'{dentro}</td></tr></table>')
 
 
 # --------------------------------------------------------------------------- #

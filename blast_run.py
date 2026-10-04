@@ -306,8 +306,11 @@ def _uma_fase(a, fase: int, alvo):
         _p(f"[ok] rascunho ({tx.POSICOES[tx.escolher(mes)]}): {txt}")
 
     html = br.email_html(tabelas, bp.rotulo_mes(ano, mes), avisos, texto=texto)
+    # o arquivo precisa do charset; o e-mail nao, porque o MIME ja declara
+    # utf-8. Sem isso o .html do artefato abre com "SituaÃ§Ã£o" (04/10/2026).
     io.open(os.path.splitext(destino)[0] + ".html", "w",
-            encoding="utf-8").write(html)
+            encoding="utf-8").write('<!doctype html><meta charset="utf-8">'
+                                    + html)
     if not a.sem_email:
         enviar(html, anexo, ano, mes, destinatarios(),
                sem_novidade=(novidade is False), fase=fase, texto=texto)
