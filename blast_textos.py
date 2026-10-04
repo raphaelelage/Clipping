@@ -360,29 +360,29 @@ POSICOES = {"1": "1º mês do trimestre", "2": "2º mês do trimestre",
 # no texto e nao vira HTML.
 _M1 = """Bom dia!
 
-Saíram os dados de beneficiários da ANS de {rotulo Mês}.
+"Saíram os dados de beneficiários da ANS de {rotulo Mês}."
 
-* O mercado de planos de saúde cresceu {Market net_adds Mês}k vidas ({Market yoy sinal} YoY);
+- O mercado de planos de saúde cresceu {Market net_adds Mês}k vidas ({Market yoy sinal} YoY);
 
-* HAPV perdeu {HAPV net_adds Mês mod}k vidas no mês, sendo {Hapvida net_adds Mês sinal}k na Hapvida e {ND Intermédica net_adds Mês sinal}k na NDI;
+- HAPV perdeu {HAPV net_adds Mês mod}k vidas no mês, sendo {Hapvida net_adds Mês sinal}k na Hapvida e {ND Intermédica net_adds Mês sinal}k na NDI;
 
-* SULA adicionou {SulAmérica (ex. ASO) net_adds Mês}k vidas ex. ASO no mês;
+- SULA adicionou {SulAmérica (ex. ASO) net_adds Mês}k vidas ex. ASO no mês;
 
-* Bradesco manteve o ritmo de crescimento, com {Bradesco (ex. ASO) net_adds Mês sinal}k ex. ASO. no mês;
+- Bradesco manteve o ritmo de crescimento, com {Bradesco (ex. ASO) net_adds Mês sinal}k ex. ASO. no mês;
 
-* Amil adicionou {Amil net_adds Mês sinal}k vidas no mês;
+- Amil adicionou {Amil net_adds Mês sinal}k vidas no mês;
 
-* Porto adicionou {Porto Seguro net_adds Mês}k vidas no mês;
+- Porto adicionou {Porto Seguro net_adds Mês}k vidas no mês;
 
-* As adições líquidas de planos odontológicos totalizaram {odonto Market net_adds Mês sinal}k vidas no mês ({odonto Market yoy sinal} YoY);
+- As adições líquidas de planos odontológicos totalizaram {odonto Market net_adds Mês sinal}k vidas no mês ({odonto Market yoy sinal} YoY);
 
-* ODPV adicionou {odonto ODPV net_adds Mês}k vidas no mês.
+- ODPV adicionou {odonto ODPV net_adds Mês}k vidas no mês.
 
 Qualquer dúvida, estamos à disposição."""
 
 _M2 = """Bom dia!
 
-Saíram os dados de beneficiários da ANS de {rotulo Mês}.
+"Saíram os dados de beneficiários da ANS de {rotulo Mês}."
 
 - O mercado de planos de saúde ganhou {Market net_adds Mês}k vidas no mês ({Market yoy sinal} YoY);
 
@@ -404,7 +404,7 @@ Qualquer dúvida, estamos à disposição."""
 
 _M3 = """Bom dia!
 
-Saíram os dados de beneficiários da ANS de {rotulo Mês}.
+"Saíram os dados de beneficiários da ANS de {rotulo Mês}."
 
 - O mercado de planos de saúde cresceu {Market net_adds Mês}k vidas ({Market yoy sinal} YoY). No {rotulo Trimestre} o crescimento foi de {Market net_adds Trimestre}k vidas;
 
