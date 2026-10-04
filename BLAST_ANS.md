@@ -31,6 +31,13 @@ saiu. O e-mail que passar de 24 MB vai **sem anexo**, com as tabelas no corpo e
 a planilha no artefato da execucao (o Gmail recusa a mensagem inteira, nao so o
 anexo).
 
+> **Nao devolva o `.bat` para `python ... | powershell Tee-Object`.** No cmd o
+> `%errorlevel%` depois de `A | B` e o de **B**: a protecao "se a coleta falhar,
+> nao peca o e-mail" estava checando o PowerShell e nunca disparava — a coleta
+> podia morrer e o e-mail saia com o mes velho do BigQuery, com cara de normal
+> (medido em 04/10/2026: sem pipe -> 1, com pipe -> 0). Por isso quem escreve o
+> log agora e o proprio python, via `--log`, sem pipe no caminho.
+
 Os botoes do app nao coletam: remontam do BigQuery. "Base completa" e o segundo
 e-mail, e so existe depois que a varredura do PC rodou.
 
