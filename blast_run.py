@@ -85,8 +85,22 @@ def colunas_do_mes(ano: int, mes: int) -> list[dict]:
 
 # --------------------------------------------------------------- dados
 def no_github() -> bool:
-    """True quando rodando no runner do GitHub — la o tempo e cota paga, entao
-    so a fase 1 roda. No PC o tempo e de graca e vale varrer tudo."""
+    """True quando o tempo e COTA PAGA (runner hospedado pelo GitHub).
+
+    Nao basta olhar `GITHUB_ACTIONS`: ele tambem vale "true" no runner
+    self-hosted do PC do dono, e ali o tempo e de graca — com o teste antigo, um
+    job rodando NO PC fazia so a fase 1 (visto em 04/10/2026). A ordem e:
+
+      BLAST_MAQUINA       o workflow diz qual maquina escolheu (mais confiavel)
+      RUNNER_ENVIRONMENT  "github-hosted" | "self-hosted", posto pelo runner
+      GITHUB_ACTIONS      ultimo recurso: se estamos em Actions, assume cota
+    """
+    maq = (os.environ.get("BLAST_MAQUINA") or "").strip().lower()
+    if maq:
+        return maq != "self-hosted"
+    amb = (os.environ.get("RUNNER_ENVIRONMENT") or "").strip().lower()
+    if amb:
+        return amb != "self-hosted"
     return bool(os.environ.get("GITHUB_ACTIONS"))
 
 
@@ -391,8 +405,10 @@ def main(argv=None):
         fases = [1] if (no_github() or a.so_tabela) else [1, 2]
     else:
         fases = [int(a.fase)]
-    _p(f"[blast] fases: {fases} "
-       f"({'GitHub' if no_github() else 'PC'})")
+    onde = os.environ.get("BLAST_MAQUINA") or (
+        "GitHub" if no_github() else "PC")
+    _p(f"[blast] fases: {fases} | máquina: {onde} "
+       f"({'cota paga' if no_github() else 'tempo de graça'})")
 
     try:
         for f in fases:

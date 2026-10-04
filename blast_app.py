@@ -242,8 +242,33 @@ def _leitura(marca: str) -> dict:
 
 
 # --------------------------------------------------------------- seção
+_PC = {
+    "online": ("🖥️", "PC ligado — vai rodar **aí**, sem gastar cota do GitHub."),
+    "ocupado": ("⏳", "O PC está ligado mas ocupado com outra execução; "
+                      "esta vai para o GitHub."),
+    "offline": ("☁️", "PC desligado (ou sem a listener) — vai rodar no "
+                      "**GitHub**, gastando cota."),
+    "sem_permissao": ("❔", "Não consigo ver o PC daqui — vai para o GitHub."),
+    "erro": ("❔", "Não consegui consultar o PC — vai para o GitHub."),
+}
+
+
+def _onde_roda(pc):
+    """Mostra em qual maquina o disparo vai cair e devolve o alvo."""
+    if not pc:
+        return "auto"
+    estado, detalhe = pc()
+    icone, recado = _PC.get(estado, _PC["erro"])
+    (st.success if estado == "online" else st.info)(f"{icone} {recado}")
+    if estado in ("sem_permissao", "erro"):
+        st.caption(f"↳ {detalhe}. Para o PC ser usado, a listener precisa estar "
+                   f"rodando (atalho `bbi_runner.vbs` na pasta Inicializar) e o "
+                   f"PAT do app precisa enxergar os runners.")
+    return "self-hosted" if estado == "online" else "auto"
+
+
 def render(*, dispatch, gh_get, gh_put, runs=None, logs=None, diagnostico=None,
-           cron_ui=None, previa_texto=None, ano_padrao: int):
+           cron_ui=None, previa_texto=None, pc=None, ano_padrao: int):
     """A seção inteira do Blast, com as proprias abas.
 
     E um projeto separado do clipping de noticias — so divide a casca do app
@@ -264,26 +289,40 @@ def render(*, dispatch, gh_get, gh_put, runs=None, logs=None, diagnostico=None,
     with t_run:
         to = st.text_input("E-mails", value="raphael.elage.s@gmail.com",
                            key="bl_to", help="Separe por vírgula.")
-        c1, c2, c3 = st.columns(3)
-        if c1.button("📨 Coletar e enviar", key="bl_run"):
+        alvo = _onde_roda(pc)
+
+        st.markdown("**Coletar da ANS** (consulta a Sala de Situação)")
+        c1, c2 = st.columns(2)
+        if c1.button("📨 Coletar e enviar", key="bl_run",
+                     help="As operadoras do de-para e o mercado. É o e-mail "
+                          "rápido, de poucos minutos."):
             with st.spinner("disparando…"):
-                dispatch("completo", to)
-        if c2.button("🔁 Só a tabela", key="bl_tab",
-                     help="Não consulta a ANS: remonta o e-mail com o histórico "
-                          "que já está no BigQuery. Use depois de mexer em "
-                          "grupos ou colunas."):
+                dispatch("completo", to, maquina=alvo)
+        if c2.button("🧹 Coletar tudo", key="bl_full",
+                     help="Varre TODAS as operadoras do painel e puxa faixa "
+                          "etária, sexo e UF. É o que atualiza a base completa "
+                          "no BigQuery."):
             with st.spinner("disparando…"):
-                dispatch("tabela", to)
-        if c3.button("📦 Base completa", key="bl_f2",
-                     help="O segundo e-mail: todas as operadoras e as quebras "
-                          "por faixa etária e UF, com a planilha inteira. "
-                          "Também remonta do BigQuery — só existe depois que a "
-                          "varredura do PC rodou."):
+                dispatch("completo", to, fase="2", maquina=alvo)
+        st.caption("⚠️ O **Coletar tudo** é a varredura inteira — rode com o PC "
+                   "ligado. No GitHub ela também funciona, mas consome bem mais "
+                   "da cota mensal, e é a única forma de atualizar as abas de "
+                   "faixa etária, sexo e UF.")
+
+        st.divider()
+        st.markdown("**Só remontar o e-mail** (não toca na ANS)")
+        c3, c4 = st.columns(2)
+        if c3.button("🔁 Só a tabela", key="bl_tab",
+                     help="Remonta o e-mail com o histórico que já está no "
+                          "BigQuery. Use depois de mexer em grupos, colunas "
+                          "ou textos."):
             with st.spinner("disparando…"):
-                dispatch("tabela", to, fase="2")
-        st.caption("No PC a tarefa **BBI net adds** (08:30) coleta e pede os "
-                   "dois e-mails: o dos grupos primeiro, o completo depois. "
-                   "Aqui os botões não coletam — só remontam do BigQuery.")
+                dispatch("tabela", to, maquina=alvo)
+        if c4.button("📦 Remontar base completa", key="bl_f2",
+                     help="O segundo e-mail, com a planilha inteira e as "
+                          "quebras — do que já está no BigQuery."):
+            with st.spinner("disparando…"):
+                dispatch("tabela", to, fase="2", maquina=alvo)
 
     with t_cfg:
         sub_g, sub_c = st.tabs(["👥 Grupos", "🗓️ Colunas"])

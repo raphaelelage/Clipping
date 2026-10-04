@@ -124,7 +124,33 @@ def dispatch_now(vertical, period, recipients):
 BLAST_WF = S.get("blast_workflow_file", "blast.yml")
 
 
-def dispatch_blast(modo, recipients, mes="", fase="auto"):
+def runner_do_pc():
+    """(estado, detalhe) do runner self-hosted. Quem decide onde rodar e o APP,
+    nao o workflow: o `github.token` de la nao consegue listar runners (nao
+    existe permissao `administration` para ele), entao sem um PAT a consulta
+    sempre falha e tudo cairia no GitHub mesmo com o PC ligado."""
+    r = _req("get", f"{GH_API}/repos/{OWNER}/{REPO}/actions/runners",
+             headers=_gh_headers())
+    code = getattr(r, "status_code", 0)
+    if code == 403:
+        return "sem_permissao", "o PAT não tem Administration: read"
+    if code != 200:
+        return "erro", f"HTTP {code or '?'}"
+    try:
+        runners = (r.json() or {}).get("runners") or []
+    except Exception:                                             # noqa: BLE001
+        return "erro", "resposta ilegível"
+    livres = [x for x in runners
+              if x.get("status") == "online" and not x.get("busy")]
+    if livres:
+        return "online", livres[0].get("name", "pc")
+    ocupado = [x for x in runners if x.get("status") == "online"]
+    if ocupado:
+        return "ocupado", ocupado[0].get("name", "pc")
+    return "offline", (runners[0].get("name", "pc") if runners else "sem runner")
+
+
+def dispatch_blast(modo, recipients, mes="", fase="auto", maquina="auto"):
     """Dispara o workflow do Blast.
 
     `modo` em {'completo', 'tabela'} — tabela remonta o e-mail do historico do
@@ -133,6 +159,7 @@ def dispatch_blast(modo, recipients, mes="", fase="auto"):
     depois que o PC roda a varredura."""
     url = f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/{BLAST_WF}/dispatches"
     body = {"ref": BRANCH, "inputs": {"modo": modo, "mes": mes, "fase": fase,
+                                      "maquina": maquina,
                                       "recipients": recipients}}
     return _req("post", url, headers=_gh_headers(), json=body, timeout=30)
 
@@ -405,8 +432,8 @@ if VERT == NETADDS:
 
     import blast_app
 
-    def _bl_dispatch(modo, to, fase="auto"):
-        r = dispatch_blast(modo, to, fase=fase)
+    def _bl_dispatch(modo, to, fase="auto", maquina="auto"):
+        r = dispatch_blast(modo, to, fase=fase, maquina=maquina)
         if getattr(r, "status_code", 0) == 204:
             st.success("Disparado. O e-mail chega quando o run terminar.")
         else:
@@ -458,7 +485,7 @@ if VERT == NETADDS:
 
     blast_app.render(dispatch=_bl_dispatch, gh_get=_bl_get, gh_put=_bl_put,
                      runs=_bl_runs, logs=_bl_logs, diagnostico=_bl_diag,
-                     previa_texto=_bl_previa,
+                     previa_texto=_bl_previa, pc=runner_do_pc,
                      ano_padrao=_dt.date.today().year)
     st.stop()
 

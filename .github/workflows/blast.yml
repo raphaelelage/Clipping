@@ -24,6 +24,12 @@ on:
         default: "auto"
         type: choice
         options: ["auto", "1", "2"]
+      maquina:
+        description: "onde rodar - auto deixa o job escolher"
+        required: false
+        default: "auto"
+        type: choice
+        options: ["auto", "self-hosted", "ubuntu-latest"]
       recipients:
         description: "E-mails destino (virgula). Vazio = BLAST_RECIPIENTS"
         required: false
@@ -41,12 +47,29 @@ jobs:
       - id: decidir
         env:
           GH_TOKEN: ${{ secrets.RUNNER_PAT || github.token }}
+          PEDIDA: ${{ github.event.inputs.maquina }}
         run: |
-          # Se a consulta falhar, cai no GitHub — nunca o contrario, para nao
-          # mandar o job para uma maquina desligada.
-          ONLINE=$(gh api "repos/${{ github.repository }}/actions/runners" \
-                     --jq '[.runners[] | select(.status=="online" and (.busy|not))] | length' \
-                   2>/dev/null || echo 0)
+          # Quem costuma decidir e o APP, que ve o runner com o PAT dele e manda
+          # `maquina` pronta. Aqui so obedecemos.
+          if [ -n "$PEDIDA" ] && [ "$PEDIDA" != "auto" ]; then
+            echo "maquina pedida no disparo: $PEDIDA"
+            echo "maquina=$PEDIDA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Sem pedido explicito, tentamos ver o runner. ATENCAO: o github.token
+          # NAO consegue listar runners (nao existe permissao `administration`
+          # para ele), entao sem o secret RUNNER_PAT esta consulta SEMPRE falha
+          # e cai no ubuntu — por isso o app e quem decide (04/10/2026).
+          if ONLINE=$(gh api "repos/${{ github.repository }}/actions/runners" \
+                        --jq '[.runners[] | select(.status=="online" and (.busy|not))] | length' \
+                      2>/tmp/err); then
+            echo "runners livres: $ONLINE"
+          else
+            echo "nao consegui consultar os runners: $(head -c 200 /tmp/err)"
+            ONLINE=0
+          fi
+          # Na duvida, GitHub — nunca o contrario, para nao mandar o job para
+          # uma maquina desligada e ele ficar na fila.
           if [ "${ONLINE:-0}" -gt 0 ]; then
             echo "PC ligado -> self-hosted"
             echo "maquina=self-hosted" >> "$GITHUB_OUTPUT"
@@ -86,6 +109,9 @@ jobs:
           EMAIL_SENHA: ${{ secrets.EMAIL_SENHA }}
           BLAST_TO: ${{ github.event.inputs.recipients || vars.BLAST_RECIPIENTS }}
           BQ_PROJECT: ${{ vars.BQ_PROJECT || 'ans-net-adds-big-query' }}
+          # o python precisa saber ONDE esta: no PC o tempo e de graca e vale
+          # varrer tudo; no runner do GitHub e cota paga
+          BLAST_MAQUINA: ${{ needs.escolher.outputs.maquina }}
         run: |
           ARGS=""
           if [ "${{ github.event.inputs.modo }}" = "tabela" ]; then ARGS="--so-tabela"; fi
