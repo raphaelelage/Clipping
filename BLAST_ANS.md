@@ -56,24 +56,38 @@ texto fala dele). O e-mail ja chega com o do mes certo preenchido — e o **corp
 de texto puro do e-mail e o proprio rascunho**, para copiar do celular sem abrir
 o app.
 
-A marca e uma chave entre `{}` com metrica, periodo e grupo, em qualquer ordem:
+Os tres textos sao **do dono**, preservados ao pe da letra; so os numeros viraram
+marca. A marca e uma chave entre `{}` com metrica, periodo e grupo, em qualquer
+ordem:
 
-    {SULA net_adds QTD}      net adds da SULA no trimestre em curso (milhares)
-    {Market lives}           vidas do mercado no mes de referencia
-    {HAPV yoy}               Base Growth YoY, em %
-    {odonto ODPV net_adds}   a mesma coisa na secao odontologica
-    {rotulo Mês}             "Aug-26" — o rotulo, nao o numero
+    {Market net_adds Mês}        net adds do mercado no mes, em milhares: 76
+    {Market yoy sinal}           Base Growth YoY com sinal: +1,4%
+    {HAPV net_adds Mês mod}      sem sinal, para escrever "perdeu 58k"
+    {odonto ODPV net_adds QTD}   a mesma coisa na secao odontologica
+    {rotulo Mês}                 "Jul/26" — o rotulo, nao o numero
 
     metricas   lives · net_adds (padrao) · growth · mom · yoy · rotulo
     periodos   Mês (padrao) · QTD · Trimestre · YTD · Ano
     secoes     medico (padrao) · odonto · corporate · corporate_odonto
-    extras     abs (vidas em vez de milhares) · mod (sem o sinal de menos)
+    extras     sinal · mod · abs (vidas) · en (rotulo em ingles)
 
 O que nao e nenhuma dessas palavras vira nome de grupo — por isso `Porto Seguro`
-funciona sem aspas. O numero sai da **tabela ja montada**, nao de uma segunda
-conta: o texto e o print vao juntos no WhatsApp e nao podem discordar. Periodo
-que nao e coluna do mes e calculado pela mesma `Serie` que a tabela usou; linha
-residual ("Others") nesse caso nao tem como ser recalculada e sai `n.a.`.
+e `SulAmérica (ex. ASO)` funcionam sem aspas.
+
+**Nome repetido resolve para o GRUPO.** O layout tem o grupo `Amil` e, dentro
+dele, a sub-linha `Amil` (a operadora sem o residual) — 23k contra 21k em Jul-26.
+Indexar na ordem fazia a sub-linha sobrescrever o grupo, calado. Para falar da
+sub-linha: `{Amil > Amil net_adds Mês}`.
+
+**Conta entre linhas** com espaco dos dois lados do operador:
+`{HAPV - Hapvida - ND Intermédica net_adds Mês}` e o "em outras operadoras" do
+texto do 2o mes.
+
+O numero sai em **portugues** (`+1,4%`, `1.234`), ao contrario da tabela, que e
+em ingles por pedido do dono. Convencoes diferentes de proposito: o que nao pode
+divergir e o VALOR, e ele vem da **tabela ja montada**, nao de uma segunda conta.
+Periodo que nao e coluna do mes e calculado pela mesma `Serie` que a tabela usou;
+linha residual ("Others") nesse caso sai `n.a.`.
 
 Marca que nao resolve **nao desaparece**: fica `«assim»` no e-mail, com o motivo
 na lista de avisos. A aba Textos valida antes de salvar e mostra como o robo leu

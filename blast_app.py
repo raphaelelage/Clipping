@@ -130,20 +130,34 @@ qualquer outra:
 
 | marca | o que sai |
 |---|---|
-| `{SULA net_adds QTD}` | net adds da SULA no trimestre em curso, em milhares |
-| `{Market lives}` | vidas do mercado no mês de referência |
-| `{HAPV yoy}` | Base Growth YoY, em % |
-| `{odonto ODPV net_adds Mês}` | o mesmo, na seção odontológica |
-| `{rotulo Mês}` · `{rotulo Trimestre}` | `Aug-26` · `2Q26` — o rótulo, não o número |
+| `{Market net_adds Mês}` | net adds do mercado no mês, em milhares: `76` |
+| `{Market yoy sinal}` | Base Growth YoY com sinal: `+1,4%` |
+| `{HAPV net_adds Mês mod}` | sem o sinal, para escrever "perdeu 58k" |
+| `{odonto ODPV net_adds QTD}` | o mesmo, na seção odontológica |
+| `{rotulo Mês}` · `{rotulo Trimestre}` | `Jul/26` · `2T26` — o rótulo, não o número |
 
 **métricas** `lives` · `net_adds` (padrão) · `growth` · `mom` · `yoy` · `rotulo` ·
 **períodos** `Mês` (padrão) · `QTD` · `Trimestre` · `YTD` · `Ano` ·
 **seções** `medico` (padrão) · `odonto` · `corporate` · `corporate_odonto` ·
-**extras** `abs` (vidas em vez de milhares) · `mod` (sem o sinal de menos)
+**extras** `sinal` (força o + no positivo) · `mod` (tira o sinal) ·
+`abs` (vidas em vez de milhares) · `en` (rótulo em inglês: `Jul-26`, `2Q26`)
 
 O que não é nenhuma dessas palavras vira o nome do grupo — então `Porto Seguro`
-e `Unimed Seguros` funcionam sem aspas. Marca que não resolve **não desaparece**:
-sai como «assim» no e-mail, para você ver que faltou número.
+e `SulAmérica (ex. ASO)` funcionam sem aspas.
+
+**Nome repetido** (o grupo `Amil` tem uma sub-linha `Amil`) resolve para o
+**grupo**. Para falar da sub-linha: `{Amil > Amil net_adds Mês}`.
+
+**Conta entre linhas**, com espaço dos dois lados do operador:
+`{HAPV - Hapvida - ND Intermédica net_adds Mês}` — é assim que sai o
+"em outras operadoras" do texto do 2º mês.
+
+O número sai em português (`+1,4%`, `1.234`), diferente da tabela, que é em
+inglês por pedido seu. O `*` e o `-` do WhatsApp ficam no texto: o próprio chat
+converte em negrito e marcador.
+
+Marca que não resolve **não desaparece**: sai como «assim» no e-mail, para você
+ver que faltou número.
 """
 
 

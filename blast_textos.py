@@ -1,32 +1,42 @@
 # -*- coding: utf-8 -*-
 """O rascunho de WhatsApp do Blast, com os numeros preenchidos.
 
-O dono escreve o texto uma vez, marcando onde o numero entra; o robo substitui.
-A marca e uma chave entre `{}` com tres informacoes, em qualquer ordem:
+O texto e do dono — os tres modelos abaixo sao, palavra por palavra, os que ele
+escreveu (01/10/2026), com os numeros trocados por marcas. Ele edita a prosa no
+app; o robo so substitui o que esta entre `{}`.
+
+A marca leva metrica, periodo e grupo, em qualquer ordem:
 
     {SULA net_adds QTD}      net adds da SULA no trimestre em curso, em milhares
-    {Market lives}           vidas do mercado no mes de referencia (milhares)
-    {HAPV yoy}               Base Growth YoY, em %
+    {Market lives}           vidas do mercado no mes de referencia
+    {HAPV yoy sinal}         Base Growth YoY com o sinal: "+1,4%"
     {odonto ODPV net_adds}   a mesma coisa, na secao odontologica
-    {rotulo Mês}             "Aug-26" — o rotulo, nao o numero
+    {rotulo Mês}             "Jul/26" — o rotulo, nao o numero
 
     metricas   lives · net_adds (padrao) · growth · mom · yoy · rotulo
     periodos   Mês (padrao) · QTD · Trimestre · YTD · Ano
     secoes     medico (padrao) · odonto · corporate · corporate_odonto
-    extras     abs (vidas em vez de milhares) · mod (sem o sinal de menos)
+    extras     sinal (forca o + no positivo) · mod (tira o sinal) ·
+               abs (vidas em vez de milhares) · en (rotulo em ingles)
 
-O que NAO e reconhecido como metrica, periodo, secao ou extra e tratado como
-nome do grupo — por isso "Porto Seguro" e "Unimed Seguros" funcionam sem aspas.
+Nome repetido no layout (o grupo "Amil" tem uma sub-linha "Amil") resolve para o
+GRUPO. Para falar da sub-linha, use o nome composto: `{Amil > Amil net_adds Mês}`.
 
-Os numeros saem de preferencia da tabela JA MONTADA, nao de uma segunda conta.
-Isso e deliberado: o texto e o print da tabela vao juntos no WhatsApp, e duas
-rotinas de calculo acabariam discordando em algum arredondamento. So quando o
-periodo pedido nao e nenhuma das colunas do mes e que o valor e calculado — e
-mesmo assim pelos metodos da mesma `Serie` que a tabela usou.
+O nome do grupo aceita CONTA, com espaco dos dois lados do operador:
 
-Tres modelos, um para cada posicao do mes dentro do trimestre (1o, 2o, 3o): no
-3o mes o trimestre fechou e o texto fala dele; antes disso fala do mes e do
-acumulado parcial. `escolher(mes)` decide qual vai.
+    {HAPV - Hapvida - ND Intermédica net_adds Mês}
+
+que e como sai o "em outras operadoras" do texto do 2o mes. Exigir o espaco e o
+que impede "SulAmérica (ex. ASO)" e "Médico-hospitalar" de serem quebrados.
+
+NUMERO EM PORTUGUES, ao contrario da tabela. A tabela e equity research em
+ingles ("1,234" e "0.1%") por pedido do dono; o texto do WhatsApp e prosa em
+portugues, e os exemplos dele dizem "+1,4% YoY" e "268k". Sao convencoes
+diferentes de proposito — o que nao pode divergir e o VALOR, e ele sai da mesma
+tabela que vira o print.
+
+Tres modelos, um por posicao do mes no trimestre (no 3o o trimestre fechou e o
+texto fala dele). `escolher(mes)` decide qual vai.
 """
 from __future__ import annotations
 
@@ -37,12 +47,15 @@ import re
 import unicodedata
 
 import blast_periodos as bp
-import blast_render as br
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 CFG = os.path.join(AQUI, "blast_textos.json")
 
 MARCA = re.compile(r"\{([^{}\n]+)\}")
+CONTA = re.compile(r"\s+([+-])\s+")        # operador com espaco dos dois lados
+
+MESES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+            "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 
 # ------------------------------------------------------------------ aliases
 LIVES, NET, GROWTH, MOM, YOY, ROTULO = ("lives", "net_adds", "growth",
@@ -52,7 +65,7 @@ _METRICAS = {
     "net_adds": NET, "netadds": NET, "net": NET, "na": NET, "adds": NET,
     "growth": GROWTH, "cresc": GROWTH, "crescimento": GROWTH,
     "mom": MOM, "yoy": YOY,
-    "rotulo": ROTULO, "label": ROTULO, "mes_rotulo": ROTULO,
+    "rotulo": ROTULO, "label": ROTULO,
 }
 _PERIODOS = {
     "mes": bp.MES, "m": bp.MES, "mensal": bp.MES,
@@ -69,8 +82,7 @@ _SECOES = {
     "corporativo": "corporate_medico",
     "corporate_odonto": "corporate_odonto", "corporate_dental": "corporate_odonto",
 }
-_EXTRAS = {"abs", "mod"}
-# tipo do periodo concreto, para casar a chave pedida com as colunas da tabela
+_EXTRAS = {"abs", "mod", "sinal", "en"}
 _TIPO = {bp.MES: "mes", bp.QTD: "qtd", bp.TRI: "trimestre",
          bp.YTD: "ytd", bp.ANO: "ano"}
 
@@ -84,7 +96,6 @@ def _slug(txt: str) -> str:
 
 # ------------------------------------------------------------------ parse
 def _parse(expr: str) -> dict:
-    """`"odonto ODPV net_adds QTD mod"` -> as partes."""
     met = per = sec = None
     extras, nome = set(), []
     for tok in expr.split():
@@ -97,23 +108,93 @@ def _parse(expr: str) -> dict:
             sec = _SECOES[s]
         elif s in _EXTRAS:
             extras.add(s)
+        elif tok in "+-" and nome:
+            nome.append(tok)           # operador da conta: so vale entre nomes
         else:
             nome.append(tok)
     return {"metrica": met or NET, "periodo": per or bp.MES,
             "secao": sec or "medico", "extras": extras,
-            "grupo": " ".join(nome).strip(), "bruto": expr.strip()}
+            "grupo": " ".join(nome).strip(" +-"), "bruto": expr.strip()}
 
 
-def _rotulo(chave: str, ano: int, mes: int) -> str:
+def termos(nome: str) -> list[tuple[int, str]]:
+    """`"HAPV - Hapvida - ND Intermédica"` -> [(+1,'HAPV'), (-1,'Hapvida'), ...]."""
+    partes = CONTA.split(nome)
+    out, sinal = [], 1
+    for i, p in enumerate(partes):
+        if i % 2:                       # posicoes impares sao os operadores
+            sinal = -1 if p == "-" else 1
+            continue
+        p = p.strip()
+        if p:
+            out.append((sinal, p))
+    return out
+
+
+# ------------------------------------------------------------------ formato
+def _rotulo(chave: str, ano: int, mes: int, ingles: bool = False) -> str:
     if chave == bp.MES:
-        return bp.rotulo_mes(ano, mes)
-    if chave == bp.QTD:
-        # o trimestre EM CURSO (o `resolver` do QTD devolve so "QTD")
-        return bp.rotulo_tri(ano, (mes - 1) // 3 + 1)
+        return (bp.rotulo_mes(ano, mes) if ingles
+                else f"{MESES_PT[mes - 1]}/{ano % 100:02d}")
+    if chave == bp.QTD:                 # o trimestre EM CURSO
+        t = (mes - 1) // 3 + 1
+        return (bp.rotulo_tri(ano, t) if ingles else f"{t}T{ano % 100:02d}")
     if chave == bp.YTD:
         return f"YTD {ano}"
     p = bp.resolver(chave, ano, mes)
-    return p["rotulo"] if p else chave
+    if not p:
+        return chave
+    if p["tipo"] == "trimestre" and not ingles:
+        return f"{p['tri']}T{p['ano'] % 100:02d}"
+    return p["rotulo"]
+
+
+def _milhar_pt(v: float) -> str:
+    """Padrao brasileiro: ponto no milhar. Sem decimal — o texto fala em "k"."""
+    if round(v) == 0:
+        v = 0                           # evita "-0" quando arredonda para zero
+    return f"{v:,.0f}".replace(",", ".")
+
+
+def _formatar(valor, p: dict) -> str:
+    if valor is None:
+        return "n.a."
+    if isinstance(valor, str):
+        return valor
+    extras = p["extras"]
+    if "mod" in extras:
+        valor = abs(valor)
+    if p["metrica"] in (MOM, YOY, GROWTH):
+        s = f"{valor * 100:.1f}".replace(".", ",") + "%"
+    else:
+        if "abs" in extras:
+            valor = valor * 1000.0
+        s = _milhar_pt(valor)
+    return "+" + s if ("sinal" in extras and valor > 0) else s
+
+
+def _indexar(linhas) -> dict:
+    """Nome -> linha, com o GRUPO ganhando da sub-linha de mesmo nome.
+
+    O layout repete nome de proposito: o grupo "Amil" tem uma sub-linha "Amil"
+    (a operadora, sem o residual do grupo), e "Others" aparece dentro de varios
+    grupos e tambem como linha de topo. Indexar na ordem fazia a ultima vencer,
+    e `{Amil}` devolvia 21k em vez dos 23k do grupo — calado, que e o pior jeito
+    de errar (visto em 04/10/2026, comparando com o texto do dono).
+
+    Sub-linha de nome repetido continua enderecavel pelo nome composto:
+    `{Amil > Amil net_adds Mês}`.
+    """
+    por_nome, topo = {}, None
+    for l in linhas:
+        chave = _slug(l["rotulo"])
+        if l["nivel"] == 0:
+            topo = l["rotulo"]
+            por_nome[chave] = l              # topo sempre vence
+        else:
+            por_nome.setdefault(chave, l)    # sub so ocupa nome ainda livre
+            por_nome[_slug(f"{topo} > {l['rotulo']}")] = l
+    return por_nome
 
 
 # ------------------------------------------------------------------ contexto
@@ -128,37 +209,48 @@ class Contexto:
         self.series = series or {}
         self.secoes = {}
         for t, _titulo in tabelas:
-            self.secoes[t["secao"]] = {
-                "t": t,
-                "linhas": {_slug(l["rotulo"]): l for l in t["linhas"]},
-            }
+            self.secoes[t["secao"]] = {"t": t, "linhas": _indexar(t["linhas"])}
             ano = ano or t["ano"]
             mes = mes or t["mes"]
         self.ano, self.mes = ano, mes
 
-    # ---- valores
     def _coluna(self, t, chave):
         tipo = _TIPO.get(chave)
-        for i, p in enumerate(t["periodos"]):
-            if p["tipo"] == tipo:
+        for i, pr in enumerate(t["periodos"]):
+            if pr["tipo"] == tipo:
                 return i
         return None
 
     def valor(self, p: dict):
-        """(valor, aviso). Valor em milhares para lives/net_adds; fracao para %."""
+        """(valor, aviso). Milhares para lives/net_adds; fracao para %."""
         if p["metrica"] == ROTULO:
-            return _rotulo(p["periodo"], self.ano, self.mes), None
-
-        sec = self.secoes.get(p["secao"])
-        if sec is None:
-            return None, f"seção “{p['secao']}” não foi montada"
+            return _rotulo(p["periodo"], self.ano, self.mes,
+                           "en" in p["extras"]), None
         if not p["grupo"]:
             return None, f"“{p['bruto']}”: falta o nome do grupo"
-        linha = sec["linhas"].get(_slug(p["grupo"]))
-        if linha is None:
-            return None, (f"“{p['grupo']}” não é uma linha da seção "
-                          f"{p['secao']} (veja a aba Grupos)")
+        if p["secao"] not in self.secoes:
+            return None, f"seção “{p['secao']}” não foi montada"
 
+        parcelas = termos(p["grupo"])
+        if len(parcelas) > 1 and p["metrica"] in (MOM, YOY, GROWTH):
+            return None, (f"“{p['bruto']}”: conta de grupos só vale para vidas e "
+                          f"net adds — percentual não se soma")
+        total = 0.0
+        for sinal, nome in parcelas:
+            v, aviso = self._um(p, nome)
+            if aviso:
+                return None, aviso
+            if v is None:
+                return None, None
+            total += sinal * v
+        return total, None
+
+    def _um(self, p: dict, nome: str):
+        sec = self.secoes[p["secao"]]
+        linha = sec["linhas"].get(_slug(nome))
+        if linha is None:
+            return None, (f"“{nome}” não é uma linha da seção {p['secao']} "
+                          f"(veja a aba Grupos)")
         if p["metrica"] == LIVES:
             return linha["lives"], None
         if p["metrica"] == MOM:
@@ -166,20 +258,19 @@ class Contexto:
         if p["metrica"] == YOY:
             return linha["yoy"], None
 
-        # net adds / growth: coluna da tabela quando existe, senao calcula
         periodo = bp.resolver(p["periodo"], self.ano, self.mes)
         i = self._coluna(sec["t"], p["periodo"])
         if p["metrica"] == NET and i is not None:
             return linha["net_adds"][i], None
-        return self._calcular(p, linha, periodo)
+        return self._calcular(p, nome, linha, periodo)
 
-    def _calcular(self, p, linha, periodo):
+    def _calcular(self, p, nome, linha, periodo):
         regs = linha.get("registros") or []
         if not regs:
             # "Others" e residual (Market menos os grupos): nao tem registro
             # proprio, entao fora das colunas do mes nao da para recalcular
-            return None, (f"“{p['bruto']}”: esta linha é residual e este período "
-                          f"não é coluna do mês — não tem como calcular")
+            return None, (f"“{nome}” é linha residual e este período não é "
+                          f"coluna do mês — não tem como calcular")
         par = self.series.get(p["secao"])
         serie = None
         if par:
@@ -194,20 +285,6 @@ class Contexto:
 
 
 # ------------------------------------------------------------------ aplicar
-def _formatar(valor, p: dict) -> str:
-    if valor is None:
-        return "n.a."
-    if isinstance(valor, str):
-        return valor
-    if p["metrica"] in (MOM, YOY, GROWTH):
-        return br.fmt_pct(valor)
-    if "mod" in p["extras"]:
-        valor = abs(valor)
-    if "abs" in p["extras"]:
-        valor = valor * 1000.0
-    return br.fmt_milhares(valor)
-
-
 def aplicar(modelo: str, ctx: Contexto) -> tuple[str, list[str]]:
     """Troca as marcas pelos numeros. Devolve (texto, avisos).
 
@@ -230,7 +307,7 @@ def aplicar(modelo: str, ctx: Contexto) -> tuple[str, list[str]]:
 # ------------------------------------------------------------------ validacao
 def validar(modelo: str, grupos: dict | None = None) -> list[str]:
     """Confere as marcas SEM precisar de dado — e o que o app usa para avisar
-    antes de salvar. Checa metrica, periodo e se o grupo existe no layout."""
+    antes de salvar. Checa se cada grupo citado existe no layout."""
     import blast_tabela as bt
     try:
         grupos = grupos or bt.carregar_grupos()
@@ -243,6 +320,8 @@ def validar(modelo: str, grupos: dict | None = None) -> list[str]:
         rot[sec] = {_slug(b["rotulo"]) for b in cfg["layout"]}
         rot[sec] |= {_slug(i["rotulo"]) for b in cfg["layout"]
                      for i in b.get("itens", [])}
+        rot[sec] |= {_slug(f"{b['rotulo']} > {i['rotulo']}")
+                     for b in cfg["layout"] for i in b.get("itens", [])}
 
     problemas = []
     for m in MARCA.finditer(modelo or ""):
@@ -252,11 +331,14 @@ def validar(modelo: str, grupos: dict | None = None) -> list[str]:
         if not p["grupo"]:
             problemas.append(f"«{p['bruto']}» — falta o nome do grupo")
             continue
-        base = ("odonto" if p["secao"].endswith("odonto") else "medico")
+        base = "odonto" if p["secao"].endswith("odonto") else "medico"
         alvo = rot.get(base)
-        if alvo and _slug(p["grupo"]) not in alvo:
-            problemas.append(f"«{p['bruto']}» — “{p['grupo']}” não está no "
-                             f"layout de {base}")
+        if not alvo:
+            continue
+        for _sinal, nome in termos(p["grupo"]):
+            if _slug(nome) not in alvo:
+                problemas.append(f"«{p['bruto']}» — “{nome}” não está no "
+                                 f"layout de {base}")
     return problemas
 
 
@@ -273,54 +355,74 @@ def escolher(mes: int) -> str:
 POSICOES = {"1": "1º mês do trimestre", "2": "2º mês do trimestre",
             "3": "3º mês — o trimestre fechou"}
 
-_M1 = """*ANS | Beneficiários {rotulo Mês}*
+# Os tres textos sao do dono (01/10/2026), preservados ao pe da letra. O `*` e a
+# formatacao do WhatsApp, que o proprio chat converte em negrito — por isso fica
+# no texto e nao vira HTML.
+_M1 = """Bom dia!
 
-*Médico-hospitalar:* o setor fechou {rotulo Mês} com {Market lives} mil vidas, \
-net adds de {Market net_adds Mês} mil no mês ({Market mom} MoM).
-• HAPV: {HAPV net_adds Mês} mil ({HAPV mom} MoM)
-• SULA: {SULA net_adds Mês} mil ({SULA mom} MoM)
-• Amil: {Amil net_adds Mês} mil
-• Bradesco: {Bradesco net_adds Mês} mil
+Saíram os dados de beneficiários da ANS de {rotulo Mês}.
 
-*Odontológico:* {odonto Market net_adds Mês} mil no mês, base de \
-{odonto Market lives} mil vidas.
-• ODPV: {odonto ODPV net_adds Mês} mil ({odonto ODPV mom} MoM)
-• HAPV: {odonto HAPV net_adds Mês} mil
+* O mercado de planos de saúde cresceu {Market net_adds Mês}k vidas ({Market yoy sinal} YoY);
 
-No {rotulo QTD} em curso: SULA {SULA net_adds QTD} mil e HAPV \
-{HAPV net_adds QTD} mil."""
+* HAPV perdeu {HAPV net_adds Mês mod}k vidas no mês, sendo {Hapvida net_adds Mês sinal}k na Hapvida e {ND Intermédica net_adds Mês sinal}k na NDI;
 
-_M2 = """*ANS | Beneficiários {rotulo Mês}*
+* SULA adicionou {SulAmérica (ex. ASO) net_adds Mês}k vidas ex. ASO no mês;
 
-*Médico-hospitalar:* net adds de {Market net_adds Mês} mil em {rotulo Mês} \
-({Market mom} MoM); {Market net_adds QTD} mil no {rotulo QTD} até aqui.
-• HAPV: {HAPV net_adds Mês} mil no mês · {HAPV net_adds QTD} mil no trimestre
-• SULA: {SULA net_adds Mês} mil no mês · {SULA net_adds QTD} mil no trimestre
-• Amil: {Amil net_adds Mês} mil no mês
-• Bradesco: {Bradesco net_adds Mês} mil no mês
+* Bradesco manteve o ritmo de crescimento, com {Bradesco (ex. ASO) net_adds Mês sinal}k ex. ASO. no mês;
 
-*Odontológico:* {odonto Market net_adds Mês} mil no mês.
-• ODPV: {odonto ODPV net_adds Mês} mil · {odonto ODPV net_adds QTD} mil no trimestre
-• HAPV: {odonto HAPV net_adds Mês} mil
+* Amil adicionou {Amil net_adds Mês sinal}k vidas no mês;
 
-Crescimento YoY: mercado {Market yoy}, HAPV {HAPV yoy}, SULA {SULA yoy}."""
+* Porto adicionou {Porto Seguro net_adds Mês}k vidas no mês;
 
-_M3 = """*ANS | Beneficiários {rotulo Mês} — fechamento do {rotulo Trimestre}*
+* As adições líquidas de planos odontológicos totalizaram {odonto Market net_adds Mês sinal}k vidas no mês ({odonto Market yoy sinal} YoY);
 
-*Médico-hospitalar:* o setor somou {Market net_adds Trimestre} mil vidas no \
-{rotulo Trimestre} ({Market net_adds Mês} mil em {rotulo Mês}), base de \
-{Market lives} mil.
-• HAPV: {HAPV net_adds Trimestre} mil no trimestre ({HAPV yoy} YoY)
-• SULA: {SULA net_adds Trimestre} mil no trimestre ({SULA yoy} YoY)
-• Amil: {Amil net_adds Trimestre} mil
-• Bradesco: {Bradesco net_adds Trimestre} mil
+* ODPV adicionou {odonto ODPV net_adds Mês}k vidas no mês.
 
-*Odontológico:* {odonto Market net_adds Trimestre} mil no trimestre.
-• ODPV: {odonto ODPV net_adds Trimestre} mil ({odonto ODPV yoy} YoY)
-• HAPV: {odonto HAPV net_adds Trimestre} mil
+Qualquer dúvida, estamos à disposição."""
 
-*Corporate (Coletivo Empresarial):* {corporate Market net_adds Trimestre} mil \
-no médico e {corporate_odonto Market net_adds Trimestre} mil no odonto."""
+_M2 = """Bom dia!
+
+Saíram os dados de beneficiários da ANS de {rotulo Mês}.
+
+- O mercado de planos de saúde ganhou {Market net_adds Mês}k vidas no mês ({Market yoy sinal} YoY);
+
+- HAPV continua a perder vidas ({HAPV net_adds Mês sinal}k no mês e {HAPV net_adds QTD sinal}k QTD), sendo {ND Intermédica net_adds Mês sinal}k na NDI, {Hapvida net_adds Mês sinal}k na Hapvida e {HAPV - Hapvida - ND Intermédica net_adds Mês sinal}k em outras operadoras;
+
+- SULA adicionou {SulAmérica (ex. ASO) net_adds Mês}k vidas ex. ASO no mês ({SulAmérica (ex. ASO) net_adds QTD sinal}k QTD);
+
+- Bradesco manteve o ritmo de crescimento, com {Bradesco (ex. ASO) net_adds Mês sinal}k ex ASO no mês ({Bradesco (ex. ASO) net_adds QTD sinal}k QTD).
+
+- Amil cresceu fortemente, com {Amil net_adds Mês sinal}k vidas no mês e {Amil net_adds QTD sinal}k QTD;
+
+- Porto cresceu {Porto Seguro net_adds Mês sinal}k vidas no mês ({Porto Seguro net_adds QTD sinal}k QTD);
+
+- Os planos odontológicos apresentaram uma forte expansão de {odonto Market net_adds Mês}k vidas no mês ({odonto Market net_adds QTD sinal}k QTD);
+
+- ODPV perdeu {odonto ODPV net_adds Mês mod}k vidas no mês ({odonto ODPV net_adds QTD sinal}k QTD). Notamos que os dados de beneficiários passaram a ser consolidados na Mediservice.
+
+Qualquer dúvida, estamos à disposição."""
+
+_M3 = """Bom dia!
+
+Saíram os dados de beneficiários da ANS de {rotulo Mês}.
+
+- O mercado de planos de saúde cresceu {Market net_adds Mês}k vidas ({Market yoy sinal} YoY). No {rotulo Trimestre} o crescimento foi de {Market net_adds Trimestre}k vidas;
+
+- HAPV perdeu {HAPV net_adds Mês mod}k vidas no mês e {HAPV net_adds Trimestre mod}k no {rotulo Trimestre}, sendo {ND Intermédica net_adds Mês sinal}k na NDI e {Hapvida net_adds Mês sinal}k na Hapvida;
+
+- SULA adicionou {SulAmérica (ex. ASO) net_adds Mês}k vidas ex. ASO no mês e {SulAmérica (ex. ASO) net_adds Trimestre}k no {rotulo Trimestre};
+
+- Bradesco manteve o ritmo de crescimento, com {Bradesco (ex. ASO) net_adds Mês sinal}k no mês e {Bradesco (ex. ASO) net_adds Trimestre sinal}k no {rotulo Trimestre} ex. ASO;
+
+- Amil adicionou {Amil net_adds Mês sinal}k vidas no mês e {Amil net_adds Trimestre sinal}k no {rotulo Trimestre};
+
+- Porto adicionou {Porto Seguro net_adds Mês}k vidas no mês e {Porto Seguro net_adds Trimestre}k no {rotulo Trimestre};
+
+- As adições líquidas de planos odontológicos totalizaram {odonto Market net_adds Mês sinal}k vidas no mês ({odonto Market yoy sinal} YoY) e {odonto Market net_adds Trimestre sinal}k no {rotulo Trimestre};
+
+- ODPV perdeu {odonto ODPV net_adds Mês mod}k vidas no mês, totalizando {odonto ODPV net_adds Trimestre}k adições líquidas no {rotulo Trimestre}.
+
+Qualquer dúvida, estamos à disposição."""
 
 MODELOS_PADRAO = {"1": _M1, "2": _M2, "3": _M3}
 
@@ -342,5 +444,5 @@ def do_mes(mes: int, caminho: str = CFG) -> str:
 
 if __name__ == "__main__":
     for k, v in MODELOS_PADRAO.items():
-        print(f"--- modelo {k} ({POSICOES[k]}) ---")
-        print(" · ".join(marcas(v)[:6]), "…")
+        print(f"--- modelo {k} ({POSICOES[k]}) · {len(marcas(v))} marcas ---")
+        print("\n".join(validar(v)) or "ok")
