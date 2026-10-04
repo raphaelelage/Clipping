@@ -142,6 +142,29 @@ def _com_quebras(df: pd.DataFrame, ano: int, mes: int) -> pd.DataFrame:
     return pd.concat(partes, ignore_index=True) if len(partes) > 1 else df
 
 
+def _so_os_grupos(df: pd.DataFrame) -> pd.DataFrame:
+    """Recorta o historico para o que o PRIMEIRO e-mail precisa.
+
+    A diferenca entre as fases era so na coleta. Depois que a fase 2 passou a
+    gravar a base inteira no BQ, remontar a fase 1 de la trazia 1 milhao de
+    linhas e 18 MB de anexo — o e-mail rapido tinha virado o pesado (visto em
+    04/10/2026). Aqui ele volta a ser o que o dono pediu: as operadoras do
+    de-para, o mercado, e so a contratacao."""
+    regs = set()
+    for secao, cfg in bt.carregar_grupos().items():
+        if isinstance(cfg, dict):
+            for lista in (cfg.get("por_grupo") or {}).values():
+                regs.update(str(r).zfill(6) for r in lista)
+    if not regs:
+        return df
+    reg = df["registro"].astype(str)
+    mercado = reg.str.lstrip("0").eq("") | reg.eq("MERCADO")
+    d = df[reg.isin(regs) | mercado]
+    if "dimensao" in d.columns:
+        d = d[d["dimensao"].isna() | (d["dimensao"] == "Contratação")]
+    return d
+
+
 def mes_de_referencia(df: pd.DataFrame) -> tuple[int, int]:
     ano = int(df["ano"].max())
     return ano, int(df[df["ano"] == ano]["mes"].max())
@@ -259,6 +282,11 @@ def _uma_fase(a, fase: int, alvo):
     if df is None or not len(df):
         raise SystemExit("histórico vazio — nada a montar")
     ano, mes = alvo or mes_de_referencia(df)
+    if fase == 1:
+        antes = len(df)
+        df = _so_os_grupos(df)
+        if len(df) != antes:
+            _p(f"[fase 1] recorte para os grupos: {antes:,} -> {len(df):,} linhas")
     _p(f"[blast] fase {fase} | {origem} | referência {bp.rotulo_mes(ano, mes)} | "
        f"{len(df):,} linhas")
 
