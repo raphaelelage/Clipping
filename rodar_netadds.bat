@@ -42,9 +42,14 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='py
 
 REM ---------------------------------------------------------------- FASE 1
 REM --sem-email de proposito: quem envia e o GitHub, logo abaixo.
+REM SEM PIPE: no cmd, o %errorlevel% depois de "A | B" e o de B. Com o antigo
+REM "python | powershell Tee-Object", o RC testado era o do PowerShell (sempre
+REM 0) e a protecao abaixo nunca disparava - a coleta podia falhar e o e-mail
+REM era pedido assim mesmo, com o mes velho do BigQuery (medido em 04/10/2026).
+REM Agora quem escreve o log e o proprio python, via --log.
 echo.
 echo [fase 1] grupos do de-para - alguns minutos
-python -u blast_run.py --fase 1 --sem-email %* 2>&1 | powershell -NoProfile -Command "$input | Tee-Object -FilePath rodar_netadds.log -Append"
+python -u blast_run.py --fase 1 --sem-email --log rodar_netadds.log %*
 set RC=%errorlevel%
 if %RC% neq 0 goto :erro
 
@@ -55,7 +60,7 @@ call :pedir 1
 REM ---------------------------------------------------------------- FASE 2
 echo.
 echo [fase 2] todas as operadoras + faixa etaria e UF - alguns minutos
-python -u blast_run.py --fase 2 --sem-email %* 2>&1 | powershell -NoProfile -Command "$input | Tee-Object -FilePath rodar_netadds.log -Append"
+python -u blast_run.py --fase 2 --sem-email --log rodar_netadds.log %*
 set RC2=%errorlevel%
 if %RC2% neq 0 goto :erro2
 

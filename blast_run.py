@@ -17,12 +17,14 @@ BLAST_TO (destinatarios, virgula) ou EMAIL_TO_OVERRIDE.
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import io
 import json
 import os
 import smtplib
 import ssl
 import sys
+import traceback
 from datetime import date
 from email.message import EmailMessage
 
@@ -46,8 +48,23 @@ ROTULO_SECAO = {"medico": "Médico-hospitalar", "odonto": "Odontológico",
                 "mercado": "Mercado Total"}
 
 
+_LOG = None
+
+
 def _p(msg):
+    """Tela e, se `--log` foi passado, arquivo.
+
+    O log sai daqui e nao de um `| Tee-Object` no .bat porque no cmd o
+    `%errorlevel%` depois de um pipe e o do lado DIREITO: a protecao "se a
+    coleta falhar, nao peca o e-mail" estava checando o PowerShell, nao o
+    python (medido em 04/10/2026)."""
     print(msg, flush=True)
+    if _LOG:
+        try:
+            with io.open(_LOG, "a", encoding="utf-8") as f:
+                f.write(f"{msg}\n")
+        except Exception:                                         # noqa: BLE001
+            pass
 
 
 # --------------------------------------------------------------- colunas
@@ -353,10 +370,17 @@ def main(argv=None):
     ap.add_argument("--sem-email", action="store_true")
     ap.add_argument("--sem-bq", action="store_true")
     ap.add_argument("--saida", default=None)
+    ap.add_argument("--log", default=None,
+                    help="arquivo onde repetir tudo que vai para a tela")
     ap.add_argument("--fase", choices=["1", "2", "auto"], default="auto",
                     help="1 = só os grupos (rápido) · 2 = todas as operadoras + "
                          "quebras · auto = 1 e depois 2 no PC, só 1 no GitHub")
     a = ap.parse_args(argv)
+    if a.log:
+        global _LOG
+        _LOG = a.log
+        _p(f"[log] {_dt.datetime.now():%Y-%m-%d %H:%M:%S} · início "
+           f"({' '.join(argv or sys.argv[1:])})")
 
     alvo = None
     if a.mes:
@@ -370,8 +394,17 @@ def main(argv=None):
     _p(f"[blast] fases: {fases} "
        f"({'GitHub' if no_github() else 'PC'})")
 
-    for f in fases:
-        _uma_fase(a, f, alvo)
+    try:
+        for f in fases:
+            _uma_fase(a, f, alvo)
+    except SystemExit as exc:
+        _p(f"[erro] {exc}")
+        raise
+    except Exception:                                             # noqa: BLE001
+        # o traceback TEM que ir para o log: sem ele, a tarefa do Windows falha
+        # de madrugada e nao sobra pista nenhuma
+        _p("[erro] " + traceback.format_exc())
+        raise
     return 0
 
 

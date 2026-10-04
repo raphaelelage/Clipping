@@ -299,6 +299,13 @@ def aplicar(modelo: str, ctx: Contexto) -> tuple[str, list[str]]:
         if aviso:
             avisos.append(aviso)
             return f"«{p['bruto']}»"
+        # `mod` existe para escrever "perdeu 58k" sobre um valor NEGATIVO. Se o
+        # valor virou positivo, o numero sai certo e o VERBO fica mentindo — e
+        # ninguem percebe, porque o sinal foi escondido de proposito. Avisar e
+        # a unica defesa: a prosa e do dono, o robo nao reescreve.
+        if "mod" in p["extras"] and isinstance(valor, (int, float))                 and valor > 0:
+            avisos.append(f"“{p['bruto']}” esconde o sinal (mod) e o valor "
+                          f"virou POSITIVO — confira o verbo da frase")
         return _formatar(valor, p)
 
     return MARCA.sub(_troca, modelo or ""), avisos
