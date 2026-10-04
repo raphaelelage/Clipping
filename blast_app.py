@@ -155,6 +155,9 @@ def _editor_textos(gh_get, gh_put, ano: int, previa=None):
         return
     mods = {k: ((cfg.get("modelos") or {}).get(k) or bx.MODELOS_PADRAO[k])
             for k in ("1", "2", "3")}
+    # valida contra os grupos DO REPO, nao contra a copia do checkout: grupo
+    # recem-salvo na aba Grupos daria "nao esta no layout" ate o redeploy
+    grupos, _sha_g = _carregar(gh_get, GRUPOS, {})
 
     st.caption("Um rascunho para cada posição do mês dentro do trimestre. O "
                "e-mail já vem com o do mês certo, preenchido — e o próprio corpo "
@@ -168,7 +171,7 @@ def _editor_textos(gh_get, gh_put, ano: int, previa=None):
         st.markdown(f"**{bx.POSICOES[k]}**" + ("  ·  ⬅️ é o deste mês" if atual else ""))
         novos[k] = st.text_area(bx.POSICOES[k], value=mods[k], height=240,
                                 key=f"bl_tx_{k}", label_visibility="collapsed")
-        problemas = bx.validar(novos[k])
+        problemas = bx.validar(novos[k], grupos)
         if problemas:
             st.error("· ".join(problemas[:6]))
         else:
@@ -182,7 +185,7 @@ def _editor_textos(gh_get, gh_put, ano: int, previa=None):
 
     c1, c2, c3 = st.columns(3)
     if c1.button("💾 Salvar textos", key="bl_sv_tx"):
-        if any(bx.validar(v) for v in novos.values()):
+        if any(bx.validar(v, grupos) for v in novos.values()):
             st.error("Tem marca que não reconheço — corrija antes de salvar.")
         else:
             cfg["modelos"] = novos
