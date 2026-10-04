@@ -74,8 +74,12 @@ def gravar(df, c=None, log=print):
         # deixar nulo, que depois obriga todo leitor a tratar o NaN
         d["dimensao"] = "Contratação"
     meses = sorted({(int(a), int(m)) for a, m in zip(d["ano"], d["mes"])})
-    for a, m in meses:
-        c.query(f"DELETE FROM `{FQN}` WHERE ano={a} AND mes={m}").result()
+    if meses:
+        # UM delete, nao um por mes: a carga traz 135 meses, e 135 queries em
+        # sequencia levavam quase todo o tempo do run no GitHub (04/10/2026)
+        chaves = ", ".join(str(a * 100 + m) for a, m in meses)
+        c.query(f"DELETE FROM `{FQN}` "
+                f"WHERE ano * 100 + mes IN ({chaves})").result()
     cfg = bigquery.LoadJobConfig(
         schema=[bigquery.SchemaField(n, t) for n, t in ESQUEMA],
         write_disposition="WRITE_APPEND")

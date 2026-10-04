@@ -66,7 +66,10 @@ jobs:
           python-version: "3.12"
 
       - name: Dependencias
-        run: pip install -r clipping_requirements.txt google-cloud-bigquery pandas-gbq
+        # xlsxwriter: a planilha e escrita com ele desde 02/10/2026 (formato por
+        # COLUNA, 25 min -> segundos). Faltava aqui, e o run morria depois de
+        # coletar e gravar no BQ — tudo certo menos o arquivo (04/10/2026).
+        run: pip install -r clipping_requirements.txt google-cloud-bigquery pandas-gbq xlsxwriter
 
       - name: Credencial do BigQuery
         env:
