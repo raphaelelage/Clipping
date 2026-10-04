@@ -32,9 +32,11 @@ import blast_historico as bh
 import blast_periodos as bp
 import blast_render as br
 import blast_tabela as bt
+import blast_textos as tx
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 COLUNAS_CFG = os.path.join(AQUI, "blast_colunas.json")
+LIMITE_ANEXO = 24 * 1024 * 1024        # o Gmail corta em 25 MB
 SECOES = [("medico", "Health Plans ('000)"),
           ("odonto", "Dental Plans ('000)"),
           ("corporate_medico", "Corporate Health Plans ('000)"),
@@ -72,7 +74,7 @@ def no_github() -> bool:
 
 
 def obter_historico(so_tabela: bool, sem_bq: bool, ano=None, mes=None,
-                    todas: bool = False):
+                    todas: bool = False, quebras: bool = False):
     """Devolve (df_longo, origem, novidade).
 
     `novidade` e None quando nao da para saber (--so-tabela, --sem-bq) e, quando
@@ -100,6 +102,11 @@ def obter_historico(so_tabela: bool, sem_bq: bool, ano=None, mes=None,
     _p("[coleta] Sala de Situação…")
     df = blast_coleta.coletar(log=_p, todas=todas)
     agora = mes_de_referencia(df)
+    if quebras:
+        # antes do gravar, de proposito: a carga do BQ apaga e regrava o mes
+        # inteiro, entao as quebras tem que entrar na MESMA remessa — num
+        # segundo `gravar` elas apagariam a contratacao que acabou de subir
+        df = _com_quebras(df, *agora)
     novidade = None if antes is None else (agora > antes)
     if antes is not None:
         _p(f"[bq] último mês gravado: {antes[0]}-{antes[1]:02d} · "
@@ -111,6 +118,30 @@ def obter_historico(so_tabela: bool, sem_bq: bool, ano=None, mes=None,
     return df, "Sala de Situação", novidade
 
 
+def _com_quebras(df: pd.DataFrame, ano: int, mes: int) -> pd.DataFrame:
+    """Junta faixa etaria, UF e o mercado por dimensao ao longo da contratacao.
+
+    So do mes corrente — e o que a Sala de Situacao oferece. Falha de uma quebra
+    nao derruba a rodada: a tabela do e-mail nao depende delas."""
+    import blast_coleta
+    _p("[quebras] faixa etária e UF do mês corrente…")
+    partes = [df]
+    try:
+        q = blast_coleta.coletar_quebras(
+            sorted(blast_coleta.registros_do_config()), ano, mes, log=_p)
+        if len(q):
+            partes.append(q)
+    except Exception as exc:                                      # noqa: BLE001
+        _p(f"[quebras] falharam: {str(exc)[:90]}")
+    try:
+        m = blast_coleta.coletar_mercado(log=_p)
+        if len(m):
+            partes.append(m)
+    except Exception as exc:                                      # noqa: BLE001
+        _p(f"[mercado] falhou: {str(exc)[:90]}")
+    return pd.concat(partes, ignore_index=True) if len(partes) > 1 else df
+
+
 def mes_de_referencia(df: pd.DataFrame) -> tuple[int, int]:
     ano = int(df["ano"].max())
     return ano, int(df[df["ano"] == ano]["mes"].max())
@@ -118,9 +149,12 @@ def mes_de_referencia(df: pd.DataFrame) -> tuple[int, int]:
 
 # --------------------------------------------------------------- montagem
 def montar_tudo(df: pd.DataFrame, ano: int, mes: int):
+    """(tabelas, avisos, series). `series` sao as mesmas instancias que as
+    tabelas usaram — o texto do WhatsApp recorre a elas para periodo que nao
+    virou coluna do mes, sem abrir um segundo caminho de calculo."""
     colunas = colunas_do_mes(ano, mes)
     grupos = bt.carregar_grupos()
-    tabelas, avisos = [], []
+    tabelas, avisos, series = [], [], {}
     for secao, titulo in SECOES:
         try:
             serie = bt.Serie(bh.para_secao(df, secao))
@@ -128,9 +162,50 @@ def montar_tudo(df: pd.DataFrame, ano: int, mes: int):
             sm = bt.Serie(merc) if len(merc) else None
             tabelas.append((bt.montar(serie, secao, ano, mes, colunas,
                                       grupos=grupos, serie_mercado=sm), titulo))
+            series[secao] = (serie, sm)
         except Exception as exc:                                  # noqa: BLE001
             avisos.append(f"{titulo}: {str(exc)[:120]}")
-    return tabelas, avisos
+    return tabelas, avisos, series
+
+
+def texto_do_mes(tabelas, series, ano: int, mes: int):
+    """O rascunho de WhatsApp preenchido. (texto, avisos) — nunca levanta:
+    e-mail sem texto ainda serve; e-mail que nao sai, nao."""
+    try:
+        modelo = tx.do_mes(mes)
+        ctx = tx.Contexto(tabelas, series, ano, mes)
+        texto, probs = tx.aplicar(modelo, ctx)
+        if probs:
+            probs = [f"Texto: {m}" for m in dict.fromkeys(probs)]
+        return texto, probs
+    except Exception as exc:                                      # noqa: BLE001
+        return "", [f"Texto: não consegui montar ({str(exc)[:90]})"]
+
+
+def previa_texto(modelo: str):
+    """(texto, erro) — a aba Textos do app preenchendo as marcas de verdade.
+
+    Le os ultimos meses do BigQuery e monta as tabelas, para o numero da previa
+    ser o mesmo que iria no e-mail. Precisa de credencial do Google: no PC tem,
+    no Streamlit Cloud nao — e por isso devolve `erro` em texto em vez de
+    estourar."""
+    try:
+        import blast_bq
+        alvo = blast_bq.ultimo_mes()
+        if not alvo:
+            return "", "o BigQuery está vazio — rode a coleta uma vez primeiro."
+        ano, mes = alvo
+        df = blast_bq.ler(ano, mes, meses=18)
+        tabelas, _avisos, series = montar_tudo(df, ano, mes)
+        if not tabelas:
+            return "", "não consegui montar as tabelas com o que está no BQ."
+        texto, probs = tx.aplicar(modelo, tx.Contexto(tabelas, series, ano, mes))
+        if probs:
+            texto += "\n\n[avisos] " + " · ".join(dict.fromkeys(probs))
+        return texto, None
+    except Exception as exc:                                      # noqa: BLE001
+        return "", (f"não consegui ler o BigQuery daqui ({str(exc)[:140]}). "
+                    f"Rode a prévia no seu PC, ou veja o texto pronto no e-mail.")
 
 
 # --------------------------------------------------------------- e-mail
@@ -141,7 +216,7 @@ def destinatarios() -> list[str]:
 
 
 def enviar(html: str, anexo: str, ano: int, mes: int, para: list[str],
-           sem_novidade: bool = False, fase: int = 1) -> bool:
+           sem_novidade: bool = False, fase: int = 1, texto: str = "") -> bool:
     user = os.environ.get("EMAIL_REMETENTE", "").strip()
     pwd = os.environ.get("EMAIL_SENHA", "").replace(" ", "").strip()
     if not (user and pwd):
@@ -153,8 +228,10 @@ def enviar(html: str, anexo: str, ano: int, mes: int, para: list[str],
                       + ("" if fase == 1 else " (base completa)"))
     msg["From"] = user
     msg["To"] = ", ".join(para)
-    msg.set_content("Tabelas de net adds da Sala de Situação da ANS. "
-                    "Planilha completa em anexo.")
+    # a parte de texto puro e o rascunho do WhatsApp: no celular da para
+    # selecionar e copiar direto do e-mail, sem abrir o app
+    msg.set_content(texto or "Tabelas de net adds da Sala de Situação da ANS. "
+                             "Planilha completa em anexo.")
     msg.add_alternative(html, subtype="html")
     if anexo and os.path.exists(anexo):
         with open(anexo, "rb") as f:
@@ -176,37 +253,21 @@ def enviar(html: str, anexo: str, ano: int, mes: int, para: list[str],
 def _uma_fase(a, fase: int, alvo):
     """Roda uma fase inteira: dados -> tabelas -> planilha -> e-mail."""
     todas = (fase == 2)
-    df, origem, novidade = obter_historico(a.so_tabela, a.sem_bq,
-                                           *(alvo or (None, None)), todas=todas)
+    df, origem, novidade = obter_historico(
+        a.so_tabela, a.sem_bq, *(alvo or (None, None)), todas=todas,
+        quebras=(fase == 2 and not a.so_tabela))
     if df is None or not len(df):
         raise SystemExit("histórico vazio — nada a montar")
     ano, mes = alvo or mes_de_referencia(df)
     _p(f"[blast] fase {fase} | {origem} | referência {bp.rotulo_mes(ano, mes)} | "
        f"{len(df):,} linhas")
 
-    if fase == 2 and not a.so_tabela:
-        import blast_coleta
-        _p("[quebras] faixa etária e UF do mês corrente…")
-        try:
-            q = blast_coleta.coletar_quebras(
-                sorted(blast_coleta.registros_do_config()), ano, mes, log=_p)
-            if len(q):
-                df = pd.concat([df, q], ignore_index=True)
-        except Exception as exc:                                  # noqa: BLE001
-            _p(f"[quebras] falharam: {str(exc)[:90]}")
-        try:
-            m = blast_coleta.coletar_mercado(log=_p)
-            if len(m):
-                df = pd.concat([df, m], ignore_index=True)
-        except Exception as exc:                                  # noqa: BLE001
-            _p(f"[mercado] falhou: {str(exc)[:90]}")
-
     avisos = []
     if novidade is False:
         avisos.append(f"A ANS ainda não publicou mês novo — o último disponível "
                       f"continua sendo {bp.rotulo_mes(ano, mes)}. As tabelas "
                       f"abaixo são as mesmas da rodada anterior.")
-    tabelas, probs = montar_tudo(df, ano, mes)
+    tabelas, probs, series = montar_tudo(df, ano, mes)
     avisos += probs
     if not tabelas:
         raise SystemExit("nenhuma tabela montada: " + "; ".join(avisos))
@@ -226,13 +287,30 @@ def _uma_fase(a, fase: int, alvo):
         anexo = br.zipar(destino)
         _p(f"[ok] zipada: {os.path.getsize(destino)/1e6:.1f} MB -> "
            f"{os.path.getsize(anexo)/1e6:.1f} MB (o Gmail corta em 25 MB)")
+    if os.path.getsize(anexo) > LIMITE_ANEXO:
+        # o Gmail recusa a mensagem inteira, nao so o anexo — melhor chegar sem
+        # a planilha, com as tabelas no corpo, do que nao chegar
+        avisos.append(f"A planilha ficou com "
+                      f"{os.path.getsize(anexo)/1e6:.0f} MB e não cabe no "
+                      f"e-mail; ela está no artefato da execução do GitHub "
+                      f"(aba Debug do app) e salva no PC.")
+        _p(f"[email] anexo de {os.path.getsize(anexo)/1e6:.1f} MB acima do "
+           f"limite — enviando sem anexo")
+        anexo = None
 
-    html = br.email_html(tabelas, bp.rotulo_mes(ano, mes), avisos)
+    texto, probs_tx = texto_do_mes(tabelas, series, ano, mes)
+    avisos += probs_tx
+    if texto:
+        txt = os.path.splitext(destino)[0] + ".txt"
+        io.open(txt, "w", encoding="utf-8").write(texto)
+        _p(f"[ok] rascunho ({tx.POSICOES[tx.escolher(mes)]}): {txt}")
+
+    html = br.email_html(tabelas, bp.rotulo_mes(ano, mes), avisos, texto=texto)
     io.open(os.path.splitext(destino)[0] + ".html", "w",
             encoding="utf-8").write(html)
     if not a.sem_email:
         enviar(html, anexo, ano, mes, destinatarios(),
-               sem_novidade=(novidade is False), fase=fase)
+               sem_novidade=(novidade is False), fase=fase, texto=texto)
     return 0
 
 

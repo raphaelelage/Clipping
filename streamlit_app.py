@@ -124,11 +124,15 @@ def dispatch_now(vertical, period, recipients):
 BLAST_WF = S.get("blast_workflow_file", "blast.yml")
 
 
-def dispatch_blast(modo, recipients, mes=""):
-    """Dispara o workflow do Blast. `modo` em {'completo', 'tabela'} — tabela
-    remonta o e-mail do historico do BigQuery, sem consultar a ANS."""
+def dispatch_blast(modo, recipients, mes="", fase="auto"):
+    """Dispara o workflow do Blast.
+
+    `modo` em {'completo', 'tabela'} — tabela remonta o e-mail do historico do
+    BigQuery, sem consultar a ANS. `fase` em {'auto', '1', '2'}: a 2 e a base
+    completa (todas as operadoras + faixa etaria e UF), que so existe no BQ
+    depois que o PC roda a varredura."""
     url = f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/{BLAST_WF}/dispatches"
-    body = {"ref": BRANCH, "inputs": {"modo": modo, "mes": mes,
+    body = {"ref": BRANCH, "inputs": {"modo": modo, "mes": mes, "fase": fase,
                                       "recipients": recipients}}
     return _req("post", url, headers=_gh_headers(), json=body, timeout=30)
 
@@ -401,8 +405,8 @@ if VERT == NETADDS:
 
     import blast_app
 
-    def _bl_dispatch(modo, to):
-        r = dispatch_blast(modo, to)
+    def _bl_dispatch(modo, to, fase="auto"):
+        r = dispatch_blast(modo, to, fase=fase)
         if getattr(r, "status_code", 0) == 204:
             st.success("Disparado. O e-mail chega quando o run terminar.")
         else:
@@ -436,14 +440,25 @@ if VERT == NETADDS:
                   "✅ ok" if gh == 200 else f"❌ HTTP {gh}"),
                  (f"Workflow `{BLAST_WF}`:",
                   "✅ encontrado" if wf == 200 else f"❌ HTTP {wf}")]
-        for arq in ("blast_grupos.json", "blast_colunas.json"):
+        for arq in ("blast_grupos.json", "blast_colunas.json",
+                    "blast_textos.json"):
             cur, sha = gh_get_file(arq)
             saida.append((f"`{arq}`:",
                           "✅ ok" if sha else "❌ não encontrado"))
         return saida
 
+    def _bl_previa(modelo):
+        """Preenche as marcas do texto com o historico do BQ. Import tardio: o
+        app nao precisa do pandas/BigQuery para abrir a aba."""
+        try:
+            import blast_run
+        except Exception as exc:                                  # noqa: BLE001
+            return "", f"blast_run não importou aqui ({str(exc)[:90]})"
+        return blast_run.previa_texto(modelo)
+
     blast_app.render(dispatch=_bl_dispatch, gh_get=_bl_get, gh_put=_bl_put,
                      runs=_bl_runs, logs=_bl_logs, diagnostico=_bl_diag,
+                     previa_texto=_bl_previa,
                      ano_padrao=_dt.date.today().year)
     st.stop()
 

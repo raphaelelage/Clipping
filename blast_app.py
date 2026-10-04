@@ -12,20 +12,24 @@ O que ela faz:
   • Agendar           -> cron-job.org, mesmo mecanismo do clipping diario
   • Grupos            -> edita blast_grupos.json no repo
   • Colunas           -> 12 meses x 4 escolhas, grava blast_colunas.json
+  • Textos            -> os tres rascunhos de WhatsApp, com as marcas {...}
 
 Recebe do app hospedeiro as funcoes que ja existem la (dispatch, leitura/escrita
 de arquivo, cron), para nao duplicar token nem tratamento de erro.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import json
 
 import streamlit as st
 
 import blast_periodos as bp
+import blast_textos as bx
 
 GRUPOS = "blast_grupos.json"
 COLUNAS = "blast_colunas.json"
+TEXTOS = "blast_textos.json"
 # So estas duas tem lista de grupos propria. As secoes "corporate_*" do e-mail
 # reaproveitam os grupos da secao base (ver blast_tabela.montar).
 SECOES = [("medico", "Health plans"), ("odonto", "Dental plans")]
@@ -119,9 +123,110 @@ def _editor_colunas(gh_get, gh_put, ano: int):
         st.success("Voltou ao padrão.") if ok else st.error("Falhou.")
 
 
+# --------------------------------------------------------------- textos
+_AJUDA = """
+**Como marcar onde entra o número** — chave entre `{}`, nesta ordem ou em
+qualquer outra:
+
+| marca | o que sai |
+|---|---|
+| `{SULA net_adds QTD}` | net adds da SULA no trimestre em curso, em milhares |
+| `{Market lives}` | vidas do mercado no mês de referência |
+| `{HAPV yoy}` | Base Growth YoY, em % |
+| `{odonto ODPV net_adds Mês}` | o mesmo, na seção odontológica |
+| `{rotulo Mês}` · `{rotulo Trimestre}` | `Aug-26` · `2Q26` — o rótulo, não o número |
+
+**métricas** `lives` · `net_adds` (padrão) · `growth` · `mom` · `yoy` · `rotulo` ·
+**períodos** `Mês` (padrão) · `QTD` · `Trimestre` · `YTD` · `Ano` ·
+**seções** `medico` (padrão) · `odonto` · `corporate` · `corporate_odonto` ·
+**extras** `abs` (vidas em vez de milhares) · `mod` (sem o sinal de menos)
+
+O que não é nenhuma dessas palavras vira o nome do grupo — então `Porto Seguro`
+e `Unimed Seguros` funcionam sem aspas. Marca que não resolve **não desaparece**:
+sai como «assim» no e-mail, para você ver que faltou número.
+"""
+
+
+def _editor_textos(gh_get, gh_put, ano: int, previa=None):
+    cfg, sha = _carregar(gh_get, TEXTOS, {})
+    if cfg is None:
+        st.warning(f"Não consegui ler `{TEXTOS}` do repositório. "
+                   "Não edite agora para não sobrescrever.")
+        return
+    mods = {k: ((cfg.get("modelos") or {}).get(k) or bx.MODELOS_PADRAO[k])
+            for k in ("1", "2", "3")}
+
+    st.caption("Um rascunho para cada posição do mês dentro do trimestre. O "
+               "e-mail já vem com o do mês certo, preenchido — e o próprio corpo "
+               "do e-mail (texto puro) é o rascunho, para copiar do celular.")
+    with st.expander("📖 As marcas que o robô substitui"):
+        st.markdown(_AJUDA)
+
+    novos = {}
+    for k in ("1", "2", "3"):
+        atual = bx.escolher(_dt.date.today().month) == k
+        st.markdown(f"**{bx.POSICOES[k]}**" + ("  ·  ⬅️ é o deste mês" if atual else ""))
+        novos[k] = st.text_area(bx.POSICOES[k], value=mods[k], height=240,
+                                key=f"bl_tx_{k}", label_visibility="collapsed")
+        problemas = bx.validar(novos[k])
+        if problemas:
+            st.error("· ".join(problemas[:6]))
+        else:
+            st.caption(f"✅ {len(bx.marcas(novos[k]))} marcas, todas reconhecidas.")
+        with st.expander("Como o robô leu cada marca"):
+            st.dataframe(
+                [{"marca": m, **{kk: vv for kk, vv in
+                                 _leitura(m).items()}} for m in bx.marcas(novos[k])],
+                width="stretch", hide_index=True)
+        st.divider()
+
+    c1, c2, c3 = st.columns(3)
+    if c1.button("💾 Salvar textos", key="bl_sv_tx"):
+        if any(bx.validar(v) for v in novos.values()):
+            st.error("Tem marca que não reconheço — corrija antes de salvar.")
+        else:
+            cfg["modelos"] = novos
+            ok = gh_put(TEXTOS, json.dumps(cfg, ensure_ascii=False, indent=1), sha,
+                        "textos do Blast")
+            st.success("Salvo.") if ok else st.error("Falhou ao salvar.")
+    if c2.button("↩️ Voltar ao padrão", key="bl_rs_tx"):
+        cfg["modelos"] = dict(bx.MODELOS_PADRAO)
+        ok = gh_put(TEXTOS, json.dumps(cfg, ensure_ascii=False, indent=1), sha,
+                    "textos do Blast: padrão")
+        st.success("Voltou ao padrão — recarregue a página.") if ok else st.error("Falhou.")
+    k_mes = bx.escolher(_dt.date.today().month)
+    c3.download_button("⬇️ Baixar .txt", novos[k_mes],
+                       file_name=f"blast_texto_{k_mes}.txt", key="bl_dl_tx",
+                       help="O rascunho deste mês, como está aqui (sem preencher).")
+
+    if previa:
+        st.markdown("**👁️ Prévia com os números de verdade**")
+        st.caption("Lê o histórico no BigQuery e preenche as marcas. Só funciona "
+                   "onde há credencial do Google — no seu PC, sim; no Streamlit "
+                   "Cloud, não (lá o e-mail é que traz o texto pronto).")
+        if st.button("Preencher agora", key="bl_pv_tx"):
+            with st.spinner("lendo o histórico…"):
+                texto, erro = previa(novos[k_mes])
+            if erro:
+                st.info(erro)
+            else:
+                st.code(texto, language="text")
+                st.download_button("⬇️ Baixar preenchido", texto,
+                                   file_name="blast_texto.txt", key="bl_dl_pv")
+
+
+def _leitura(marca: str) -> dict:
+    """Como o parser entendeu a marca — e aqui que o dono ve que `{SULA QTD}`
+    virou net adds, e nao vidas."""
+    p = bx._parse(marca)
+    return {"seção": p["secao"], "grupo": p["grupo"] or "—",
+            "métrica": p["metrica"], "período": p["periodo"],
+            "extras": ", ".join(sorted(p["extras"])) or "—"}
+
+
 # --------------------------------------------------------------- seção
 def render(*, dispatch, gh_get, gh_put, runs=None, logs=None, diagnostico=None,
-           cron_ui=None, ano_padrao: int):
+           cron_ui=None, previa_texto=None, ano_padrao: int):
     """A seção inteira do Blast, com as proprias abas.
 
     E um projeto separado do clipping de noticias — so divide a casca do app
@@ -136,13 +241,13 @@ def render(*, dispatch, gh_get, gh_put, runs=None, logs=None, diagnostico=None,
                "fases (grupos, depois todas as operadoras com as quebras); no "
                "GitHub só a primeira, para não gastar cota.")
 
-    t_run, t_cfg, t_sched, t_dbg = st.tabs(
-        ["▶️ Rodar agora", "⚙️ Config", "🕗 Agendamento", "🔧 Debug"])
+    t_run, t_cfg, t_txt, t_sched, t_dbg = st.tabs(
+        ["▶️ Rodar agora", "⚙️ Config", "📝 Textos", "🕗 Agendamento", "🔧 Debug"])
 
     with t_run:
         to = st.text_input("E-mails", value="raphael.elage.s@gmail.com",
                            key="bl_to", help="Separe por vírgula.")
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         if c1.button("📨 Coletar e enviar", key="bl_run"):
             with st.spinner("disparando…"):
                 dispatch("completo", to)
@@ -152,6 +257,16 @@ def render(*, dispatch, gh_get, gh_put, runs=None, logs=None, diagnostico=None,
                           "grupos ou colunas."):
             with st.spinner("disparando…"):
                 dispatch("tabela", to)
+        if c3.button("📦 Base completa", key="bl_f2",
+                     help="O segundo e-mail: todas as operadoras e as quebras "
+                          "por faixa etária e UF, com a planilha inteira. "
+                          "Também remonta do BigQuery — só existe depois que a "
+                          "varredura do PC rodou."):
+            with st.spinner("disparando…"):
+                dispatch("tabela", to, fase="2")
+        st.caption("No PC a tarefa **BBI net adds** (08:30) coleta e pede os "
+                   "dois e-mails: o dos grupos primeiro, o completo depois. "
+                   "Aqui os botões não coletam — só remontam do BigQuery.")
 
     with t_cfg:
         sub_g, sub_c = st.tabs(["👥 Grupos", "🗓️ Colunas"])
@@ -159,6 +274,9 @@ def render(*, dispatch, gh_get, gh_put, runs=None, logs=None, diagnostico=None,
             _editor_grupos(gh_get, gh_put)
         with sub_c:
             _editor_colunas(gh_get, gh_put, ano_padrao)
+
+    with t_txt:
+        _editor_textos(gh_get, gh_put, ano_padrao, previa=previa_texto)
 
     with t_sched:
         if cron_ui:

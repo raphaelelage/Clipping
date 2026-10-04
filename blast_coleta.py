@@ -181,8 +181,10 @@ def novas_operadoras(atuais, log=print) -> list[str]:
 def coletar(registros=None, workers: int = 8, log=print, todas: bool = False) -> pd.DataFrame:
     """Historico longo das operadoras pedidas + o mercado.
 
-    `todas=True` varre o dropdown inteiro (~3.700 operadoras, ~30 min). Medido em
-    02/10/2026: 0,24 s por serie, e o paralelismo SATURA entre 4 e 10 robos — com
+    `todas=True` varre o dropdown inteiro: 3.697 operadoras, 7.394 series, ~2,4
+    min cronometrados em 02/10/2026 (um "~30 min" chutado antes da medicao ficou
+    nesta docstring e nao se confirmou). Tambem medido: 0,24 s por serie por
+    robo, e o paralelismo SATURA entre 4 e 10 robos — com
     20 ou 32 o tempo PIORA (0,28 e 0,33 s/serie), porque o WAF serializa. Entao
     mais threads nao e o caminho; 8 e o ponto de equilibrio."""
     import threading

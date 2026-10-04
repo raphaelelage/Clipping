@@ -40,6 +40,12 @@ def _p(v):
     return "n.a." if v is None else f"{v * 100:.1f}%"
 
 
+# Publicos para o blast_textos: o rascunho de WhatsApp vai junto com o print da
+# tabela, entao os dois tem que formatar numero do MESMO jeito.
+fmt_milhares = _n
+fmt_pct = _p
+
+
 def tabela_html(t: dict, titulo: str) -> str:
     cols = t["colunas"]
     linhas = t["linhas"]

@@ -18,6 +18,12 @@ on:
         description: "AAAA-MM (vazio = o ultimo disponivel)"
         required: false
         default: ""
+      fase:
+        description: "1 = so os grupos (e-mail rapido) - 2 = base completa + quebras - auto = decide pela maquina"
+        required: false
+        default: "auto"
+        type: choice
+        options: ["auto", "1", "2"]
       recipients:
         description: "E-mails destino (virgula). Vazio = BLAST_RECIPIENTS"
         required: false
@@ -81,6 +87,10 @@ jobs:
           ARGS=""
           if [ "${{ github.event.inputs.modo }}" = "tabela" ]; then ARGS="--so-tabela"; fi
           if [ -n "${{ github.event.inputs.mes }}" ]; then ARGS="$ARGS --mes ${{ github.event.inputs.mes }}"; fi
+          # `fase` existe para o PC pedir o segundo e-mail (base completa) depois
+          # de terminar a varredura: aqui ninguem coleta, so remonta do BQ.
+          FASE="${{ github.event.inputs.fase }}"
+          if [ -n "$FASE" ] && [ "$FASE" != "auto" ]; then ARGS="$ARGS --fase $FASE"; fi
           python blast_run.py $ARGS
 
       - name: Subir a planilha
@@ -90,5 +100,7 @@ jobs:
           name: blast-ans
           path: |
             ANS_Net_Adds_Blast*.xlsx
+            ANS_Net_Adds_Blast*.zip
             ANS_Net_Adds_Blast*.html
+            ANS_Net_Adds_Blast*.txt
           if-no-files-found: warn
