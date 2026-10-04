@@ -84,17 +84,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No PC do dono o Python ja existe e as dependencias tambem. Instalar
+      # aqui seria pior que inutil: o setup-python nao consegue instalar sem
+      # elevacao (falhou em 04/10/2026) e o `pip install` com versoes fixadas
+      # mexeria nos pacotes que ele usa no dia a dia.
       - uses: actions/setup-python@v5
+        if: needs.escolher.outputs.maquina != 'self-hosted'
         with:
           python-version: "3.12"
 
       - name: Dependencias
+        if: needs.escolher.outputs.maquina != 'self-hosted'
+        shell: bash
         # xlsxwriter: a planilha e escrita com ele desde 02/10/2026 (formato por
         # COLUNA, 25 min -> segundos). Faltava aqui, e o run morria depois de
         # coletar e gravar no BQ — tudo certo menos o arquivo (04/10/2026).
         run: pip install -r clipping_requirements.txt google-cloud-bigquery pandas-gbq xlsxwriter
 
+      - name: Conferir o ambiente do PC
+        if: needs.escolher.outputs.maquina == 'self-hosted'
+        shell: bash
+        run: |
+          python -c "import sys; print(sys.version)"
+          python - <<'PY'
+          faltam = []
+          for m in ("pandas", "requests", "xlsxwriter", "openpyxl",
+                    "google.cloud.bigquery"):
+              try:
+                  __import__(m)
+              except Exception as e:
+                  faltam.append(f"{m} ({e})")
+          if faltam:
+              raise SystemExit("faltam pacotes neste PC: " + "; ".join(faltam))
+          print("ambiente ok")
+          PY
+
       - name: Credencial do BigQuery
+        shell: bash
         env:
           SA: ${{ secrets.GCP_SA_KEY }}
         run: |
@@ -104,6 +130,9 @@ jobs:
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/gcp.json" >> "$GITHUB_ENV"
 
       - name: Rodar o Blast
+        # `shell: bash` obrigatorio: no runner Windows o padrao e PowerShell, e
+        # todo o script abaixo e sh (04/10/2026)
+        shell: bash
         env:
           EMAIL_REMETENTE: ${{ secrets.EMAIL_REMETENTE }}
           EMAIL_SENHA: ${{ secrets.EMAIL_SENHA }}
