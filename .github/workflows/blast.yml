@@ -103,21 +103,14 @@ jobs:
 
       - name: Conferir o ambiente do PC
         if: needs.escolher.outputs.maquina == 'self-hosted'
-        shell: bash
+        # em cmd DE PROPOSITO: e este passo que avisa quando falta bash, e em
+        # `shell: bash` ele morreria antes de conseguir avisar, com um
+        # "bash: command not found" que nao diz o que fazer (05/10/2026)
+        shell: cmd
         run: |
+          where bash >nul 2>&1 || (echo ERRO: a listener do runner subiu sem o Git no PATH, entao nao ha bash e os passos seguintes falhariam. Encerre o Runner.Listener.exe e suba de novo por C:\actions-runner\bbi_iniciar.cmd ^(ou reinicie o PC: a pasta Inicializar faz isso^). & exit /b 1)
           python -c "import sys; print(sys.version)"
-          python - <<'PY'
-          faltam = []
-          for m in ("pandas", "requests", "xlsxwriter", "openpyxl",
-                    "google.cloud.bigquery"):
-              try:
-                  __import__(m)
-              except Exception as e:
-                  faltam.append(f"{m} ({e})")
-          if faltam:
-              raise SystemExit("faltam pacotes neste PC: " + "; ".join(faltam))
-          print("ambiente ok")
-          PY
+          python -c "import pandas, requests, xlsxwriter, openpyxl, google.cloud.bigquery; print('ambiente ok')"
 
       - name: Credencial do BigQuery
         shell: bash
