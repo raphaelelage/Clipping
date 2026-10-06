@@ -88,14 +88,40 @@ jobs:
           fi
           # 15/09/2026: chegaram DOIS e-mails com 5 min de diferenca (09:40 e 09:45)
           # — o gatilho repetiu fora da janela de 5 min. Janela ampliada para 12 min.
+          # 06/10/2026: run que FALHOU tambem contava como duplicata, e isso
+          # travava a retentativa por 12 min logo quando ela e mais necessaria —
+          # justo depois de uma falha. Agora so conta run vivo ou bem-sucedido.
           DESDE=$(date -u -d '-12 minutes' +%Y-%m-%dT%H:%M:%SZ)
-          N=$(gh api "repos/$R/actions/workflows/clipping.yml/runs?created=>$DESDE&per_page=15"                 --jq "[.workflow_runs[]
-                       | select(.id != $MEU_ID)
-                       | select(.created_at < \"$MEU_CRIADO\"
-                                or (.created_at == \"$MEU_CRIADO\" and .id < $MEU_ID))
-                      ] | length" 2>/dev/null || echo 0)
+          # Candidatos: runs mais antigos que o meu, dentro da janela.
+          IDS=$(gh api "repos/$R/actions/workflows/clipping.yml/runs?created=>$DESDE&per_page=15" \
+                  --jq "[.workflow_runs[]
+                         | select(.id != $MEU_ID)
+                         | select(.created_at < \"$MEU_CRIADO\"
+                                  or (.created_at == \"$MEU_CRIADO\" and .id < $MEU_ID))
+                        ] | .[].id" 2>/dev/null || echo "")
+          # Olhar a conclusao do RUN nao basta: o run que se anula termina como
+          # "success" (quem ficou "skipped" foram os jobs). Entao a pergunta
+          # certa e se o `montar` daquele run chegou a rodar — e so ele envia.
+          N=0
+          for ID in $IDS; do
+            EST=$(gh api "repos/$R/actions/runs/$ID" --jq .status 2>/dev/null || echo "")
+            if [ "$EST" != "completed" ]; then
+              echo "  run $ID ainda esta rodando — conta como duplicata"
+              N=$((N+1)); continue
+            fi
+            FEZ=$(gh api "repos/$R/actions/runs/$ID/jobs" \
+                    --jq '[.jobs[] | select(.name|startswith("montar"))
+                           | select(.conclusion=="success")] | length' \
+                  2>/dev/null || echo 0)
+            if [ "${FEZ:-0}" -gt 0 ]; then
+              echo "  run $ID ja montou e enviou — conta como duplicata"
+              N=$((N+1))
+            else
+              echo "  run $ID nao enviou nada (falhou ou se anulou) — ignorado"
+            fi
+          done
           if [ "${N:-0}" -gt 0 ]; then
-            echo "disparo duplicado: $N run(s) mais antigo(s) nos ultimos 5 min — este run se anula"
+            echo "disparo duplicado: $N run(s) mais antigo(s) e vivo(s) na janela — este run se anula"
             echo "duplicado=1" >> "$GITHUB_OUTPUT"
           else
             echo "duplicado=0" >> "$GITHUB_OUTPUT"
