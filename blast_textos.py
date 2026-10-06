@@ -10,6 +10,7 @@ A marca leva metrica, periodo e grupo, em qualquer ordem:
     {SULA net_adds QTD}      net adds da SULA no trimestre em curso, em milhares
     {Market lives}           vidas do mercado no mes de referencia
     {HAPV yoy sinal}         Base Growth YoY com o sinal: "+1,4%"
+    {ODPV verbo Mês | ganhou | perdeu}   a palavra que casa com o sinal
     {odonto ODPV net_adds}   a mesma coisa, na secao odontologica
     {rotulo Mês}             "Jul/26" — o rotulo, nao o numero
 
@@ -18,6 +19,11 @@ A marca leva metrica, periodo e grupo, em qualquer ordem:
     secoes     medico (padrao) · odonto · corporate · corporate_odonto
     extras     sinal (forca o + no positivo) · mod (tira o sinal) ·
                abs (vidas em vez de milhares) · en (rotulo em ingles)
+
+VERBO existe porque o numero muda de sinal e a frase nao. "ODPV perdeu 66k" saiu
+assim em Ago/26, quando a ODPV na verdade GANHOU 66 mil vidas: o `mod` escondia
+o sinal e o verbo ficou mentindo. Com `{ODPV verbo Mês | ganhou | perdeu}` a
+palavra acompanha o dado; sem as palavras, o padrao e ganhou/perdeu.
 
 Nome repetido no layout (o grupo "Amil" tem uma sub-linha "Amil") resolve para o
 GRUPO. Para falar da sub-linha, use o nome composto: `{Amil > Amil net_adds Mês}`.
@@ -58,14 +64,16 @@ MESES_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
             "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 
 # ------------------------------------------------------------------ aliases
-LIVES, NET, GROWTH, MOM, YOY, ROTULO = ("lives", "net_adds", "growth",
-                                        "mom", "yoy", "rotulo")
+LIVES, NET, GROWTH, MOM, YOY, ROTULO, VERBO = ("lives", "net_adds", "growth",
+                                              "mom", "yoy", "rotulo", "verbo")
+VERBO_PADRAO = ("ganhou", "perdeu")      # positivo, negativo
 _METRICAS = {
     "lives": LIVES, "vidas": LIVES, "base": LIVES,
     "net_adds": NET, "netadds": NET, "net": NET, "na": NET, "adds": NET,
     "growth": GROWTH, "cresc": GROWTH, "crescimento": GROWTH,
     "mom": MOM, "yoy": YOY,
     "rotulo": ROTULO, "label": ROTULO,
+    "verbo": VERBO,
 }
 _PERIODOS = {
     "mes": bp.MES, "m": bp.MES, "mensal": bp.MES,
@@ -96,9 +104,12 @@ def _slug(txt: str) -> str:
 
 # ------------------------------------------------------------------ parse
 def _parse(expr: str) -> dict:
+    # `{HAPV verbo Mês | ganhou | perdeu}` — depois da primeira barra vem a
+    # palavra do positivo e a do negativo
+    corpo, *palavras = [x.strip() for x in expr.split("|")]
     met = per = sec = None
     extras, nome = set(), []
-    for tok in expr.split():
+    for tok in corpo.split():
         s = _slug(tok)
         if s in _METRICAS and met is None:
             met = _METRICAS[s]
@@ -114,6 +125,7 @@ def _parse(expr: str) -> dict:
             nome.append(tok)
     return {"metrica": met or NET, "periodo": per or bp.MES,
             "secao": sec or "medico", "extras": extras,
+            "palavras": [w for w in palavras if w],
             "grupo": " ".join(nome).strip(" +-"), "bruto": expr.strip()}
 
 
@@ -157,6 +169,11 @@ def _milhar_pt(v: float) -> str:
 
 
 def _formatar(valor, p: dict) -> str:
+    if p["metrica"] == VERBO:
+        if valor is None:
+            return "n.a."
+        pos, neg = (list(p["palavras"]) + list(VERBO_PADRAO))[:2]
+        return pos if valor >= 0 else neg
     if valor is None:
         return "n.a."
     if isinstance(valor, str):
@@ -260,7 +277,7 @@ class Contexto:
 
         periodo = bp.resolver(p["periodo"], self.ano, self.mes)
         i = self._coluna(sec["t"], p["periodo"])
-        if p["metrica"] == NET and i is not None:
+        if p["metrica"] in (NET, VERBO) and i is not None:
             return linha["net_adds"][i], None
         return self._calcular(p, nome, linha, periodo)
 
@@ -280,11 +297,22 @@ class Contexto:
                           f"sem a série para calcular")
         if p["metrica"] == GROWTH:
             return serie.crescimento(regs, periodo), None
-        v = serie.net_adds(regs, periodo)
+        v = serie.net_adds(regs, periodo)      # tambem serve ao VERBO
         return (None if v is None else v / 1000.0), None
 
 
 # ------------------------------------------------------------------ aplicar
+def _tem_verbo_irmao(modelo: str, p: dict) -> bool:
+    """O aviso do `mod` so vale quando o verbo da frase e FIXO. Se o mesmo grupo
+    ja aparece com uma marca de verbo no texto, a frase se ajusta sozinha."""
+    alvo = _slug(p["grupo"])
+    for m in MARCA.finditer(modelo or ""):
+        q = _parse(m.group(1))
+        if q["metrica"] == VERBO and _slug(q["grupo"]) == alvo:
+            return True
+    return False
+
+
 def aplicar(modelo: str, ctx: Contexto) -> tuple[str, list[str]]:
     """Troca as marcas pelos numeros. Devolve (texto, avisos).
 
@@ -303,7 +331,9 @@ def aplicar(modelo: str, ctx: Contexto) -> tuple[str, list[str]]:
         # valor virou positivo, o numero sai certo e o VERBO fica mentindo — e
         # ninguem percebe, porque o sinal foi escondido de proposito. Avisar e
         # a unica defesa: a prosa e do dono, o robo nao reescreve.
-        if "mod" in p["extras"] and isinstance(valor, (int, float))                 and valor > 0:
+        if ("mod" in p["extras"] and p["metrica"] != VERBO
+                and isinstance(valor, (int, float)) and valor > 0
+                and not _tem_verbo_irmao(modelo, p)):
             avisos.append(f"“{p['bruto']}” esconde o sinal (mod) e o valor "
                           f"virou POSITIVO — confira o verbo da frase")
         return _formatar(valor, p)
@@ -369,21 +399,21 @@ _M1 = """Bom dia!
 
 "Saíram os dados de beneficiários da ANS de {rotulo Mês}."
 
-- O mercado de planos de saúde cresceu {Market net_adds Mês}k vidas ({Market yoy sinal} YoY);
+- O mercado de planos de saúde {Market verbo Mês | cresceu | encolheu} {Market net_adds Mês mod}k vidas ({Market yoy sinal} YoY);
 
-- HAPV perdeu {HAPV net_adds Mês mod}k vidas no mês, sendo {Hapvida net_adds Mês sinal}k na Hapvida e {ND Intermédica net_adds Mês sinal}k na NDI;
+- HAPV {HAPV verbo Mês | ganhou | perdeu} {HAPV net_adds Mês mod}k vidas no mês, sendo {Hapvida net_adds Mês sinal}k na Hapvida e {ND Intermédica net_adds Mês sinal}k na NDI;
 
-- SULA adicionou {SulAmérica (ex. ASO) net_adds Mês}k vidas ex. ASO no mês;
+- SULA {SulAmérica (ex. ASO) verbo Mês | adicionou | perdeu} {SulAmérica (ex. ASO) net_adds Mês mod}k vidas ex. ASO no mês;
 
 - Bradesco manteve o ritmo de crescimento, com {Bradesco (ex. ASO) net_adds Mês sinal}k ex. ASO. no mês;
 
-- Amil adicionou {Amil net_adds Mês sinal}k vidas no mês;
+- Amil {Amil verbo Mês | adicionou | perdeu} {Amil net_adds Mês mod}k vidas no mês;
 
-- Porto adicionou {Porto Seguro net_adds Mês}k vidas no mês;
+- Porto {Porto Seguro verbo Mês | adicionou | perdeu} {Porto Seguro net_adds Mês mod}k vidas no mês;
 
 - As adições líquidas de planos odontológicos totalizaram {odonto Market net_adds Mês sinal}k vidas no mês ({odonto Market yoy sinal} YoY);
 
-- ODPV adicionou {odonto ODPV net_adds Mês}k vidas no mês.
+- ODPV {odonto ODPV verbo Mês | adicionou | perdeu} {odonto ODPV net_adds Mês mod}k vidas no mês.
 
 Qualquer dúvida, estamos à disposição."""
 
@@ -391,21 +421,21 @@ _M2 = """Bom dia!
 
 "Saíram os dados de beneficiários da ANS de {rotulo Mês}."
 
-- O mercado de planos de saúde ganhou {Market net_adds Mês}k vidas no mês ({Market yoy sinal} YoY);
+- O mercado de planos de saúde {Market verbo Mês | ganhou | perdeu} {Market net_adds Mês mod}k vidas no mês ({Market yoy sinal} YoY);
 
-- HAPV continua a perder vidas ({HAPV net_adds Mês sinal}k no mês e {HAPV net_adds QTD sinal}k QTD), sendo {ND Intermédica net_adds Mês sinal}k na NDI, {Hapvida net_adds Mês sinal}k na Hapvida e {HAPV - Hapvida - ND Intermédica net_adds Mês sinal}k em outras operadoras;
+- HAPV {HAPV verbo Mês | segue ganhando | continua a perder} vidas ({HAPV net_adds Mês sinal}k no mês e {HAPV net_adds QTD sinal}k QTD), sendo {ND Intermédica net_adds Mês sinal}k na NDI, {Hapvida net_adds Mês sinal}k na Hapvida e {HAPV - Hapvida - ND Intermédica net_adds Mês sinal}k em outras operadoras;
 
-- SULA adicionou {SulAmérica (ex. ASO) net_adds Mês}k vidas ex. ASO no mês ({SulAmérica (ex. ASO) net_adds QTD sinal}k QTD);
+- SULA {SulAmérica (ex. ASO) verbo Mês | adicionou | perdeu} {SulAmérica (ex. ASO) net_adds Mês mod}k vidas ex. ASO no mês ({SulAmérica (ex. ASO) net_adds QTD sinal}k QTD);
 
 - Bradesco manteve o ritmo de crescimento, com {Bradesco (ex. ASO) net_adds Mês sinal}k ex ASO no mês ({Bradesco (ex. ASO) net_adds QTD sinal}k QTD).
 
 - Amil cresceu fortemente, com {Amil net_adds Mês sinal}k vidas no mês e {Amil net_adds QTD sinal}k QTD;
 
-- Porto cresceu {Porto Seguro net_adds Mês sinal}k vidas no mês ({Porto Seguro net_adds QTD sinal}k QTD);
+- Porto {Porto Seguro verbo Mês | cresceu | caiu} {Porto Seguro net_adds Mês mod}k vidas no mês ({Porto Seguro net_adds QTD sinal}k QTD);
 
-- Os planos odontológicos apresentaram uma forte expansão de {odonto Market net_adds Mês}k vidas no mês ({odonto Market net_adds QTD sinal}k QTD);
+- Os planos odontológicos apresentaram {odonto Market verbo Mês | uma forte expansão de | uma retração de} {odonto Market net_adds Mês mod}k vidas no mês ({odonto Market net_adds QTD sinal}k QTD);
 
-- ODPV perdeu {odonto ODPV net_adds Mês mod}k vidas no mês ({odonto ODPV net_adds QTD sinal}k QTD). Notamos que os dados de beneficiários passaram a ser consolidados na Mediservice.
+- ODPV {odonto ODPV verbo Mês | ganhou | perdeu} {odonto ODPV net_adds Mês mod}k vidas no mês ({odonto ODPV net_adds QTD sinal}k QTD). Notamos que os dados de beneficiários passaram a ser consolidados na Mediservice.
 
 Qualquer dúvida, estamos à disposição."""
 
@@ -413,21 +443,21 @@ _M3 = """Bom dia!
 
 "Saíram os dados de beneficiários da ANS de {rotulo Mês}."
 
-- O mercado de planos de saúde cresceu {Market net_adds Mês}k vidas ({Market yoy sinal} YoY). No {rotulo Trimestre} o crescimento foi de {Market net_adds Trimestre}k vidas;
+- O mercado de planos de saúde {Market verbo Mês | cresceu | encolheu} {Market net_adds Mês mod}k vidas ({Market yoy sinal} YoY). No {rotulo Trimestre} {Market verbo Trimestre | o crescimento foi de | a queda foi de} {Market net_adds Trimestre mod}k vidas;
 
-- HAPV perdeu {HAPV net_adds Mês mod}k vidas no mês e {HAPV net_adds Trimestre mod}k no {rotulo Trimestre}, sendo {ND Intermédica net_adds Mês sinal}k na NDI e {Hapvida net_adds Mês sinal}k na Hapvida;
+- HAPV {HAPV verbo Mês | ganhou | perdeu} {HAPV net_adds Mês mod}k vidas no mês e {HAPV net_adds Trimestre sinal}k no {rotulo Trimestre}, sendo {ND Intermédica net_adds Mês sinal}k na NDI e {Hapvida net_adds Mês sinal}k na Hapvida;
 
-- SULA adicionou {SulAmérica (ex. ASO) net_adds Mês}k vidas ex. ASO no mês e {SulAmérica (ex. ASO) net_adds Trimestre}k no {rotulo Trimestre};
+- SULA {SulAmérica (ex. ASO) verbo Mês | adicionou | perdeu} {SulAmérica (ex. ASO) net_adds Mês mod}k vidas ex. ASO no mês e {SulAmérica (ex. ASO) net_adds Trimestre sinal}k no {rotulo Trimestre};
 
 - Bradesco manteve o ritmo de crescimento, com {Bradesco (ex. ASO) net_adds Mês sinal}k no mês e {Bradesco (ex. ASO) net_adds Trimestre sinal}k no {rotulo Trimestre} ex. ASO;
 
-- Amil adicionou {Amil net_adds Mês sinal}k vidas no mês e {Amil net_adds Trimestre sinal}k no {rotulo Trimestre};
+- Amil {Amil verbo Mês | adicionou | perdeu} {Amil net_adds Mês mod}k vidas no mês e {Amil net_adds Trimestre sinal}k no {rotulo Trimestre};
 
-- Porto adicionou {Porto Seguro net_adds Mês}k vidas no mês e {Porto Seguro net_adds Trimestre}k no {rotulo Trimestre};
+- Porto {Porto Seguro verbo Mês | adicionou | perdeu} {Porto Seguro net_adds Mês mod}k vidas no mês e {Porto Seguro net_adds Trimestre sinal}k no {rotulo Trimestre};
 
 - As adições líquidas de planos odontológicos totalizaram {odonto Market net_adds Mês sinal}k vidas no mês ({odonto Market yoy sinal} YoY) e {odonto Market net_adds Trimestre sinal}k no {rotulo Trimestre};
 
-- ODPV perdeu {odonto ODPV net_adds Mês mod}k vidas no mês, totalizando {odonto ODPV net_adds Trimestre}k adições líquidas no {rotulo Trimestre}.
+- ODPV {odonto ODPV verbo Mês | ganhou | perdeu} {odonto ODPV net_adds Mês mod}k vidas no mês, totalizando {odonto ODPV net_adds Trimestre sinal}k de adições líquidas no {rotulo Trimestre}.
 
 Qualquer dúvida, estamos à disposição."""
 

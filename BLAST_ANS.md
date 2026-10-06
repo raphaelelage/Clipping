@@ -70,6 +70,7 @@ ordem:
     {Market net_adds Mês}        net adds do mercado no mes, em milhares: 76
     {Market yoy sinal}           Base Growth YoY com sinal: +1,4%
     {HAPV net_adds Mês mod}      sem sinal, para escrever "perdeu 58k"
+    {ODPV verbo Mês | ganhou | perdeu}   a palavra que casa com o sinal
     {odonto ODPV net_adds QTD}   a mesma coisa na secao odontologica
     {rotulo Mês}                 "Jul/26" — o rotulo, nao o numero
 
@@ -95,6 +96,12 @@ em ingles por pedido do dono. Convencoes diferentes de proposito: o que nao pode
 divergir e o VALOR, e ele vem da **tabela ja montada**, nao de uma segunda conta.
 Periodo que nao e coluna do mes e calculado pela mesma `Serie` que a tabela usou;
 linha residual ("Others") nesse caso sai `n.a.`.
+
+**O verbo acompanha o sinal.** Em Ago/26 o texto saiu "ODPV perdeu 66k" com a
+ODPV GANHANDO 66 mil vidas: o `mod` esconde o sinal e a frase mentia calada.
+`{ODPV verbo Mês | ganhou | perdeu}` resolve a palavra pelo dado. Onde o verbo e
+julgamento do dono ("manteve o ritmo de crescimento") ele fica fixo de proposito,
+e o aviso do `mod` continua la para avisar quando o sinal virar.
 
 Marca que nao resolve **nao desaparece**: fica `«assim»` no e-mail, com o motivo
 na lista de avisos. A aba Textos valida antes de salvar e mostra como o robo leu

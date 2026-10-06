@@ -124,7 +124,7 @@ def _editor_colunas(gh_get, gh_put, ano: int):
 
 
 # --------------------------------------------------------------- textos
-_AJUDA = """
+_AJUDA = r"""
 **Como marcar onde entra o número** — chave entre `{}`, nesta ordem ou em
 qualquer outra:
 
@@ -133,6 +133,7 @@ qualquer outra:
 | `{Market net_adds Mês}` | net adds do mercado no mês, em milhares: `76` |
 | `{Market yoy sinal}` | Base Growth YoY com sinal: `+1,4%` |
 | `{HAPV net_adds Mês mod}` | sem o sinal, para escrever "perdeu 58k" |
+| `{ODPV verbo Mês \| ganhou \| perdeu}` | a **palavra** que casa com o sinal |
 | `{odonto ODPV net_adds QTD}` | o mesmo, na seção odontológica |
 | `{rotulo Mês}` · `{rotulo Trimestre}` | `Jul/26` · `2T26` — o rótulo, não o número |
 
@@ -155,6 +156,15 @@ e `SulAmérica (ex. ASO)` funcionam sem aspas.
 O número sai em português (`+1,4%`, `1.234`), diferente da tabela, que é em
 inglês por pedido seu. O `*` e o `-` do WhatsApp ficam no texto: o próprio chat
 converte em negrito e marcador.
+
+**O verbo também muda.** Em Ago/26 o texto saiu "ODPV perdeu 66k" quando a ODPV
+na verdade **ganhou** 66 mil vidas: o `mod` esconde o sinal e a frase ficava
+mentindo. Com `{ODPV verbo Mês | ganhou | perdeu}` a palavra acompanha o dado —
+sem as duas palavras, o padrão é *ganhou/perdeu*. Use junto do `mod`, que tira o
+sinal do número.
+
+As frases de julgamento ("manteve o ritmo de crescimento", "cresceu fortemente")
+ficaram fixas de propósito: elas são sua leitura do mês, não conta.
 
 Marca que não resolve **não desaparece**: sai como «assim» no e-mail, para você
 ver que faltou número.
