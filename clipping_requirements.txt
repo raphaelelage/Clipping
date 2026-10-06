@@ -8,6 +8,12 @@ openpyxl==3.1.5
 google-api-python-client==2.149.0
 google-auth==2.35.0
 googlenewsdecoder==0.2.1
+# O decoder importa `selectolax.parser` (backend Modest), que a
+# selectolax REMOVEU na 1.0 — e ela entrava solta, como dependencia
+# transitiva. Em 06/10/2026 isso derrubou os tres runs do dia com
+# ImportError, antes de qualquer coleta. Nao ha decoder mais novo:
+# 0.2.1 e a ultima. Entao o pino fica aqui.
+selectolax<1.0
 lxml
 trafilatura
 rapidfuzz
