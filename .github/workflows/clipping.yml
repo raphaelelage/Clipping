@@ -117,9 +117,12 @@ jobs:
             # Terminado: so conta se enviou DE VERDADE e foi ha pouco — passada
             # a janela curta, um e-mail novo deixa de ser duplicata e vira o
             # pedido legitimo de uma nova rodada.
-            CRIADO=$(gh api "repos/$R/actions/runs/$ID" --jq .created_at 2>/dev/null || echo "")
-            if [ -n "$CRIADO" ] && [ "$CRIADO" \< "$DESDE" ]; then
-              echo "  run $ID terminou e e antigo demais ($CRIADO) — ignorado"
+            # `updated_at`, nao `created_at`: a pergunta e quando o e-mail SAIU.
+            # Num run lento (o de hoje levou 33 min) a criacao fica muito antes
+            # do envio, e por created_at um duplicado passaria logo em seguida.
+            FIM=$(gh api "repos/$R/actions/runs/$ID" --jq .updated_at 2>/dev/null || echo "")
+            if [ -n "$FIM" ] && [ "$FIM" \< "$DESDE" ]; then
+              echo "  run $ID terminou ha mais de 12 min ($FIM) — ignorado"
               continue
             fi
             FEZ=$(gh api "repos/$R/actions/runs/$ID/jobs" \
