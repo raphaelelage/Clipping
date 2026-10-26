@@ -62,35 +62,79 @@ def _limpa(html):
     return re.sub(r"\s+", " ", _RX_TAG.sub(" ", html or "")).strip()
 
 
-def _get(url, tentativas=4):
+def _get(url, tentativas=4, timeout=40):
     """GET com retry. O in.gov.br devolve 200 com pagina incompleta de vez em quando —
     quem chama valida o conteudo e pede retry devolvendo None."""
     for i in range(tentativas):
         try:
-            r = requests.get(url, headers=HEADERS, timeout=40)
+            r = requests.get(url, headers=HEADERS, timeout=timeout)
             if r.status_code == 200:
                 return r.text
         except Exception:
             pass
-        time.sleep(1.5 * (i + 1) + random.random())
+        if i + 1 < tentativas:          # nao dormir depois da ultima
+            time.sleep(1.5 * (i + 1) + random.random())
     return None
 
 
-def atos_do_dia(dia, secao="do1", tentativas=4):
+# --------------------------------------------------------------- disjuntor
+# Quando o in.gov.br cai, ele cai para TODOS os dias e secoes. Sem isto, o radar
+# redescobre a queda uma vez por chamada: em 26/10/2026, com o site em 502, foram
+# ~21 min dos 33 que o clipping inteiro levou. Fica DESLIGADO por padrao — a
+# carga historica (`coletar`) varre milhares de dias em paralelo e uma falha
+# isolada nao pode anular a varredura inteira. Quem liga e o radar diario.
+_SEGUIDAS = 0
+LIMITE_SEGUIDAS = 2
+
+
+def fora_do_ar() -> bool:
+    return _SEGUIDAS >= LIMITE_SEGUIDAS
+
+
+def religar():
+    """Zera o disjuntor (inicio de uma nova rodada do radar)."""
+    global _SEGUIDAS
+    _SEGUIDAS = 0
+
+
+def _marcar(ok: bool):
+    global _SEGUIDAS
+    _SEGUIDAS = 0 if ok else _SEGUIDAS + 1
+
+
+def atos_do_dia(dia, secao="do1", tentativas=4, disjuntor=False, rapido=False):
     """Todos os atos publicados no dia. Devolve None se nem apos os retries veio o JSON —
-    None e DIFERENTE de lista vazia: vazio e feriado, None e falha que precisa aparecer."""
+    None e DIFERENTE de lista vazia: vazio e feriado, None e falha que precisa aparecer.
+
+    `disjuntor=True`: depois de LIMITE_SEGUIDAS falhas seguidas, desiste na hora,
+    porque o site caiu para todo mundo e insistir so queima minuto do runner.
+
+    `rapido=True`: 2 tentativas de 15s em vez de 4x2 de 40s. E o modo do radar
+    DIARIO, onde desistir e barato — o dia fica marcado como inacessivel e volta
+    na proxima rodada. Sem isto, uma chamada custava ~6 min com o site oscilando
+    (medido em 26/10/2026) e o clipping inteiro ia de 14 para 33 min."""
+    if disjuntor and fora_do_ar():
+        return None
+    if rapido:
+        tentativas = min(tentativas, 2)
     url = BASE_DIA.format(d=dia.strftime("%d-%m-%Y"), s=secao)
     for _ in range(tentativas):
-        html = _get(url, tentativas=2)
+        html = _get(url, tentativas=(1 if rapido else 2),
+                    timeout=(15 if rapido else 40))
         if html:
             for bloco in _RX_BLOCO.findall(html):
                 b = bloco.strip()
                 if b.startswith('{"typeNormDay"'):
                     try:
-                        return json.loads(b).get("jsonArray") or []
+                        dados = json.loads(b).get("jsonArray") or []
                     except Exception:
                         break
-        time.sleep(2)
+                    if disjuntor:
+                        _marcar(True)
+                    return dados
+        time.sleep(1 if rapido else 2)
+    if disjuntor:
+        _marcar(False)
     return None
 
 

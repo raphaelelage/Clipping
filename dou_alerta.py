@@ -55,6 +55,7 @@ _VERBO = {
     "sem_efeito": "TORNA SEM EFEITO ato referente a",
     "unificacao_mantidas": "aprova unificacao de mantidas de",
     "aditamento_aumento_vagas": "aumenta as vagas de",
+    "norma_procedimental": "muda a regra ou o prazo de",
     "reducao_vagas": "reduz as vagas de",
     "reconhecimento": "reconhece",
     "renovacao_reconhecimento": "renova o reconhecimento de",
@@ -104,13 +105,21 @@ def coletar_novidades(dias=3, log=print):
     Devolve (frases, df_linhas): frases = [{"frase","link","medicina"}] uma por DOCUMENTO;
     df_linhas = linhas por curso no formato do Excel historico."""
     atos, inacessiveis = [], []
+    dh.religar()
     for d in _dias_uteis_recentes(dias):
+        if dh.fora_do_ar():
+            # ja constatado logo acima: o site caiu inteiro. Marcar os dias que
+            # faltam e sair — eles voltam na proxima rodada, e o aviso do e-mail
+            # avisa o dono (26/10/2026).
+            log(f"[radar] {d}: in.gov.br fora do ar — dia marcado sem nova tentativa")
+            inacessiveis.append(d)
+            continue
         falhou = False
         # do1_extra tambem (dono, 10/09/2026): edicao EXTRA as vezes traz ato do MEC e
         # ficava fora do radar (limitacao herdada da 1a carga). Dia sem extra = lista
         # vazia (normal); None em QUALQUER secao = falha -> o dia sera revarrido.
         for secao in ("do1", "do1_extra"):
-            arr = dh.atos_do_dia(d, secao)
+            arr = dh.atos_do_dia(d, secao, disjuntor=True, rapido=True)
             if arr is None:
                 # feriado nao tem edicao — normal. Todas inacessiveis = in.gov.br fora
                 # do ar, e isso NAO pode passar em silencio (vira aviso no e-mail). A
@@ -139,9 +148,12 @@ def coletar_novidades(dias=3, log=print):
         r"Sanit[aá]ria)|Ministro de Estado da (?:Educa[cç][aã]o|Sa[uú]de))", re.I)
     sentinelas = []
     for d in _dias_uteis_recentes(dias):
+        if dh.fora_do_ar():
+            break                      # mesma queda; nada a ganhar insistindo
         for sec, filtro in (("do3", "chamamento"), ("do2", "comando")):
             try:
-                arr = dh.atos_do_dia(d, sec, tentativas=2)
+                arr = dh.atos_do_dia(d, sec, tentativas=2, disjuntor=True,
+                                     rapido=True)
             except Exception:
                 arr = None
             if arr is None:

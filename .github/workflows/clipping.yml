@@ -91,9 +91,14 @@ jobs:
           # 06/10/2026: run que FALHOU tambem contava como duplicata, e isso
           # travava a retentativa por 12 min logo quando ela e mais necessaria —
           # justo depois de uma falha. Agora so conta run vivo ou bem-sucedido.
+          # Duas janelas: uma curta para "acabou de enviar" e uma longa para
+          # "ainda esta rodando". Em 26/10/2026 o run das 09:45 levou 33 min
+          # (in.gov.br em 502) e a janela de 12 min nao o enxergava mais — o
+          # dono redisparou as 10:03 e os dois mandaram e-mail.
           DESDE=$(date -u -d '-12 minutes' +%Y-%m-%dT%H:%M:%SZ)
-          # Candidatos: runs mais antigos que o meu, dentro da janela.
-          IDS=$(gh api "repos/$R/actions/workflows/clipping.yml/runs?created=>$DESDE&per_page=15" \
+          DESDE_LONGO=$(date -u -d '-90 minutes' +%Y-%m-%dT%H:%M:%SZ)
+          # Candidatos: runs mais antigos que o meu, na janela LONGA.
+          IDS=$(gh api "repos/$R/actions/workflows/clipping.yml/runs?created=>$DESDE_LONGO&per_page=20" \
                   --jq "[.workflow_runs[]
                          | select(.id != $MEU_ID)
                          | select(.created_at < \"$MEU_CRIADO\"
@@ -106,8 +111,16 @@ jobs:
           for ID in $IDS; do
             EST=$(gh api "repos/$R/actions/runs/$ID" --jq .status 2>/dev/null || echo "")
             if [ "$EST" != "completed" ]; then
-              echo "  run $ID ainda esta rodando — conta como duplicata"
+              echo "  run $ID ainda esta rodando ($EST) — conta como duplicata"
               N=$((N+1)); continue
+            fi
+            # Terminado: so conta se enviou DE VERDADE e foi ha pouco — passada
+            # a janela curta, um e-mail novo deixa de ser duplicata e vira o
+            # pedido legitimo de uma nova rodada.
+            CRIADO=$(gh api "repos/$R/actions/runs/$ID" --jq .created_at 2>/dev/null || echo "")
+            if [ -n "$CRIADO" ] && [ "$CRIADO" \< "$DESDE" ]; then
+              echo "  run $ID terminou e e antigo demais ($CRIADO) — ignorado"
+              continue
             fi
             FEZ=$(gh api "repos/$R/actions/runs/$ID/jobs" \
                     --jq '[.jobs[] | select(.name|startswith("montar"))
