@@ -116,9 +116,12 @@ def _gh_headers():
             "X-GitHub-Api-Version": "2022-11-28"}
 
 def dispatch_now(vertical, period, recipients):
+    """`forcar=1`: clicar no botao e um pedido explicito e nunca deve ser
+    engolido pela trava anti-duplicata — ela existe so para o disparo-duplo do
+    cron (03/11/2026)."""
     url = f"{GH_API}/repos/{OWNER}/{REPO}/actions/workflows/{WF}/dispatches"
     body = {"ref": BRANCH, "inputs": {"vertical": vertical, "when": period,
-                                      "recipients": recipients}}
+                                      "recipients": recipients, "forcar": "1"}}
     return _req("post", url, headers=_gh_headers(), json=body, timeout=30)
 
 BLAST_WF = S.get("blast_workflow_file", "blast.yml")

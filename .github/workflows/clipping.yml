@@ -27,6 +27,10 @@ on:
         description: "Manutenção: 1 = zerar o histórico (backlog) desta vertical (deixe vazio)"
         required: false
         default: ""
+      forcar:
+        description: "1 = rodar mesmo que outro run recente ja tenha enviado (disparo manual)"
+        required: false
+        default: "0"
       radar_dias:
         description: "Manutenção: dias úteis que o radar DOU varre p/ trás (vazio = 3; use p/ backfill após pane)"
         required: false
@@ -78,6 +82,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           R="${{ github.repository }}"
+          # Pedido explicito passa na frente: o cron nunca manda `forcar`, entao
+          # so chega 1 quando foi o dono (pelo app ou pela tela do GitHub).
+          if [ "${{ github.event.inputs.forcar }}" = "1" ]; then
+            echo "disparo forcado — a trava anti-duplicata nao se aplica"
+            echo "duplicado=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           MEU_ID="${{ github.run_id }}"
           # sem fallback, um 500 da API aqui derrubava o job inteiro (set -e do shell)
           MEU_CRIADO=$(gh api "repos/$R/actions/runs/$MEU_ID" --jq .created_at 2>/dev/null || echo "")
@@ -95,7 +106,11 @@ jobs:
           # "ainda esta rodando". Em 26/10/2026 o run das 09:45 levou 33 min
           # (in.gov.br em 502) e a janela de 12 min nao o enxergava mais — o
           # dono redisparou as 10:03 e os dois mandaram e-mail.
-          DESDE=$(date -u -d '-12 minutes' +%Y-%m-%dT%H:%M:%SZ)
+          # 3 min, nao 12: o duplo do cron-job.org chega com ~1 SEGUNDO de
+          # diferenca, e qualquer coisa alem disso e provavelmente intencional.
+          # Com 12 min, um redisparo legitimo poucos minutos depois era engolido
+          # (03/11/2026).
+          DESDE=$(date -u -d '-3 minutes' +%Y-%m-%dT%H:%M:%SZ)
           DESDE_LONGO=$(date -u -d '-90 minutes' +%Y-%m-%dT%H:%M:%SZ)
           # Candidatos: runs mais antigos que o meu, na janela LONGA.
           IDS=$(gh api "repos/$R/actions/workflows/clipping.yml/runs?created=>$DESDE_LONGO&per_page=20" \
@@ -122,7 +137,7 @@ jobs:
             # do envio, e por created_at um duplicado passaria logo em seguida.
             FIM=$(gh api "repos/$R/actions/runs/$ID" --jq .updated_at 2>/dev/null || echo "")
             if [ -n "$FIM" ] && [ "$FIM" \< "$DESDE" ]; then
-              echo "  run $ID terminou ha mais de 12 min ($FIM) — ignorado"
+              echo "  run $ID terminou ha mais de 3 min ($FIM) — ignorado"
               continue
             fi
             FEZ=$(gh api "repos/$R/actions/runs/$ID/jobs" \
