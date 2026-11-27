@@ -38,6 +38,8 @@ import clipping_core
 
 clipping_core.set_vertical(VERTICAL)
 VERTICAL = clipping_core.VERTICAL                       # normalizado
+# o texto de entrada da IA e por rodada, nao por base: ver sync_to_drive
+NOME_AI_INPUT = f"ai_input_{VERTICAL}.txt"
 VLABEL = clipping_core.VERTICAIS[VERTICAL]["label"]     # 'Saúde' / 'Educação'
 VFILES = clipping_core.arquivos_vertical(VERTICAL)
 LEGACY_VERTICAL = "saude"   # dona dos arquivos que ficavam soltos na raiz do Drive
@@ -57,6 +59,9 @@ RADAR_FRASES: list = []
 RADAR_COBERTURA_TXT = ""
 # nomes de curso sem correspondencia no catalogo do e-MEC, para o bloco de copiar e colar
 RADAR_CURSOS_PROBLEMA: list = []
+# cabecalho de tabela que o DOU passou a usar e o mapa ainda nao conhece — o dado dele
+# esta indo para a coluna `extras`, nao para a coluna certa (dono, 17/09/2026)
+RADAR_CABECALHOS_NOVOS: list = []
 
 # Tabela de valuation da cobertura (valuation.py), montada durante o sync do Drive
 # e injetada no e-mail logo apos o botao de download. Vazia = sem summary (lista de
@@ -184,6 +189,28 @@ def build_email_html(df: pd.DataFrame, total: int, drive_url: str, novas_backlog
     # BLOCO DE COPIAR E COLAR (dono, 14/09/2026): nome de curso que nao existe no
     # catalogo do e-MEC. O nome fica como veio do ato; este bloco e para o dono jogar
     # numa IA e devolver a classificacao pela aba Ajustes.
+    if RADAR_CABECALHOS_NOVOS:
+        from html import escape as _esc3
+        _n = len(RADAR_CABECALHOS_NOVOS)
+        _lista = "; ".join(f"{k} ({q}x)" for k, q, _d in RADAR_CABECALHOS_NOVOS[:8])
+        radar_html += (
+            '<table width="100%" style="border-collapse:collapse;margin:0 0 18px 0;">'
+            '<tr><td style="background:#FFF4E5;border-left:4px solid #C0392B;'
+            'padding:10px 12px;font-family:Arial,sans-serif;font-size:13px;color:#22324a;">'
+            '<b>&#9888;&#65039; Coluna nova nas tabelas do DOU (' + str(_n) + ')</b>'
+            '<div style="margin-top:6px;">O DOU passou a usar cabecalho(s) que o '
+            'extrator nao reconhece. <b>O dado dessas colunas NAO esta entrando na '
+            'base</b> — fica guardado no campo <code>extras</code> ate ser mapeado.</div>'
+            '<p style="margin:4px 0 8px 0;font-size:12px;">Copie o bloco abaixo e '
+            'mande para a IA. A resposta diz a que campo cada cabecalho corresponde — '
+            'com isso eu mapeio e o dado volta a entrar na coluna certa. Tambem sobe '
+            'para o Drive como <b>ai_cabecalhos.txt</b>.</p>'
+            '<pre style="white-space:pre-wrap;background:#fff;border:1px solid #d8dde6;'
+            'border-radius:6px;padding:10px;font-size:12px;margin:0;">'
+            + _esc3(texto_cabecalhos_para_ia(RADAR_CABECALHOS_NOVOS)) +
+            '</pre>'
+            '</td></tr></table>')
+
     if RADAR_CURSOS_PROBLEMA:
         from html import escape as _esc2
         _bloco = texto_cursos_para_ia(RADAR_CURSOS_PROBLEMA, limite=40)
@@ -334,6 +361,25 @@ def build_ai_text(df: pd.DataFrame) -> str:
 
 RADAR_DRIVE_NOME = "Regulacao_Cursos.xlsx"
 RADAR_SEED = "seed_regulacao_cursos.xlsx"     # levantamento 2018-2026 versionado no repo
+
+
+def texto_cabecalhos_para_ia(novos, limite=20) -> str:
+    """Bloco de copiar-e-colar sobre cabecalho de tabela novo no DOU.
+
+    Um cabecalho que o mapa nao conhece significa que aquela coluna do ato NAO esta
+    entrando na base — fica so no campo `extras`. Perguntar para a IA o que cada um
+    significa e o passo que evita perder dado em silencio."""
+    if not novos:
+        return ""
+    itens = novos[:limite]
+    linhas = "\n".join(f"{i}. {k}   (apareceu {q}x)"
+                        for i, (k, q, _dom) in enumerate(itens, start=1))
+    return ("Estes sao cabecalhos de coluna de tabelas publicadas no Diario Oficial que "
+            "o nosso extrator ainda nao reconhece. Para cada um, diga a que campo ele "
+            "corresponde entre: curso, cod_curso, ies, cod_ies, mantenedora, "
+            "cod_mantenedora, municipio, uf, vagas, processo, modalidade, grau. Se nao "
+            "corresponder a nenhum, escreva IGNORAR. Responda em CSV com as colunas "
+            "cabecalho;campo.\n\n" + linhas)
 
 
 def texto_cursos_para_ia(pendentes, limite=None) -> str:
@@ -538,8 +584,21 @@ def _radar_e_excel(download_file, update_file, xlsx_mime):
         import funil as _funil
         import funil_graficos as _fgraf
         _funil.gerar(str(local), log=lambda m: print(m, flush=True))
-        global RADAR_CURSOS_PROBLEMA
+        global RADAR_CURSOS_PROBLEMA, RADAR_CABECALHOS_NOVOS
         RADAR_CURSOS_PROBLEMA = list(getattr(_funil, "PENDENTES_CURSO", []))
+        try:
+            import dou_extrair as _dx2
+            import pandas as _pd2
+            _atos = _pd2.ExcelFile(caminho).parse("Atos")
+            if "extras" in _atos.columns:
+                RADAR_CABECALHOS_NOVOS = [
+                    x for x in _dx2.cabecalhos_novos(_atos["extras"]) if x[2]]
+                if RADAR_CABECALHOS_NOVOS:
+                    print(f"[radar] {len(RADAR_CABECALHOS_NOVOS)} cabecalho(s) de tabela "
+                          f"sem mapeamento — o dado deles esta so em `extras`", flush=True)
+        except Exception as _e2:
+            print(f"[radar] aviso de cabecalho nao calculado ({type(_e2).__name__})",
+                  flush=True)
         _fgraf.gerar(str(local), log=lambda m: print(m, flush=True))
     except Exception as e:
         avisos.aviso(f"Funil do DOU nao regenerado ({type(e).__name__}: {e}) — a planilha "
@@ -698,8 +757,19 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
                 _, done = downloader.next_chunk()
         return True
 
-    ai_url = update_file(txt_path, "ai_input.txt", "text/plain")
+    # Nome por VERTICAL: a pasta e unica, entao sem sufixo duas rodadas
+    # simultaneas se sobrescrevem (27/11/2026). O nome antigo some do Drive
+    # sozinho — ninguem mais escreve nele.
+    ai_url = update_file(txt_path, NOME_AI_INPUT, "text/plain")
     # mesmo servico para os nomes de curso a classificar (dono, 15/09/2026)
+    if RADAR_CABECALHOS_NOVOS:
+        _pc = Path("ai_cabecalhos.txt")
+        _pc.write_text(texto_cabecalhos_para_ia(RADAR_CABECALHOS_NOVOS),
+                       encoding="utf-8")
+        update_file(_pc, "ai_cabecalhos.txt", "text/plain")
+        print(f"[ok] Drive: ai_cabecalhos.txt com {len(RADAR_CABECALHOS_NOVOS)} "
+              f"cabecalho(s) novo(s)", flush=True)
+
     if RADAR_CURSOS_PROBLEMA:
         _p = Path("ai_cursos.txt")
         _p.write_text(texto_cursos_para_ia(RADAR_CURSOS_PROBLEMA), encoding="utf-8")
@@ -722,10 +792,10 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
         avisos.aviso(f"Summary de valuation nao montado: {type(e).__name__}: {e} "
                      f"— tabelas de valuation/indices/juros ficam de fora do e-mail")
     if ai_url != folder_url and xlsx_url != folder_url:
-        print("[ok] Drive: ai_input.txt e news_scrapper.xlsx atualizados")
+        print(f"[ok] Drive: {NOME_AI_INPUT} e news_scrapper.xlsx atualizados")
     else:
         print(f"[atencao] Drive ({VLABEL}): faltam os arquivos na pasta. Crie uma vez em "
-              f"{folder_url} os arquivos vazios: ai_input.txt, news_scrapper.xlsx, backlog.xlsx "
+              f"{folder_url} os arquivos vazios: {NOME_AI_INPUT}, news_scrapper.xlsx, backlog.xlsx "
               f"(ou copie os da pasta da outra vertical). Ate la, so o e-mail e o XLSX anexo funcionam.")
 
     backlog_local = Path("backlog.xlsx")
@@ -830,7 +900,7 @@ def main() -> None:
     df.to_excel(xlsx_path, index=False, engine="openpyxl")
     print(f"[ok] {len(df)} noticias salvas em {xlsx_path}")
 
-    txt_path = Path("ai_input.txt")
+    txt_path = Path(NOME_AI_INPUT)
     txt_path.write_text(build_ai_text(df), encoding="utf-8")
     print(f"[ok] input AI salvo em {txt_path}")
 
