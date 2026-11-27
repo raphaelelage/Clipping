@@ -91,10 +91,17 @@ def fora_do_ar() -> bool:
     return _SEGUIDAS >= LIMITE_SEGUIDAS
 
 
+_RADAR = False               # ligado pelo radar diario; a carga historica nao liga
+
+
 def religar():
-    """Zera o disjuntor (inicio de uma nova rodada do radar)."""
-    global _SEGUIDAS
+    """Zera o disjuntor e marca que quem esta rodando e o radar diario.
+
+    O radar pode ser impaciente porque o dia volta na proxima rodada; a carga
+    historica nao pode, porque o dia dela nao volta sozinho."""
+    global _SEGUIDAS, _RADAR
     _SEGUIDAS = 0
+    _RADAR = True
 
 
 def _marcar(ok: bool):
@@ -139,10 +146,21 @@ def atos_do_dia(dia, secao="do1", tentativas=4, disjuntor=False, rapido=False):
 
 
 def texto_integral(url_title):
-    """Texto completo do ato + o HTML bruto (as tabelas com IES/curso/vagas vivem nele)."""
-    html = _get(BASE_ATO + str(url_title).lstrip("/"))
-    if not html:
+    """Texto completo do ato + o HTML bruto (as tabelas com IES/curso/vagas vivem nele).
+
+    No radar, respeita o mesmo disjuntor da listagem: com o site fora do ar, cada
+    ato custava ate ~2,8 min (4 tentativas de 40s) e sao dezenas de atos."""
+    if _RADAR and fora_do_ar():
         return "", ""
+    html = _get(BASE_ATO + str(url_title).lstrip("/"),
+                tentativas=(2 if _RADAR else 4),
+                timeout=(15 if _RADAR else 40))
+    if not html:
+        if _RADAR:
+            _marcar(False)
+        return "", ""
+    if _RADAR:
+        _marcar(True)
     m = _RX_TEXTO.search(html)
     return (_limpa(m.group(1)) if m else ""), html
 

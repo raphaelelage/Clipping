@@ -956,6 +956,9 @@ def _decodificou(r):
     return bool(v)
 
 
+LIMITE_DECODE = 300          # segundos no passo individual; ver nota em _decode_links
+
+
 def _decode_links(df, log=None):
     """Troca o link do Google News pela URL do veiculo.
 
@@ -995,9 +998,42 @@ def _decode_links(df, log=None):
                 return l, (r["decoded_url"] if _decodificou(r) else l)
             except Exception:
                 return l, l
-        with ThreadPoolExecutor(max_workers=8) as ex:
-            for f in as_completed([ex.submit(dec, l) for l in faltam]):
-                o, n = f.result(); dmap[o] = n
+
+        def rodar(lista):
+            saiu = {}
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                for f in as_completed([ex.submit(dec, l) for l in lista]):
+                    a, b = f.result()
+                    saiu[a] = b
+            return saiu
+
+        # SONDA: se os 8 primeiros falharem todos, o endpoint esta recusando e os
+        # outros 400 vao falhar igual. Desistir aqui custa 8 chamadas; insistir
+        # custou 59 MINUTOS em 27/11/2026, para resolver zero link.
+        sonda = faltam[:8]
+        dmap.update(rodar(sonda))
+        venceu = sum(1 for l in sonda if "news.google.com" not in str(dmap.get(l, l)))
+        resto = faltam[len(sonda):]
+        if venceu == 0 and resto:
+            if log:
+                log(f"[decode] os {len(sonda)} primeiros falharam — Google "
+                    f"recusando; deixei os outros {len(resto)} sem resolver")
+            for l in resto:
+                dmap.setdefault(l, l)
+        elif resto:
+            # Com prazo: mesmo respondendo, sob rajada o endpoint fica lento e o
+            # e-mail nao pode ficar refem dele.
+            fim = time.time() + LIMITE_DECODE
+            for i in range(0, len(resto), 40):
+                if time.time() > fim:
+                    sobrou = resto[i:]
+                    if log:
+                        log(f"[decode] prazo de {LIMITE_DECODE}s estourado — "
+                            f"{len(sobrou)} link(s) ficaram sem resolver")
+                    for l in sobrou:
+                        dmap.setdefault(l, l)
+                    break
+                dmap.update(rodar(resto[i:i + 40]))
 
     falhou = sum(1 for l in uniq if "news.google.com" in str(dmap.get(l, l)))
     if log:
