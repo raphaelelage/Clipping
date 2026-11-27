@@ -39,6 +39,7 @@ import clipping_core
 clipping_core.set_vertical(VERTICAL)
 VERTICAL = clipping_core.VERTICAL                       # normalizado
 # o texto de entrada da IA e por rodada, nao por base: ver sync_to_drive
+LEGADO_AI_INPUT = "ai_input.txt"      # o unico que a Service Account consegue escrever
 NOME_AI_INPUT = f"ai_input_{VERTICAL}.txt"
 VLABEL = clipping_core.VERTICAIS[VERTICAL]["label"]     # 'Saúde' / 'Educação'
 VFILES = clipping_core.arquivos_vertical(VERTICAL)
@@ -761,6 +762,16 @@ def sync_to_drive(df: pd.DataFrame, xlsx_path: Path, txt_path: Path) -> tuple[st
     # simultaneas se sobrescrevem (27/11/2026). O nome antigo some do Drive
     # sozinho — ninguem mais escreve nele.
     ai_url = update_file(txt_path, NOME_AI_INPUT, "text/plain")
+    if ai_url == folder_url and NOME_AI_INPUT != LEGADO_AI_INPUT:
+        # A Service Account NAO cria arquivo em Drive pessoal (nao tem cota
+        # propria) — so atualiza o que ja existe. Enquanto o arquivo por vertical
+        # nao for criado a mao, caimos no nome antigo: perder a separacao e ruim,
+        # nao entregar o texto e pior (27/11/2026).
+        avisos.aviso(f"Drive: '{NOME_AI_INPUT}' ainda nao existe, entao gravei em "
+                     f"'{LEGADO_AI_INPUT}'. Crie o arquivo vazio UMA vez na pasta "
+                     f"para cada vertical ter o seu e duas rodadas simultaneas "
+                     f"pararem de se sobrescrever.")
+        ai_url = update_file(txt_path, LEGADO_AI_INPUT, "text/plain")
     # mesmo servico para os nomes de curso a classificar (dono, 15/09/2026)
     if RADAR_CABECALHOS_NOVOS:
         _pc = Path("ai_cabecalhos.txt")
