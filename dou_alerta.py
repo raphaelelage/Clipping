@@ -188,7 +188,9 @@ def coletar_novidades(dias=3, log=print):
     if sentinelas:
         log(f"[radar] SENTINELA: {len(sentinelas)} ato(s) S2/S3 detectado(s)")
 
-    if len(inacessiveis) >= dias:
+    # `inacessiveis` vazio com dias=0 (radar desligado no disparo) nao e queda
+    # do in.gov.br — sem a 1a condicao o e-mail saia com alarme falso
+    if inacessiveis and len(inacessiveis) >= dias:
         import avisos
         avisos.aviso("Radar DOU: nenhuma edicao do DOU acessivel ("
                      + ", ".join(d.strftime("%d/%m") for d in inacessiveis)
